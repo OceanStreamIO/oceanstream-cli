@@ -29,7 +29,7 @@ def test_cli_geotrack_end_to_end(tmp_path: Path, monkeypatch):
             "process",
             "geotrack",
             "convert",
-            "--input-dir", str(in_dir),
+            "--input-source", str(in_dir),
             "--output-dir", str(out_dir),
             "--yes",
             "-v",

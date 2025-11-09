@@ -135,7 +135,17 @@ class SaildroneProvider(ProviderBase):
         parts = filename.split("_")
         return parts[0] if parts else None
 
-    def enrich_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+    def enrich_dataframe(self, df: pd.DataFrame, metadata: dict | None = None) -> pd.DataFrame:
+        """
+        Enrich the Saildrone dataframe.
+        
+        Args:
+            df: Input dataframe
+            metadata: Optional metadata dict (not used by Saildrone provider)
+            
+        Returns:
+            Enriched dataframe
+        """
         out = df.copy()
         # Ensure platform_id exists; fall back to string type
         if "platform_id" in out.columns:
@@ -149,7 +159,19 @@ class SaildroneProvider(ProviderBase):
                     pass
         return out
 
-    def units_mapping(self, header: Iterable[str], units_row: Iterable[str] | None = None) -> dict[str, Any]:
+    def units_mapping(self, header: Iterable[str], units_row: Iterable[str] | None = None, 
+                     metadata: dict | None = None) -> dict[str, Any]:
+        """
+        Extract units mapping for Saildrone data.
+        
+        Args:
+            header: Column names
+            units_row: Optional units row from CSV
+            metadata: Optional metadata dict (not used by Saildrone provider)
+            
+        Returns:
+            Dictionary mapping column names to units
+        """
         mapping: dict[str, Any] = {}
         if units_row is not None:
             for col, unit in zip(header, units_row):
@@ -180,7 +202,17 @@ class SaildroneProvider(ProviderBase):
                     aliases[col] = normalized
         return aliases
 
-    def parquet_metadata(self, df: pd.DataFrame) -> dict[str, Any]:
+    def parquet_metadata(self, df: pd.DataFrame, metadata: dict | None = None) -> dict[str, Any]:
+        """
+        Generate parquet metadata for Saildrone data.
+        
+        Args:
+            df: Dataframe to generate metadata for
+            metadata: Optional metadata dict (not used by Saildrone provider)
+            
+        Returns:
+            Dictionary of metadata key-value pairs
+        """
         # Minimal provider tag; can expand later with roles/stats
         return {
             "oceanstream:provider": {

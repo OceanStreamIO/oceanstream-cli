@@ -13,7 +13,7 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-from .csv_reader import _sanitize_column_types, extract_platform_id
+from .csv_reader import _sanitize_column_types, extract_platform_id, is_geocsv, read_geocsv
 from .geoparquet_writer import write_geoparquet
 from ..stac import emit_stac_collection_and_item
 from ..config.settings import Settings
@@ -33,30 +33,29 @@ def _format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
-def _display_files_summary(input_dir: Path, csv_files: list[str]) -> bool:
+def _display_files_summary(input_source: Path, csv_files: list[Path]) -> bool:
     """
     Display a summary table of detected files and prompt for confirmation.
     
     Args:
-        input_dir: Directory containing the CSV files
-        csv_files: List of CSV filenames
+        input_source: Path to CSV file or directory containing CSV files
+        csv_files: List of Path objects for CSV files
         
     Returns:
         True if user confirms to proceed, False otherwise
     """
-    print(f"\n[geotrack] Detected {len(csv_files)} file(s) in {input_dir}:\n")
+    print(f"\n[geotrack] Detected {len(csv_files)} file(s) in {input_source}:\n")
     
     # Collect file info
     file_info = []
     total_size = 0
-    for fname in csv_files:
-        file_path = input_dir / fname
+    for file_path in csv_files:
         try:
             size_bytes = os.path.getsize(file_path)
             total_size += size_bytes
-            file_info.append((fname, size_bytes))
+            file_info.append((file_path.name, size_bytes))
         except OSError:
-            file_info.append((fname, 0))
+            file_info.append((file_path.name, 0))
     
     # Calculate column widths
     max_filename_len = max(len(fname) for fname, _ in file_info)
@@ -87,24 +86,65 @@ def _display_files_summary(input_dir: Path, csv_files: list[str]) -> bool:
         return False
 
 
-def _read_single_csv(file_path: Path, filename: str) -> pd.DataFrame | None:
-    """Read and validate a single CSV file."""
-    df = pd.read_csv(file_path, on_bad_lines='skip', low_memory=False)
-    df = df.replace(to_replace=["nan", "NaN", "NULL", "None"], value=pd.NA)
-    df = df.replace(r"^\s*$", pd.NA, regex=True)
-    if 'latitude' not in df.columns or 'longitude' not in df.columns:
-        return None
-    df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
-    df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
-    df = df.dropna(subset=['latitude', 'longitude'])
-    if df.empty:
-        return None
-    df['platform_id'] = extract_platform_id(filename)
+def _read_single_csv(file_path: Path, filename: str, provider: ProviderBase | None = None) -> tuple[pd.DataFrame | None, dict | None]:
+    """
+    Read and validate a single CSV or GeoCSV file.
+    
+    Returns:
+        Tuple of (DataFrame, metadata_dict) where metadata_dict is None for regular CSV
+        and contains GeoCSV metadata for GeoCSV files.
+    """
+    metadata = None
+    
+    # Check if this is a GeoCSV file
+    if is_geocsv(file_path):
+        # Read GeoCSV with metadata
+        df, metadata = read_geocsv(file_path)
+    else:
+        # Regular CSV reading
+        df = pd.read_csv(file_path, on_bad_lines='skip', low_memory=False)
+        df = df.replace(to_replace=["nan", "NaN", "NULL", "None"], value=pd.NA)
+        df = df.replace(r"^\s*$", pd.NA, regex=True)
+    
+    # Validate required columns (check both standard and provider-specific names)
+    has_coords = False
+    if 'latitude' in df.columns and 'longitude' in df.columns:
+        has_coords = True
+    # R2R uses ship_latitude/ship_longitude before enrichment
+    elif 'ship_latitude' in df.columns and 'ship_longitude' in df.columns:
+        has_coords = True
+    
+    if not has_coords:
+        return None, None
+    
+    # Only validate coordinates if they're already in standard format
+    # R2R files will be handled by the provider's enrich_dataframe
+    if 'latitude' in df.columns and 'longitude' in df.columns:
+        df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+        df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+        df = df.dropna(subset=['latitude', 'longitude'])
+        
+        if df.empty:
+            return None, None
+    
+    # Add platform_id
+    # Try provider's identify_platform first, then fall back to extract_platform_id
+    if provider:
+        platform_id = provider.identify_platform(filename)
+        if platform_id:
+            df['platform_id'] = platform_id
+        elif not metadata or 'cruise_id' not in metadata:
+            # Fall back to filename parsing
+            df['platform_id'] = extract_platform_id(filename)
+    else:
+        df['platform_id'] = extract_platform_id(filename)
+    
     df = _sanitize_column_types(df)
     na_subset = [c for c in df.columns if c != 'platform_id']
     df = df.dropna(how='all', subset=na_subset)
     df = df.dropna(axis=1, how='all')
-    return df
+    
+    return df, metadata
 
 
 def _concat_data_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -122,10 +162,27 @@ def _concat_data_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
 class GeotrackProcessor:
     """Processor for geotrack data."""
     
-    def __init__(self, provider: ProviderBase, verbose: bool = False):
+    def __init__(
+        self, 
+        provider: ProviderBase, 
+        verbose: bool = False, 
+        campaign_id: str | None = None, 
+        platform_id: str | None = None,
+        attribution: str | None = None,
+        creation_date: str | None = None,
+        source_dataset: str | None = None,
+        source_repository: str | None = None,
+    ):
         self.provider = provider
         self.verbose = verbose
         self._start_time = perf_counter()
+        self._file_metadata = {}  # Store metadata per file for later use
+        self._campaign_id = campaign_id  # User-supplied campaign ID
+        self._platform_id = platform_id  # User-supplied platform ID
+        self._attribution = attribution  # User-supplied attribution
+        self._creation_date = creation_date  # User-supplied creation date
+        self._source_dataset = source_dataset  # User-supplied source dataset DOI
+        self._source_repository = source_repository  # User-supplied source repository DOI
     
     def log(self, message: str) -> None:
         """Log a message if verbose is enabled."""
@@ -143,18 +200,49 @@ class GeotrackProcessor:
         if self.verbose:
             print(f"[geotrack]   ✓ {label} ({perf_counter() - t0:0.2f}s)")
     
-    def scan_input_directory(self, input_dir: Path) -> list[str]:
-        """Scan input directory for CSV files."""
-        t0 = self.step(f"scanning input directory {input_dir}")
-        try:
-            csv_files = [f for f in os.listdir(input_dir) if f.endswith(".csv")]
-        except FileNotFoundError:
-            raise FileNotFoundError(f"input directory not found: {input_dir}")
-        self.done(f"found {len(csv_files)} CSV file(s)", t0)
+    def scan_input_source(self, input_source: Path) -> list[Path]:
+        """Scan input source (file or directory) for CSV files.
+        
+        Args:
+            input_source: Path to a CSV file or directory containing CSV files
+            
+        Returns:
+            List of Path objects for CSV files to process
+        """
+        t0 = self.step(f"scanning input source {input_source}")
+        
+        if not input_source.exists():
+            raise FileNotFoundError(f"Input source not found: {input_source}")
+        
+        csv_files = []
+        
+        if input_source.is_file():
+            # Single file input
+            if input_source.suffix in [".csv", ".geocsv"]:
+                csv_files = [input_source]
+            else:
+                raise ValueError(f"Input file must be .csv or .geocsv, got: {input_source.suffix}")
+        elif input_source.is_dir():
+            # Directory input - scan for CSV files
+            csv_files = [
+                input_source / f for f in os.listdir(input_source)
+                if f.endswith(".csv") or f.endswith(".geocsv")
+            ]
+        else:
+            raise ValueError(f"Input source must be a file or directory: {input_source}")
+        
+        self.done(f"found {len(csv_files)} CSV/GeoCSV file(s)", t0)
         return csv_files
     
-    def process_files(self, input_dir: Path, csv_files: list[str]) -> pd.DataFrame:
-        """Process CSV files with optional progress bars."""
+    def process_files(self, csv_files: list[Path]) -> pd.DataFrame:
+        """Process CSV files with optional progress bars.
+        
+        Args:
+            csv_files: List of Path objects for CSV files to process
+            
+        Returns:
+            Concatenated DataFrame with all data
+        """
         data_frames = []
         
         # Use tqdm for progress bar if available (works in Jupyter and terminal)
@@ -171,8 +259,8 @@ class GeotrackProcessor:
         else:
             iterator = csv_files
         
-        for fname in iterator:
-            self._process_single_file(input_dir, fname, data_frames)
+        for file_path in iterator:
+            self._process_single_file(file_path, data_frames)
         
         if not data_frames:
             raise ValueError("No usable data after per-file processing.")
@@ -182,11 +270,16 @@ class GeotrackProcessor:
             print(f"[geotrack] Consolidated rows: {len(df)} from {len(data_frames)} file(s)")
         return df
     
-    def _process_single_file(self, input_dir: Path, fname: str, data_frames: list[pd.DataFrame]) -> None:
-        """Process a single CSV file."""
-        file_path = input_dir / fname
+    def _process_single_file(self, file_path: Path, data_frames: list[pd.DataFrame]) -> None:
+        """Process a single CSV file.
+        
+        Args:
+            file_path: Path object for the CSV file
+            data_frames: List to append processed DataFrame to
+        """
+        fname = file_path.name
         try:
-            df_file = _read_single_csv(file_path, fname)
+            df_file, file_metadata = _read_single_csv(file_path, fname, self.provider)
         except Exception as e:
             if self.verbose:
                 print(f"[geotrack]   ! Skipping {fname} (read error: {e})")
@@ -197,12 +290,30 @@ class GeotrackProcessor:
                 print(f"[geotrack]   · Skipping {fname} (no usable rows)")
             return
         
-        # Enrichment
-        df_enriched = self.provider.enrich_dataframe(df_file)
+        # Store metadata for later use (e.g., in parquet_metadata)
+        if file_metadata:
+            self._file_metadata[fname] = file_metadata
+        
+        # Enrichment - pass metadata to provider
+        df_enriched = self.provider.enrich_dataframe(df_file, metadata=file_metadata)
         if df_enriched.empty:
             if self.verbose:
                 print(f"[geotrack]   · Skipping {fname} after enrichment (no lat/lon)")
             return
+        
+        # Override platform_id if user supplied one
+        if self._platform_id:
+            df_enriched['platform_id'] = self._platform_id
+        
+        # Add campaign_id column
+        # Priority: 1) user-supplied, 2) from file metadata (R2R cruise_id), 3) platform_id
+        if self._campaign_id:
+            df_enriched['campaign_id'] = self._campaign_id
+        elif file_metadata and 'cruise_id' in file_metadata:
+            df_enriched['campaign_id'] = file_metadata['cruise_id']
+        elif 'platform_id' in df_enriched.columns:
+            # Fallback: use platform_id as campaign_id if not specified
+            df_enriched['campaign_id'] = df_enriched['platform_id']
         
         data_frames.append(df_enriched)
         if self.verbose:
@@ -284,6 +395,36 @@ class GeotrackProcessor:
         if 'platform_id' in df.columns:
             platform_metadata['platform_id'] = str(df['platform_id'].iloc[0])
         
+        # Get campaign_id from first row if available
+        if 'campaign_id' in df.columns:
+            campaign_id_value = df['campaign_id'].iloc[0]
+            if pd.notna(campaign_id_value):
+                platform_metadata['campaign_id'] = str(campaign_id_value)
+        
+        # Add citation and provenance metadata (user-supplied or from file metadata)
+        # Priority: user-supplied > file metadata
+        file_metadata = next(iter(self._file_metadata.values())) if self._file_metadata else None
+        
+        if self._attribution:
+            platform_metadata['attribution'] = self._attribution
+        elif file_metadata and 'attribution' in file_metadata:
+            platform_metadata['attribution'] = file_metadata['attribution']
+        
+        if self._creation_date:
+            platform_metadata['creation_date'] = self._creation_date
+        elif file_metadata and 'creation_date' in file_metadata:
+            platform_metadata['creation_date'] = file_metadata['creation_date']
+        
+        if self._source_dataset:
+            platform_metadata['source_dataset'] = self._source_dataset
+        elif file_metadata and 'source_dataset' in file_metadata:
+            platform_metadata['source_dataset'] = file_metadata['source_dataset']
+        
+        if self._source_repository:
+            platform_metadata['source_repository'] = self._source_repository
+        elif file_metadata and 'source_repository' in file_metadata:
+            platform_metadata['source_repository'] = file_metadata['source_repository']
+        
         # Log findings
         if self.verbose:
             print(f"[geotrack]   Detected {len(detected_sensors)} sensors")
@@ -311,10 +452,14 @@ class GeotrackProcessor:
         # Prepare metadata
         t0 = self.step("preparing metadata (aliases, units, provider)")
         aliases = self.provider.alias_mapping(df.columns)
-        units = self.provider.units_mapping(df.columns)
+        
+        # For R2R and other providers that need metadata from files
+        # Pass the first file's metadata if available
+        file_metadata = next(iter(self._file_metadata.values())) if self._file_metadata else None
+        units = self.provider.units_mapping(df.columns, metadata=file_metadata)
         if units and not any(v for v in units.values() if v):
             units = None
-        prov_meta = self.provider.parquet_metadata(df)
+        prov_meta = self.provider.parquet_metadata(df, metadata=file_metadata)
         self.done("metadata prepared", t0)
         
         # Write dataset
@@ -564,7 +709,7 @@ def generate_tiles(
 
 def convert(
     provider: ProviderBase,
-    input_dir: Path,
+    input_source: Path,
     output_dir: Path,
     verbose: bool = False,
     list_columns: bool = False,
@@ -581,13 +726,19 @@ def convert(
     pmtiles_time_gap: int = 60,
     pmtiles_include_measurements: bool = True,
     pmtiles_measurement_columns: list[str] | None = None,
+    campaign_id: str | None = None,
+    platform_id: str | None = None,
+    attribution: str | None = None,
+    creation_date: str | None = None,
+    source_dataset: str | None = None,
+    source_repository: str | None = None,
 ) -> None:
     """
     Convert geotrack CSV data into GeoParquet format, and optionally PMTiles.
     
     Args:
         provider: Data provider instance
-        input_dir: Directory containing input CSV files
+        input_source: Path to a CSV file or directory containing CSV files
         output_dir: Output directory for GeoParquet dataset
         verbose: Enable detailed progress information
         list_columns: List available columns and exit
@@ -604,26 +755,51 @@ def convert(
         pmtiles_time_gap: Minutes of gap to split track segments
         pmtiles_include_measurements: Include oceanographic measurements in tiles
         pmtiles_measurement_columns: Specific columns to include (None = auto-select)
+        campaign_id: Campaign/cruise identifier (overrides provider detection)
+        platform_id: Platform identifier (overrides provider detection)
+        attribution: Data attribution/citation (overrides provider/file metadata)
+        creation_date: Data creation date (overrides provider/file metadata)
+        source_dataset: Source dataset DOI (overrides provider/file metadata)
+        source_repository: Source repository DOI (overrides provider/file metadata)
     """
-    processor = GeotrackProcessor(provider, verbose=verbose)
+    processor = GeotrackProcessor(
+        provider, 
+        verbose=verbose, 
+        campaign_id=campaign_id, 
+        platform_id=platform_id,
+        attribution=attribution,
+        creation_date=creation_date,
+        source_dataset=source_dataset,
+        source_repository=source_repository,
+    )
     
-    # Step 1: Scan input directory
-    csv_files = processor.scan_input_directory(input_dir)
+    # Step 1: Scan input source (file or directory)
+    csv_files = processor.scan_input_source(input_source)
     if not csv_files:
         print("[geotrack] No CSV files to process.")
         return
     
     # Step 1.5: Display file summary and get confirmation (unless in dry-run or inspection mode)
     if not (dry_run or list_columns or print_schema or provider_metadata or yes):
-        if not _display_files_summary(input_dir, csv_files):
+        if not _display_files_summary(input_source, csv_files):
             print("[geotrack] Processing cancelled.")
             return
     
     # Step 2-3: Process files
-    df = processor.process_files(input_dir, csv_files)
+    df = processor.process_files(csv_files)
     
     # Step 3.5: Detect sensors and platform
     detected_sensors, platform_metadata = processor.detect_sensors_and_platform(df)
+    
+    # Step 3.6: Validate campaign_id is present
+    # campaign_id is now REQUIRED - check if it's in the DataFrame
+    if 'campaign_id' not in df.columns or df['campaign_id'].isna().all():
+        print("\n[geotrack] ERROR: campaign_id is required but could not be detected.")
+        print("[geotrack] Please provide --campaign-id parameter or ensure files contain cruise_id metadata.")
+        return
+    
+    # Extract the campaign_id value (should be consistent across all rows)
+    detected_campaign_id = df['campaign_id'].iloc[0]
     
     # Handle introspection flags
     if list_columns:
@@ -657,7 +833,7 @@ def convert(
         lon_min, lon_max = float(df['longitude'].min()), float(df['longitude'].max())
         print("\n[geotrack] Dry Run Summary")
         print("--------------------------------")
-        print(f"Source directory      : {input_dir}")
+        print(f"Source input          : {input_source}")
         print(f"CSV files processed   : {len(csv_files)}")
         print(f"Rows total            : {len(df)}")
         print(f"Latitude range        : [{lat_min:.4f}, {lat_max:.4f}]")
@@ -677,8 +853,11 @@ def convert(
     lat_min, lat_max = float(df['latitude'].min()), float(df['latitude'].max())
     lon_min, lon_max = float(df['longitude'].min()), float(df['longitude'].max())
     
+    # Create campaign-based output directory
+    campaign_output_dir = output_dir / detected_campaign_id
+    
     # Write GeoParquet
-    processor.write_geoparquet_dataset(df, output_dir, semantic_meta)
+    processor.write_geoparquet_dataset(df, campaign_output_dir, semantic_meta)
     
     # Generate PMTiles if requested (before STAC so we can include the path)
     pmtiles_generated = False
@@ -692,7 +871,7 @@ def convert(
             platform_id = str(df['platform_id'].iloc[0])
         
         pmtiles_path = processor.generate_pmtiles_dataset(
-            geoparquet_root=output_dir,
+            geoparquet_root=campaign_output_dir,
             minzoom=pmtiles_minzoom,
             maxzoom=pmtiles_maxzoom,
             layer_name=pmtiles_layer,
@@ -717,7 +896,7 @@ def convert(
     if Settings.SEMANTIC_ENABLE and Settings.SEMANTIC_GENERATE_STAC:
         # Emit STAC metadata with PMTiles path and measurement columns
         processor.emit_stac_metadata(
-            output_dir, 
+            campaign_output_dir, 
             df, 
             semantic_meta, 
             detected_sensors, 
@@ -727,7 +906,7 @@ def convert(
         )
         
         # Check if files were actually created (STAC files are in stac/ subdirectory)
-        stac_dir = output_dir / "stac"
+        stac_dir = campaign_output_dir / "stac"
         stac_collection_path = stac_dir / "collection.json"
         stac_items_dir = stac_dir / "items"
         
@@ -740,8 +919,8 @@ def convert(
     # Count partition files
     partition_count = 0
     output_size = 0
-    if output_dir.exists():
-        for root, dirs, files in os.walk(output_dir):
+    if campaign_output_dir.exists():
+        for root, dirs, files in os.walk(campaign_output_dir):
             for file in files:
                 if file.endswith('.parquet'):
                     partition_count += 1
@@ -756,7 +935,7 @@ def convert(
     print("[geotrack] Processing Report")
     print("=" * 60)
     print(f"\n▸ Input")
-    print(f"  Source directory      : {input_dir}")
+    print(f"  Source input          : {input_source}")
     print(f"  CSV files processed   : {len(csv_files)}")
     print(f"  Total rows ingested   : {len(df):,}")
     
@@ -787,7 +966,9 @@ def convert(
                 print(f"    • ... and {len(detected_sensors) - 5} more")
     
     print(f"\n▸ Output")
-    print(f"  Output directory      : {output_dir}")
+    print(f"  Base output directory : {output_dir}")
+    print(f"  Campaign directory    : {campaign_output_dir}")
+    print(f"  Campaign ID           : {detected_campaign_id}")
     print(f"  GeoParquet format     : ✓ Written")
     print(f"  Total output size     : {_format_file_size(output_size)}")
     
@@ -804,7 +985,7 @@ def convert(
     
     if stac_generated:
         print(f"\n▸ STAC Metadata")
-        print(f"  STAC directory        : {output_dir / 'stac'}")
+        print(f"  STAC directory        : {campaign_output_dir / 'stac'}")
         print(f"  Collection JSON       : ✓ collection.json")
         print(f"  Item JSON files       : ✓ {stac_items_count} item(s)")
         print(f"  STAC version          : 1.0.0")

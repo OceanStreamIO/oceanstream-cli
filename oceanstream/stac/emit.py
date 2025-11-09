@@ -243,6 +243,13 @@ def emit_stac_collection_and_item(
             ],
         }
 
+        # Add platform identifiers to item properties if available
+        if platform:
+            if "platform_id" in platform:
+                item["properties"]["platform_id"] = platform["platform_id"]
+            if "campaign_id" in platform:
+                item["properties"]["campaign_id"] = platform["campaign_id"]
+
         # Optional temporal properties
         if item_interval and item_interval[0] != [None, None]:
             start, end = item_interval[0]

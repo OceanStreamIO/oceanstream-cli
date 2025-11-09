@@ -1,7 +1,106 @@
 import os
-from typing import List
+from typing import List, Dict, Tuple, Optional
+from pathlib import Path
 
 import pandas as pd
+
+
+def is_geocsv(file_path: str | Path) -> bool:
+    """
+    Detect if a file is GeoCSV format by checking for metadata headers.
+    
+    GeoCSV files start with lines beginning with '#' containing metadata.
+    
+    Args:
+        file_path: Path to file to check
+        
+    Returns:
+        True if file appears to be GeoCSV format
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+            # GeoCSV files start with # metadata headers
+            return first_line.startswith('#')
+    except Exception:
+        return False
+
+
+def parse_geocsv_metadata(lines: List[str]) -> Dict[str, str]:
+    """
+    Parse GeoCSV metadata headers into a dictionary.
+    
+    GeoCSV metadata lines start with '#' followed by key: value pairs.
+    
+    Args:
+        lines: List of lines from the file (including metadata headers)
+        
+    Returns:
+        Dictionary of metadata key-value pairs
+    """
+    metadata = {}
+    
+    for line in lines:
+        line = line.strip()
+        if not line.startswith('#'):
+            break  # End of metadata section
+            
+        # Remove leading '#' and whitespace
+        content = line[1:].strip()
+        
+        # Parse key: value format
+        if ':' in content:
+            key, value = content.split(':', 1)
+            metadata[key.strip()] = value.strip()
+    
+    return metadata
+
+
+def read_geocsv(file_path: str | Path) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Read a GeoCSV file, parsing metadata headers and data.
+    
+    GeoCSV format specifications:
+    - Metadata lines start with '#' and contain key: value pairs
+    - Common metadata keys: dataset, cruise_id, field_unit, field_type, 
+      field_standard_name, source_repository, source_event, source_dataset
+    - Data follows after metadata headers
+    
+    Args:
+        file_path: Path to GeoCSV file
+        
+    Returns:
+        Tuple of (DataFrame with data, dict with metadata)
+    """
+    file_path = Path(file_path)
+    
+    # Read all lines to parse metadata
+    with open(file_path, 'r', encoding='utf-8') as f:
+        all_lines = f.readlines()
+    
+    # Parse metadata from header lines
+    metadata = parse_geocsv_metadata(all_lines)
+    
+    # Find where data starts (first non-# line is column headers)
+    data_start_line = 0
+    for i, line in enumerate(all_lines):
+        if not line.strip().startswith('#'):
+            data_start_line = i
+            break
+    
+    # Read CSV data (pandas will handle column headers automatically)
+    df = pd.read_csv(
+        file_path,
+        skiprows=data_start_line,
+        on_bad_lines='skip',
+        low_memory=False
+    )
+    
+    # Basic cleanup
+    df = df.replace(to_replace=["nan", "NaN", "NULL", "None"], value=pd.NA)
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+    
+    return df, metadata
 
 
 def read_csv_files(raw_data_folder: str) -> pd.DataFrame:

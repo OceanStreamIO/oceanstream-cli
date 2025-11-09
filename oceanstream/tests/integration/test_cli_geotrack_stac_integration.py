@@ -67,7 +67,7 @@ def test_cli_geotrack_emits_stac_when_semantic_enabled(tmp_path: Path, monkeypat
             "process",
             "geotrack",
             "convert",
-            "--input-dir",
+            "--input-source",
             str(in_dir),
             "--output-dir",
             str(out_dir),
@@ -78,8 +78,13 @@ def test_cli_geotrack_emits_stac_when_semantic_enabled(tmp_path: Path, monkeypat
 
     assert result.exit_code == 0, f"CLI failed: {result.exit_code}\n{result.output}"
 
-    stac_dir = out_dir / "stac"
-    assert stac_dir.exists(), "STAC directory was not created"
+    # Find the campaign subdirectory (should be created based on campaign_id)
+    campaign_dirs = [d for d in out_dir.iterdir() if d.is_dir()]
+    assert len(campaign_dirs) == 1, f"Expected exactly one campaign directory, found {len(campaign_dirs)}"
+    campaign_dir = campaign_dirs[0]
+
+    stac_dir = campaign_dir / "stac"
+    assert stac_dir.exists(), "STAC directory was not created in campaign folder"
 
     coll = stac_dir / "collection.json"
     items_dir = stac_dir / "items"

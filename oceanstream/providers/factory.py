@@ -3,9 +3,11 @@ from typing import Type
 
 from .base import ProviderBase
 from .saildrone import SaildroneProvider
+from .r2r import R2RProvider
 
 _REGISTRY: dict[str, Type[ProviderBase]] = {
     "saildrone": SaildroneProvider,
+    "r2r": R2RProvider,
 }
 
 def get_provider(name: str) -> ProviderBase:

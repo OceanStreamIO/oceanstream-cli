@@ -1,0 +1,505 @@
+"""Integration tests for R2R GeoCSV navigation data processing."""
+import pytest
+import json
+from pathlib import Path
+import pandas as pd
+
+from oceanstream.geotrack.processor import convert
+from oceanstream.providers.r2r import R2RProvider
+
+
+class TestR2RGeoCSVNavigation:
+    """Integration tests for R2R GeoCSV navigation file conversion."""
+
+    @pytest.fixture
+    def r2r_nav_file(self):
+        """Path to R2R navigation GeoCSV test file."""
+        return Path(__file__).parent.parent / "data" / "raw_data" / "FK161229_607994_r2rnav.geocsv"
+
+    @pytest.fixture
+    def r2r_provider(self):
+        """R2R provider instance."""
+        return R2RProvider()
+
+    def test_r2r_provider_basic_properties(self, r2r_provider):
+        """Test R2R provider has correct basic properties."""
+        assert r2r_provider.name == "r2r"
+        assert "geotrack" in r2r_provider.supported_modules
+        assert r2r_provider.supports_module("geotrack")
+
+    def test_r2r_identify_platform(self, r2r_provider):
+        """Test platform identification from R2R filename."""
+        # R2R filenames contain cruise ID
+        assert r2r_provider.identify_platform("FK161229_607994_r2rnav.geocsv") == "FK161229"
+        assert r2r_provider.identify_platform("AT42-10_some_data.geocsv") == "AT42-10"
+        assert r2r_provider.identify_platform("NBP1402_ctd_001.geocsv") == "NBP1402"
+
+    def test_r2r_nav_file_exists(self, r2r_nav_file):
+        """Test that the R2R navigation test file exists."""
+        assert r2r_nav_file.exists(), f"Test file not found: {r2r_nav_file}"
+        assert r2r_nav_file.suffix == ".geocsv"
+
+    def test_r2r_geocsv_convert_basic(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test basic R2R GeoCSV navigation file conversion to GeoParquet."""
+        output_dir = tmp_path / "output"
+        
+        # Run conversion (convert scans for .csv and .geocsv files automatically)
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,  # Skip confirmation prompt
+        )
+        
+        # Verify output structure
+        assert output_dir.exists()
+        
+        # Check for parquet files
+        parquet_files = list(output_dir.rglob("*.parquet"))
+        assert len(parquet_files) > 0, "No parquet files generated"
+
+    def test_r2r_geocsv_column_standardization(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that R2R columns are standardized to oceanstream conventions."""
+        output_dir = tmp_path / "output"
+        
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Read one parquet file to check columns
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        df = pd.read_parquet(parquet_file)
+        
+        # Standard columns should exist
+        assert "latitude" in df.columns, "latitude column not found (should be renamed from ship_latitude)"
+        assert "longitude" in df.columns, "longitude column not found (should be renamed from ship_longitude)"
+        assert "time" in df.columns, "time column not found (should be renamed from iso_time)"
+        
+        # Original R2R columns should be renamed
+        assert "ship_latitude" not in df.columns
+        assert "ship_longitude" not in df.columns
+        assert "iso_time" not in df.columns
+
+    def test_r2r_geocsv_metadata_preservation(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that GeoCSV metadata headers are preserved in parquet metadata."""
+        output_dir = tmp_path / "output"
+        
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Read parquet metadata
+        import pyarrow.parquet as pq
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        parquet_meta = pq.read_metadata(parquet_file)
+        
+        # Check for R2R metadata keys
+        schema_meta = parquet_meta.metadata
+        
+        # Should have oceanstream:provider
+        assert b'oceanstream:provider' in schema_meta
+        assert b'r2r' in schema_meta[b'oceanstream:provider']
+        
+        # Should have r2r-specific metadata (cruise_id, DOIs, etc.)
+        # These will be added by the provider's parquet_metadata() method
+        assert b'r2r:cruise_id' in schema_meta or b'oceanstream:cruise_id' in schema_meta
+
+    def test_r2r_geocsv_units_extraction(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that units are extracted from GeoCSV #field_unit header."""
+        output_dir = tmp_path / "output"
+        
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Read parquet metadata
+        import pyarrow.parquet as pq
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        parquet_meta = pq.read_metadata(parquet_file)
+        schema_meta = parquet_meta.metadata
+        
+        # Should have units metadata
+        assert b'oceanstream:units' in schema_meta
+
+    def test_r2r_geocsv_data_integrity(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that data values are correctly preserved during conversion."""
+        output_dir = tmp_path / "output"
+        
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Read output data
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        df = pd.read_parquet(parquet_file)
+        
+        # Basic sanity checks
+        assert len(df) > 0, "No data rows in output"
+        assert df['latitude'].notna().any(), "All latitude values are NaN"
+        assert df['longitude'].notna().any(), "All longitude values are NaN"
+        
+        # Check value ranges (based on test file inspection)
+        assert df['latitude'].min() >= -90 and df['latitude'].max() <= 90
+        assert df['longitude'].min() >= -180 and df['longitude'].max() <= 180
+
+    def test_r2r_geocsv_with_stac_generation(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+        """Test that STAC metadata includes R2R-specific information."""
+        from oceanstream.config.settings import Settings
+        
+        # Enable STAC generation
+        monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
+        monkeypatch.setattr(Settings, "SEMANTIC_GENERATE_STAC", True)
+        
+        output_dir = tmp_path / "output"
+        
+        convert(
+            provider=r2r_provider,
+            input_source=r2r_nav_file.parent,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Find the campaign subdirectory (should be based on cruise_id from metadata)
+        campaign_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+        assert len(campaign_dirs) == 1, f"Expected exactly one campaign directory, found {len(campaign_dirs)}"
+        campaign_dir = campaign_dirs[0]
+        
+        # Check for STAC collection in campaign directory
+        stac_collection = campaign_dir / "stac" / "collection.json"
+        assert stac_collection.exists(), "STAC collection.json should be generated in campaign directory"
+        
+        with open(stac_collection) as f:
+            collection = json.load(f)
+        
+        # Verify STAC structure
+        assert "stac_version" in collection
+        assert "type" in collection
+        assert collection["type"] == "Collection"
+        
+        # Should have providers section
+        assert "providers" in collection
+        providers = collection.get("providers", [])
+        assert len(providers) > 0, "Should have at least one provider"
+        
+        # Note: Since there are multiple CSV files in the test directory (Saildrone + R2R),
+        # we can't assert which platform dominates. Just verify STAC was generated correctly.
+        # The R2R-specific metadata will be in parquet files (tested in other tests).
+
+    def test_r2r_multiple_geocsv_files(self, r2r_provider, tmp_path):
+        """Test handling of multiple GeoCSV files (future: multiple instruments)."""
+        # This test documents expected behavior for future multi-instrument support
+        # Currently just verify single file works
+        
+        output_dir = tmp_path / "output"
+        data_dir = Path(__file__).parent.parent / "data" / "raw_data"
+        
+        # Count available GeoCSV files
+        geocsv_files = list(data_dir.glob("*.geocsv"))
+        
+        if len(geocsv_files) > 0:
+            convert(
+                provider=r2r_provider,
+                input_source=data_dir,
+                output_dir=output_dir,
+                verbose=True,
+                yes=True,
+            )
+            
+            # Should successfully process
+            assert output_dir.exists()
+            parquet_files = list(output_dir.rglob("*.parquet"))
+            assert len(parquet_files) > 0
+
+    def test_r2r_campaign_id_from_metadata(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that campaign_id is populated from GeoCSV cruise_id metadata."""
+        output_dir = tmp_path / "output"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # Convert without explicit campaign_id - should use cruise_id from metadata
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Read parquet file and check campaign_id
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        df = pd.read_parquet(parquet_file)
+        
+        # campaign_id column should exist
+        assert "campaign_id" in df.columns, "campaign_id column not found"
+        
+        # All rows should have campaign_id populated (from cruise_id metadata)
+        assert not df["campaign_id"].isna().any(), "campaign_id should not have null values"
+        
+        # Should match the cruise_id from the GeoCSV metadata
+        expected_cruise_id = "FK161229"  # From the test file
+        assert (df["campaign_id"] == expected_cruise_id).all(), f"campaign_id should be {expected_cruise_id}"
+
+    def test_r2r_campaign_id_user_override(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that user-supplied campaign_id overrides metadata cruise_id."""
+        output_dir = tmp_path / "output"
+        user_campaign_id = "MY_CUSTOM_CAMPAIGN_2024"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # Convert with explicit campaign_id
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+            campaign_id=user_campaign_id,
+        )
+        
+        # Read parquet file and check campaign_id
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        df = pd.read_parquet(parquet_file)
+        
+        # campaign_id should be the user-supplied value, not the metadata cruise_id
+        assert "campaign_id" in df.columns
+        assert (df["campaign_id"] == user_campaign_id).all(), \
+            f"campaign_id should be user-supplied value '{user_campaign_id}'"
+
+    def test_r2r_platform_id_override(self, r2r_nav_file, r2r_provider, tmp_path):
+        """Test that user-supplied platform_id overrides auto-detected platform_id."""
+        output_dir = tmp_path / "output"
+        user_platform_id = "RV_CUSTOM_PLATFORM"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # Convert with explicit platform_id
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+            platform_id=user_platform_id,
+        )
+        
+        # Read parquet file and check platform_id
+        parquet_file = next(output_dir.rglob("*.parquet"))
+        df = pd.read_parquet(parquet_file)
+        
+        # platform_id should be the user-supplied value
+        assert "platform_id" in df.columns
+        assert (df["platform_id"] == user_platform_id).all(), \
+            f"platform_id should be user-supplied value '{user_platform_id}'"
+
+    def test_r2r_campaign_id_in_stac_metadata(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+        """Test that campaign_id appears in STAC metadata."""
+        from oceanstream.config.settings import Settings
+        
+        # Enable STAC generation
+        monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
+        monkeypatch.setattr(Settings, "SEMANTIC_GENERATE_STAC", True)
+        
+        output_dir = tmp_path / "output"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # Convert without explicit campaign_id - should use cruise_id from metadata
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Find the campaign subdirectory
+        campaign_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+        assert len(campaign_dirs) == 1, f"Expected exactly one campaign directory"
+        campaign_dir = campaign_dirs[0]
+        
+        # Check for STAC collection in campaign directory
+        stac_collection = campaign_dir / "stac" / "collection.json"
+        assert stac_collection.exists(), "STAC collection.json should be generated in campaign directory"
+        
+        with open(stac_collection) as f:
+            collection = json.load(f)
+        
+        # Verify STAC structure
+        assert "summaries" in collection
+        assert "platform" in collection["summaries"]
+        
+        platform_metadata = collection["summaries"]["platform"]
+        
+        # campaign_id should be in platform metadata
+        assert "campaign_id" in platform_metadata, "campaign_id should be in STAC platform metadata"
+        assert platform_metadata["campaign_id"] == "FK161229", \
+            f"campaign_id should be 'FK161229' from GeoCSV metadata, got '{platform_metadata.get('campaign_id')}'"
+        
+        # platform_id should also be present
+        assert "platform_id" in platform_metadata, "platform_id should be in STAC platform metadata"
+        
+        # Check STAC items for campaign_id in properties
+        items_dir = campaign_dir / "stac" / "items"
+        assert items_dir.exists(), "STAC items directory should exist in campaign folder"
+        
+        item_files = list(items_dir.glob("item-*.json"))
+        assert len(item_files) > 0, "Should have at least one STAC item"
+        
+        # Check first item
+        with open(item_files[0]) as f:
+            item = json.load(f)
+        
+        assert "properties" in item
+        assert "campaign_id" in item["properties"], "campaign_id should be in STAC item properties"
+        assert item["properties"]["campaign_id"] == "FK161229", \
+            f"item campaign_id should be 'FK161229', got '{item['properties'].get('campaign_id')}'"
+        assert "platform_id" in item["properties"], "platform_id should be in STAC item properties"
+
+    def test_r2r_provenance_metadata_in_stac(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+        """Test that R2R provenance metadata (attribution, DOIs) appears in STAC."""
+        from oceanstream.config.settings import Settings
+        
+        # Enable STAC generation
+        monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
+        monkeypatch.setattr(Settings, "SEMANTIC_GENERATE_STAC", True)
+        
+        output_dir = tmp_path / "output"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # Convert - should extract provenance metadata from GeoCSV headers
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+        )
+        
+        # Find the campaign subdirectory
+        campaign_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+        assert len(campaign_dirs) == 1, f"Expected exactly one campaign directory"
+        campaign_dir = campaign_dirs[0]
+        
+        # Check for STAC collection in campaign directory
+        stac_collection = campaign_dir / "stac" / "collection.json"
+        assert stac_collection.exists(), "STAC collection.json should be generated in campaign directory"
+        
+        with open(stac_collection) as f:
+            collection = json.load(f)
+        
+        # Verify provenance metadata is in platform summaries
+        assert "summaries" in collection
+        assert "platform" in collection["summaries"]
+        
+        platform_metadata = collection["summaries"]["platform"]
+        
+        # Check for R2R-specific metadata from GeoCSV headers
+        assert "attribution" in platform_metadata, "attribution should be in STAC platform metadata"
+        assert "R2R" in platform_metadata["attribution"] or "Rolling Deck" in platform_metadata["attribution"], \
+            "attribution should mention R2R"
+        
+        assert "source_repository" in platform_metadata, "source_repository should be in STAC platform metadata"
+        assert "doi:" in platform_metadata["source_repository"].lower(), \
+            "source_repository should be a DOI"
+        
+        # creation_date may or may not be present depending on the file
+        # source_dataset should be present from R2R GeoCSV
+        assert "source_dataset" in platform_metadata, "source_dataset should be in STAC platform metadata"
+
+    def test_r2r_user_supplied_provenance_metadata(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+        """Test that user-supplied provenance metadata overrides file metadata."""
+        from oceanstream.config.settings import Settings
+        
+        # Enable STAC generation
+        monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
+        monkeypatch.setattr(Settings, "SEMANTIC_GENERATE_STAC", True)
+        
+        output_dir = tmp_path / "output"
+        
+        # Create a temporary directory with only the R2R file
+        temp_input_dir = tmp_path / "input"
+        temp_input_dir.mkdir()
+        import shutil
+        shutil.copy(r2r_nav_file, temp_input_dir / r2r_nav_file.name)
+        
+        # User-supplied provenance metadata
+        user_attribution = "Custom Attribution 2024"
+        user_creation_date = "2024-11-09T00:00:00Z"
+        user_source_dataset = "doi:10.5555/custom_dataset"
+        user_source_repository = "doi:10.5555/custom_repo"
+        
+        # Convert with user-supplied metadata
+        convert(
+            provider=r2r_provider,
+            input_source=temp_input_dir,
+            output_dir=output_dir,
+            verbose=True,
+            yes=True,
+            attribution=user_attribution,
+            creation_date=user_creation_date,
+            source_dataset=user_source_dataset,
+            source_repository=user_source_repository,
+        )
+        
+        # Find the campaign subdirectory
+        campaign_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+        assert len(campaign_dirs) == 1, f"Expected exactly one campaign directory"
+        campaign_dir = campaign_dirs[0]
+        
+        # Check for STAC collection in campaign directory
+        stac_collection = campaign_dir / "stac" / "collection.json"
+        assert stac_collection.exists(), "STAC collection.json should be generated in campaign directory"
+        
+        with open(stac_collection) as f:
+            collection = json.load(f)
+        
+        platform_metadata = collection["summaries"]["platform"]
+        
+        # User-supplied values should override file metadata
+        assert platform_metadata["attribution"] == user_attribution, \
+            f"attribution should be user-supplied value, got '{platform_metadata.get('attribution')}'"
+        assert platform_metadata["creation_date"] == user_creation_date, \
+            f"creation_date should be user-supplied value, got '{platform_metadata.get('creation_date')}'"
+        assert platform_metadata["source_dataset"] == user_source_dataset, \
+            f"source_dataset should be user-supplied value, got '{platform_metadata.get('source_dataset')}'"
+        assert platform_metadata["source_repository"] == user_source_repository, \
+            f"source_repository should be user-supplied value, got '{platform_metadata.get('source_repository')}'"

@@ -54,15 +54,14 @@ if typer:
         help="Convert CSV files into standardized GeoParquet datasets (and optionally PMTiles).",
     )
     def convert_command(
-        input_dir: Path = typer.Option(
+        input_source: Path = typer.Option(
             Path("raw_data"),
             exists=True,
-            file_okay=False,
-            help="Directory containing input CSV files (default: ./raw_data).",
+            help="Path to a CSV file or directory containing CSV files (default: ./raw_data).",
         ),
         output_dir: Path = typer.Option(
             Path("out/geoparquet"),
-            help="Output directory for the partitioned GeoParquet dataset (ignored with --list-columns/--print-schema).",
+            help="Base output directory for the partitioned GeoParquet dataset (campaign-based subdirectories will be created).",
         ),
         upload: bool = typer.Option(False, help="Upload processed dataset to cloud storage (future)."),
         verbose: bool = typer.Option(False, "-v", help="Emit detailed progress information."),
@@ -79,6 +78,12 @@ if typer:
         pmtiles_time_gap: int = typer.Option(60, help="Time gap in minutes to split track segments for PMTiles."),
         pmtiles_include_measurements: bool = typer.Option(True, help="Include oceanographic measurements in PMTiles."),
         pmtiles_measurement_columns: list[str] = typer.Option(None, help="Specific measurement columns to include (defaults to auto-selected important ones)."),
+        campaign_id: str = typer.Option(None, help="Campaign/cruise identifier (REQUIRED - provide if not auto-detected from filenames/metadata)."),
+        platform_id: str = typer.Option(None, help="Platform identifier (overrides auto-detection from filenames)."),
+        attribution: str = typer.Option(None, help="Data attribution/citation (overrides provider/file metadata)."),
+        creation_date: str = typer.Option(None, help="Data creation date in ISO 8601 format (overrides provider/file metadata)."),
+        source_dataset: str = typer.Option(None, help="Source dataset DOI (overrides provider/file metadata)."),
+        source_repository: str = typer.Option(None, help="Source repository DOI (overrides provider/file metadata)."),
     ) -> None:
         global _provider_obj
         provider_obj = _provider_obj
@@ -93,7 +98,7 @@ if typer:
         try:
             geotrack.convert(
                 provider=provider_obj,
-                input_dir=input_dir,
+                input_source=input_source,
                 output_dir=output_dir,
                 verbose=verbose,
                 list_columns=list_columns,
@@ -110,6 +115,12 @@ if typer:
                 pmtiles_time_gap=pmtiles_time_gap,
                 pmtiles_include_measurements=pmtiles_include_measurements,
                 pmtiles_measurement_columns=pmtiles_measurement_columns,
+                campaign_id=campaign_id,
+                platform_id=platform_id,
+                attribution=attribution,
+                creation_date=creation_date,
+                source_dataset=source_dataset,
+                source_repository=source_repository,
             )
         except FileNotFoundError as e:
             typer.echo(f"[geotrack] ERROR: {e}")
