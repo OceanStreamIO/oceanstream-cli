@@ -1,0 +1,12 @@
+[run]
+branch = True
+source = oceanstream
+omit = 
+    */tests/*
+    */__init__.py
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 80
+precision = 1

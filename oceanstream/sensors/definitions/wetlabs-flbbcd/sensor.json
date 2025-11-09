@@ -1,0 +1,20 @@
+{
+  "id": "wetlabs-flbbcd",
+  "name": "WET Labs ECO Puck FLBBCD",
+  "manufacturer": "Sea-Bird Scientific (WET Labs)",
+  "model": "ECO Puck FLBBCD",
+  "sensor_type": "fluorometer",
+  "description": "Three-parameter fluorometer for chlorophyll-a, CDOM, and backscatter",
+  "variables": [
+    "CHLOR_WETLABS_MEAN",
+    "CHLOR_WETLABS_STDDEV"
+  ],
+  "specifications": {
+    "chlorophyll_range": "0.03 to 75 µg/L",
+    "chlorophyll_resolution": "0.01 µg/L",
+    "sampling_rate": "10-minute average"
+  },
+  "documentation_url": "https://www.seabird.com/eco-puck-series/product?id=60762467726",
+  "typical_depth": "0.6m",
+  "typical_mount": "integrated with CTD"
+}

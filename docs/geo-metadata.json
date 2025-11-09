@@ -1,0 +1,13 @@
+{
+  "version": "1.1.0",
+  "primary_column": "geometry",
+  "columns": {
+    "geometry": {
+      "encoding": "WKB",
+      "geometry_types": ["Point"],
+      "crs": "EPSG:4326",
+      "orientation": "counterclockwise",
+      "bbox": null
+    }
+  }
+}

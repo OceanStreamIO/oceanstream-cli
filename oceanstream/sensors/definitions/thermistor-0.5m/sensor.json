@@ -1,0 +1,21 @@
+{
+  "id": "thermistor-0.5m",
+  "name": "Hull-Mounted Thermistor",
+  "manufacturer": "Sea-Bird Scientific",
+  "model": "SBE 56",
+  "sensor_type": "thermistor",
+  "description": "High-accuracy temperature sensor at 0.5m depth",
+  "variables": [
+    "TEMP_DEPTH_HALFMETER_MEAN",
+    "TEMP_DEPTH_HALFMETER_STDDEV"
+  ],
+  "specifications": {
+    "temperature_range": "-5 to +35°C",
+    "accuracy": "±0.002°C",
+    "resolution": "0.0001°C",
+    "response_time": "0.6 s"
+  },
+  "documentation_url": "https://www.seabird.com/sbe-56-temperature-sensor/product?id=60762467729",
+  "typical_depth": "0.5m",
+  "typical_mount": "hull-mounted"
+}

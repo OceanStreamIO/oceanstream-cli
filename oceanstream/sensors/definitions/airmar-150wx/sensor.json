@@ -1,0 +1,42 @@
+{
+  "id": "airmar-150wx",
+  "name": "Airmar 150WX WeatherStation",
+  "manufacturer": "Airmar Technology Corporation",
+  "model": "150WX",
+  "sensor_type": "meteorological",
+  "description": "Integrated weather station measuring wind, air temperature, humidity, and pressure",
+  "variables": [
+    "WIND_FROM_MEAN",
+    "WIND_FROM_STDDEV",
+    "WIND_SPEED_MEAN",
+    "WIND_SPEED_STDDEV",
+    "UWND_MEAN",
+    "UWND_STDDEV",
+    "VWND_MEAN",
+    "VWND_STDDEV",
+    "WWND_MEAN",
+    "WWND_STDDEV",
+    "GUST_WND_MEAN",
+    "GUST_WND_STDDEV",
+    "TEMP_AIR_MEAN",
+    "TEMP_AIR_STDDEV",
+    "RH_MEAN",
+    "RH_STDDEV",
+    "BARO_PRES_MEAN",
+    "BARO_PRES_STDDEV"
+  ],
+  "specifications": {
+    "wind_speed_range": "0-40 m/s",
+    "wind_speed_accuracy": "±0.3 m/s or 3%",
+    "wind_direction_accuracy": "±2°",
+    "temperature_range": "-40 to +80°C",
+    "temperature_accuracy": "±0.3°C",
+    "humidity_range": "0-100%",
+    "humidity_accuracy": "±3%",
+    "pressure_range": "300-1100 hPa",
+    "pressure_accuracy": "±0.5 hPa"
+  },
+  "documentation_url": "https://www.airmar.com/weather-description.html?id=154",
+  "typical_depth": "wing-mounted, ~5m above sea level",
+  "typical_mount": "wing"
+}

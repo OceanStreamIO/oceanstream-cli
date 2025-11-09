@@ -1,0 +1,23 @@
+{
+  "id": "kipp-zonen-cmp",
+  "name": "Kipp & Zonen CMP Series Pyranometer",
+  "manufacturer": "Kipp & Zonen",
+  "model": "CMP Series",
+  "sensor_type": "radiation",
+  "description": "Pyranometer for total and diffuse shortwave irradiance",
+  "variables": [
+    "SW_IRRAD_TOTAL_MEAN",
+    "SW_IRRAD_TOTAL_STDDEV",
+    "SW_IRRAD_DIFFUSE_MEAN",
+    "SW_IRRAD_DIFFUSE_STDDEV"
+  ],
+  "specifications": {
+    "spectral_range": "285-2800 nm",
+    "sensitivity": "5-20 µV/W/m²",
+    "response_time": "<5 s (95%)",
+    "directional_error": "<10 W/m²"
+  },
+  "documentation_url": "https://www.kippzonen.com/Product/11/CMP-series",
+  "typical_depth": "wing-mounted",
+  "typical_mount": "wing, upper side"
+}

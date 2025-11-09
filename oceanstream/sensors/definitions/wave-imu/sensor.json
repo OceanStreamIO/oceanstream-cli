@@ -1,0 +1,18 @@
+{
+  "id": "wave-imu",
+  "name": "IMU-Derived Wave Sensor",
+  "manufacturer": "Saildrone",
+  "model": "Proprietary",
+  "sensor_type": "wave",
+  "description": "Wave height and period derived from IMU motion data",
+  "variables": [
+    "WAVE_DOMINANT_PERIOD",
+    "WAVE_SIGNIFICANT_HEIGHT"
+  ],
+  "specifications": {
+    "period_range": "2-25 s",
+    "height_range": "0-10 m",
+    "processing": "Spectral analysis of IMU data"
+  },
+  "typical_mount": "hull IMU"
+}

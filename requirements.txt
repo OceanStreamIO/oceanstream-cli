@@ -1,0 +1,5 @@
+pandas>=2.1
+pyarrow>=14
+azure-storage-blob>=12.19
+# Optional
+geopandas>=0.14

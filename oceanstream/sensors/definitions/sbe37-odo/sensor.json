@@ -1,0 +1,32 @@
+{
+  "id": "sbe37-odo",
+  "name": "Sea-Bird SBE 37-SMP-ODO MicroCAT",
+  "manufacturer": "Sea-Bird Scientific",
+  "model": "SBE 37-SMP-ODO",
+  "sensor_type": "ctd",
+  "description": "CTD (Conductivity, Temperature, Depth) with integrated dissolved oxygen sensor",
+  "variables": [
+    "TEMP_SBE37_MEAN",
+    "TEMP_SBE37_STDDEV",
+    "SAL_SBE37_MEAN",
+    "SAL_SBE37_STDDEV",
+    "COND_SBE37_MEAN",
+    "COND_SBE37_STDDEV",
+    "O2_CONC_SBE37_MEAN",
+    "O2_CONC_SBE37_STDDEV",
+    "O2_SAT_SBE37_MEAN",
+    "O2_SAT_SBE37_STDDEV"
+  ],
+  "specifications": {
+    "temperature_range": "-5 to +35°C",
+    "temperature_accuracy": "±0.002°C",
+    "conductivity_range": "0 to 9 S/m",
+    "conductivity_accuracy": "±0.0003 S/m",
+    "oxygen_range": "120% of surface saturation (0-500 µmol/kg)",
+    "oxygen_accuracy": "±2% of saturation or 2 µmol/kg",
+    "sampling_rate": "10-minute average"
+  },
+  "documentation_url": "https://www.seabird.com/sbe-37smp-odo-microcat-ctd/product?id=60762467708",
+  "typical_depth": "0.6m",
+  "typical_mount": "hull-mounted, forward of keel"
+}

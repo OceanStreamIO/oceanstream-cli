@@ -1,0 +1,21 @@
+{
+  "id": "apogee-si111",
+  "name": "Apogee SI-111 Infrared Radiometer",
+  "manufacturer": "Apogee Instruments",
+  "model": "SI-111",
+  "sensor_type": "radiation",
+  "description": "Narrow field-of-view infrared radiometer for sea surface temperature",
+  "variables": [
+    "TEMP_IR_SEA_WING_UNCOMP_MEAN",
+    "TEMP_IR_SEA_WING_UNCOMP_STDDEV"
+  ],
+  "specifications": {
+    "temperature_range": "-40 to +80°C",
+    "accuracy": "±0.2°C (at 15-35°C)",
+    "field_of_view": "22° half angle",
+    "spectral_range": "8-14 µm"
+  },
+  "documentation_url": "https://www.apogeeinstruments.com/si-111-infrared-radiometer/",
+  "typical_depth": "wing-mounted, viewing sea surface",
+  "typical_mount": "wing, lower side"
+}
