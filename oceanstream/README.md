@@ -139,6 +139,72 @@ Oceanstream is organized into separate processing modules:
 
 Each module can be installed independently using pip extras (see Installation section).
 
+## Using OceanStream Data in GIS Tools
+
+OceanStream generates cloud-optimized GeoParquet files designed to work seamlessly with modern GIS tools and data analysis frameworks. Our output includes:
+
+- **GeoParquet**: Columnar format with embedded geometry and spatial partitioning
+- **STAC Metadata**: Standard catalog format for discovery and integration
+- **PMTiles** (optional): Vector tiles for web-based visualization
+
+### Comprehensive GIS Integration Guides
+
+We provide detailed integration guides for popular GIS tools and frameworks:
+
+**Desktop GIS:**
+- [QGIS](../docs/gis-integration/qgis.md) - Open-source desktop GIS
+- [ArcGIS Pro](../docs/gis-integration/arcgis-pro.md) - Professional ESRI platform
+
+**Data Analysis:**
+- [DuckDB](../docs/gis-integration/duckdb.md) - Fast in-process SQL analytics
+- [GeoPandas](../docs/gis-integration/geopandas.md) - Python spatial data analysis
+
+**Web GIS** (coming soon):
+- Leaflet + PMTiles
+- Mapbox GL JS
+- STAC Browser
+
+**See [GIS Integration Documentation](../docs/gis-integration/) for complete guides with:**
+- Installation instructions
+- Step-by-step usage examples
+- Code samples and workflows
+- Performance optimization tips
+- Troubleshooting guides
+
+### Quick Start Examples
+
+**Load in QGIS:**
+```bash
+# Generate data
+oceanstream process geotrack --input-source ./data/sample.csv --output-dir ./output
+
+# Open QGIS and drag-and-drop .parquet files from:
+# output/campaign_id/lat_bin=X/lon_bin=Y/*.parquet
+```
+
+**Query with DuckDB:**
+```sql
+INSTALL spatial;
+LOAD spatial;
+
+SELECT time, latitude, longitude, temperature_sea_water
+FROM read_parquet('output/campaign_id/**/*.parquet')
+WHERE lat_bin = 30 AND lon_bin = -120
+LIMIT 10;
+```
+
+**Analyze with GeoPandas:**
+```python
+import geopandas as gpd
+
+# Read all spatial partitions
+gdf = gpd.read_parquet('output/campaign_id/')
+
+# Filter and analyze
+warm_water = gdf[gdf['temperature_sea_water'] > 25]
+print(f"Found {len(warm_water)} warm water measurements")
+```
+
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request for any enhancements or bug fixes.

@@ -3,7 +3,7 @@ from typing import Type
 
 from .base import ProviderBase
 from .saildrone import SaildroneProvider
-from .r2r import R2RProvider
+from .r2r.r2r import R2RProvider
 
 _REGISTRY: dict[str, Type[ProviderBase]] = {
     "saildrone": SaildroneProvider,

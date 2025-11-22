@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,9 +19,9 @@ def reload_settings_module(monkeypatch, env: dict[str, str] | None = None):
     for key in [
         "AZURE_STORAGE_CONNECTION_STRING",
         "AZURE_CONTAINER_NAME",
-        "LOCAL_OUTPUT_PATH",
+        "OUTPUT_PATH",
         "RAW_DATA_PATH",
-        "GEOPARQUET_OUTPUT_PATH",
+        "METADATA_DIR",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -42,18 +43,19 @@ def test_settings_defaults(monkeypatch):
     # Defaults when env not set
     assert Settings.AZURE_STORAGE_CONNECTION_STRING is None
     assert Settings.AZURE_CONTAINER_NAME is None
-    assert Settings.LOCAL_OUTPUT_PATH == "data/output"
+    assert Settings.OUTPUT_PATH == "data/output"
     assert Settings.RAW_DATA_PATH == "data/raw_data"
-    assert Settings.GEOPARQUET_OUTPUT_PATH == "data/geoparquet"
+    # METADATA_DIR should default to ~/.oceanstream/metadata
+    assert Settings.METADATA_DIR == Path.home() / ".oceanstream" / "metadata"
 
 
 def test_settings_env_overrides(monkeypatch, tmp_path):
     env = {
         "AZURE_STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true;",
         "AZURE_CONTAINER_NAME": "test-container",
-        "LOCAL_OUTPUT_PATH": str(tmp_path / "out"),
+        "OUTPUT_PATH": str(tmp_path / "out"),
         "RAW_DATA_PATH": str(tmp_path / "raw"),
-        "GEOPARQUET_OUTPUT_PATH": str(tmp_path / "gpq"),
+        "METADATA_DIR": str(tmp_path / "metadata"),
     }
 
     mod = reload_settings_module(monkeypatch, env)
@@ -61,6 +63,14 @@ def test_settings_env_overrides(monkeypatch, tmp_path):
 
     assert Settings.AZURE_STORAGE_CONNECTION_STRING == env["AZURE_STORAGE_CONNECTION_STRING"]
     assert Settings.AZURE_CONTAINER_NAME == env["AZURE_CONTAINER_NAME"]
-    assert Settings.LOCAL_OUTPUT_PATH == env["LOCAL_OUTPUT_PATH"]
+    assert Settings.OUTPUT_PATH == env["OUTPUT_PATH"]
     assert Settings.RAW_DATA_PATH == env["RAW_DATA_PATH"]
-    assert Settings.GEOPARQUET_OUTPUT_PATH == env["GEOPARQUET_OUTPUT_PATH"]
+    assert Settings.METADATA_DIR == Path(env["METADATA_DIR"])
+
+
+def test_metadata_dir_is_path_object(monkeypatch):
+    """Test that METADATA_DIR is a Path object."""
+    mod = reload_settings_module(monkeypatch)
+    Settings = mod.Settings
+    
+    assert isinstance(Settings.METADATA_DIR, Path)

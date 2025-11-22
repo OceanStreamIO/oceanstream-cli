@@ -89,6 +89,12 @@ def test_cli_geotrack_with_pmtiles(tmp_path: Path, monkeypatch):
 @pytest.mark.integration
 def test_cli_geotrack_without_pmtiles(tmp_path: Path, monkeypatch):
     """Test that PMTiles is not generated when flag is not provided."""
+    # Use isolated metadata directory
+    metadata_dir = tmp_path / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    from oceanstream.config.settings import Settings
+    monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+    
     in_dir = tmp_path / "in"
     out_dir = tmp_path / "out"
     in_dir.mkdir(parents=True)
@@ -136,6 +142,12 @@ def test_cli_geotrack_without_pmtiles(tmp_path: Path, monkeypatch):
 @pytest.mark.integration
 def test_cli_geotrack_pmtiles_missing_tools(tmp_path: Path, monkeypatch):
     """Test graceful failure when PMTiles tools are missing."""
+    # Use isolated metadata directory
+    metadata_dir = tmp_path / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    from oceanstream.config.settings import Settings
+    monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+    
     in_dir = tmp_path / "in"
     out_dir = tmp_path / "out"
     in_dir.mkdir(parents=True)

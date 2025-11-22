@@ -22,6 +22,7 @@ tqdm = ">=4.66"
 # Optional dependencies for specific processing modules
 geopandas = { version = ">=0.14", optional = true }
 shapely = { version = ">=2.0", optional = true }
+pynmea2 = { version = ">=1.18", optional = true }
 echopype = { version = ">=0.8", optional = true }
 xarray = { version = ">=2023.1", optional = true }
 zarr = { version = ">=2.16", optional = true }
@@ -29,14 +30,14 @@ netcdf4 = { version = ">=1.6", optional = true }
 
 [tool.poetry.extras]
 # Processing module extras
-geotrack = ["geopandas", "shapely"]
+geotrack = ["geopandas", "shapely", "pynmea2"]
 echodata = ["echopype", "xarray", "zarr", "netcdf4"]
 multibeam = []  # Future: MB-System Python bindings when available
 adcp = []  # Future: ADCP processing libraries
 
 # Convenience extras
-all = ["geopandas", "shapely", "echopype", "xarray", "zarr", "netcdf4"]
-geo = ["geopandas", "shapely"]  # Legacy alias for geotrack
+all = ["geopandas", "shapely", "pynmea2", "echopype", "xarray", "zarr", "netcdf4"]
+geo = ["geopandas", "shapely", "pynmea2"]  # Legacy alias for geotrack
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

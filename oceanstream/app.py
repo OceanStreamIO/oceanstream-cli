@@ -8,7 +8,7 @@ Steps:
    AZURE_CONTAINER_NAME and AZURE_STORAGE_CONNECTION_STRING are set.
 
 Environment variables (see .env.example):
-  RAW_DATA_PATH, GEOPARQUET_OUTPUT_PATH, LOCAL_OUTPUT_PATH,
+  RAW_DATA_PATH, OUTPUT_PATH,
   AZURE_STORAGE_CONNECTION_STRING, AZURE_CONTAINER_NAME
 
 This module is for illustrative / manual experimentation. For production use
@@ -31,7 +31,7 @@ def main() -> None:
     settings = Settings()
 
     raw_data_path = Path(settings.RAW_DATA_PATH)
-    geoparquet_root = Path(settings.GEOPARQUET_OUTPUT_PATH)
+    output_root = Path(settings.OUTPUT_PATH)
 
     df = read_csv_files(str(raw_data_path))
     lat_bins, lon_bins = suggest_lat_lon_bins_from_data(df)
@@ -42,7 +42,7 @@ def main() -> None:
 
     write_geoparquet(
         df,
-        geoparquet_root,
+        output_root,
         lat_bins,
         lon_bins,
         units_metadata=units,
@@ -51,7 +51,7 @@ def main() -> None:
 
     # Upload the first parquet file produced (if any) as a demonstration.
     if settings.AZURE_CONTAINER_NAME and settings.AZURE_STORAGE_CONNECTION_STRING:
-        first_parquet = next(iter(geoparquet_root.rglob("*.parquet")), None)
+        first_parquet = next(iter(output_root.rglob("*.parquet")), None)
         if first_parquet is not None:
             upload_to_azure_blob(
                 file_path=str(first_parquet),

@@ -1,0 +1,29 @@
+{
+  "id": "valeport-minisvs",
+  "name": "Valeport MiniSVS Sound Velocity Sensor",
+  "manufacturer": "Valeport",
+  "model": "MiniSVS",
+  "sensor_type": "acoustic",
+  "description": "High-precision sound velocity sensor for measuring the speed of sound in seawater, essential for acoustic oceanography and bathymetric surveying. Optional temperature or pressure sensor (mutually exclusive configurations).",
+  "variables": [
+    "SOUND_VELOCITY",
+    "TEMPERATURE",
+    "PRESSURE"
+  ],
+  "specifications": {
+    "velocity_range": "1375-1900 m/s",
+    "velocity_accuracy": "±0.017 to ±0.020 m/s (sensor size dependent)",
+    "velocity_resolution": "0.001 m/s",
+    "temperature_range": "-5 to +35°C (optional sensor)",
+    "temperature_accuracy": "±0.01°C",
+    "temperature_resolution": "0.001°C",
+    "pressure_range": "Configurable: 5, 10, 20, 30, 50, 100, or 600 Bar (optional sensor)",
+    "pressure_accuracy": "±0.05% FS",
+    "pressure_resolution": "0.001% range",
+    "sampling_rate": "Up to 8 Hz (SV+P), 16 Hz (SV+T), 60 Hz (SV only)",
+    "depth_rating": "6000 m (titanium housing)"
+  },
+  "documentation_url": "https://www.valeport.co.uk/products/minisvs",
+  "typical_depth": "hull-mounted or profiling",
+  "typical_mount": "hull or CTD rosette"
+}

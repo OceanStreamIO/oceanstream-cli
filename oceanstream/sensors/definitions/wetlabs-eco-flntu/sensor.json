@@ -1,0 +1,24 @@
+{
+  "id": "wetlabs-eco-flntu",
+  "name": "WET Labs ECO-FLNTU Fluorometer",
+  "manufacturer": "WET Labs (Sea-Bird Scientific)",
+  "model": "ECO-FLNTU",
+  "sensor_type": "fluorometer",
+  "description": "Combined fluorometer and turbidity sensor for measuring chlorophyll fluorescence and turbidity in seawater",
+  "variables": [
+    "CHL_FLUOR",
+    "TURBIDITY",
+    "BACKSCATTER"
+  ],
+  "specifications": {
+    "chlorophyll_range": "0-50 μg/L",
+    "chlorophyll_resolution": "0.025 μg/L",
+    "turbidity_range": "0-25 NTU",
+    "turbidity_resolution": "0.01 NTU",
+    "sampling_rate": "6 Hz",
+    "depth_rating": "600 m"
+  },
+  "documentation_url": "https://www.seabird.com/eco-flntu/product?id=54627923875",
+  "typical_depth": "near-surface or hull-mounted",
+  "typical_mount": "hull or CTD rosette"
+}

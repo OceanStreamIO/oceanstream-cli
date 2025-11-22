@@ -131,8 +131,32 @@ class SaildroneProvider(ProviderBase):
     }
 
     def identify_platform(self, filename: str) -> str | None:
-        # Convention: e.g., sd1030_tpos_2023_*.csv -> platform_id "sd1030"
-        parts = filename.split("_")
+        """Extract platform/campaign ID from Saildrone filename.
+        
+        Saildrone filename format: sd{drone_id}_{mission}_{year}_{hash}_{hash}_{hash}.csv
+        Returns: sd{drone_id}_{mission}_{year} (matches ERDDAP Dataset ID pattern)
+        
+        This ensures campaign_id aligns with NOAA PMEL ERDDAP server conventions.
+        Example: sd1030_tpos_2023_7ef2_e8f7_98f9.csv → sd1030_tpos_2023
+        
+        Args:
+            filename: Name of the Saildrone CSV file
+            
+        Returns:
+            Platform ID in format sd{id}_{mission}_{year}, or None if not parsable
+        """
+        # Remove file extension
+        name_without_ext = filename.rsplit('.', 1)[0]
+        parts = name_without_ext.split("_")
+        
+        # Saildrone format: sd{id}_{mission}_{year}_{hash}_{hash}_{hash}
+        # We want: sd{id}_{mission}_{year}
+        if len(parts) >= 3 and parts[0].startswith('sd') and parts[0][2:].isdigit():
+            # Check if third part looks like a year (4 digits)
+            if len(parts[2]) == 4 and parts[2].isdigit():
+                return f"{parts[0]}_{parts[1]}_{parts[2]}"
+        
+        # Fallback: return first part (drone ID only) for older formats
         return parts[0] if parts else None
 
     def enrich_dataframe(self, df: pd.DataFrame, metadata: dict | None = None) -> pd.DataFrame:

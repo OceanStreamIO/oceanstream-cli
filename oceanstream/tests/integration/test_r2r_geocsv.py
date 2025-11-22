@@ -1,20 +1,35 @@
 """Integration tests for R2R GeoCSV navigation data processing."""
 import pytest
 import json
+import shutil
 from pathlib import Path
 import pandas as pd
 
 from oceanstream.geotrack.processor import convert
 from oceanstream.providers.r2r import R2RProvider
+from oceanstream.config.settings import Settings
 
 
 class TestR2RGeoCSVNavigation:
     """Integration tests for R2R GeoCSV navigation file conversion."""
 
     @pytest.fixture
-    def r2r_nav_file(self):
-        """Path to R2R navigation GeoCSV test file."""
-        return Path(__file__).parent.parent / "data" / "raw_data" / "FK161229_607994_r2rnav.geocsv"
+    def metadata_dir(self, tmp_path):
+        """Isolated metadata directory for each test."""
+        metadata_dir = tmp_path / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+        return metadata_dir
+
+    @pytest.fixture
+    def r2r_nav_file(self, tmp_path):
+        """Path to R2R navigation GeoCSV test file (copied to tmp for isolation)."""
+        source_file = Path(__file__).parent.parent / "data" / "raw_data" / "FK161229_607994_r2rnav.geocsv"
+        # Copy to unique location for this test
+        test_data_dir = tmp_path / "test_data"
+        test_data_dir.mkdir(parents=True, exist_ok=True)
+        dest_file = test_data_dir / source_file.name
+        shutil.copy(source_file, dest_file)
+        return dest_file
 
     @pytest.fixture
     def r2r_provider(self):
@@ -39,14 +54,16 @@ class TestR2RGeoCSVNavigation:
         assert r2r_nav_file.exists(), f"Test file not found: {r2r_nav_file}"
         assert r2r_nav_file.suffix == ".geocsv"
 
-    def test_r2r_geocsv_convert_basic(self, r2r_nav_file, r2r_provider, tmp_path):
+    def test_r2r_geocsv_convert_basic(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test basic R2R GeoCSV navigation file conversion to GeoParquet."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
-        # Run conversion (convert scans for .csv and .geocsv files automatically)
+        # Run conversion on the SPECIFIC file, not directory
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,  # Skip confirmation prompt
@@ -59,13 +76,15 @@ class TestR2RGeoCSVNavigation:
         parquet_files = list(output_dir.rglob("*.parquet"))
         assert len(parquet_files) > 0, "No parquet files generated"
 
-    def test_r2r_geocsv_column_standardization(self, r2r_nav_file, r2r_provider, tmp_path):
+    def test_r2r_geocsv_column_standardization(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that R2R columns are standardized to oceanstream conventions."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,
@@ -85,13 +104,15 @@ class TestR2RGeoCSVNavigation:
         assert "ship_longitude" not in df.columns
         assert "iso_time" not in df.columns
 
-    def test_r2r_geocsv_metadata_preservation(self, r2r_nav_file, r2r_provider, tmp_path):
+    def test_r2r_geocsv_metadata_preservation(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that GeoCSV metadata headers are preserved in parquet metadata."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,
@@ -113,13 +134,15 @@ class TestR2RGeoCSVNavigation:
         # These will be added by the provider's parquet_metadata() method
         assert b'r2r:cruise_id' in schema_meta or b'oceanstream:cruise_id' in schema_meta
 
-    def test_r2r_geocsv_units_extraction(self, r2r_nav_file, r2r_provider, tmp_path):
-        """Test that units are extracted from GeoCSV #field_unit header."""
+    def test_r2r_geocsv_units_extraction(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
+        """Test extraction of units from GeoCSV column metadata."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,
@@ -134,13 +157,15 @@ class TestR2RGeoCSVNavigation:
         # Should have units metadata
         assert b'oceanstream:units' in schema_meta
 
-    def test_r2r_geocsv_data_integrity(self, r2r_nav_file, r2r_provider, tmp_path):
-        """Test that data values are correctly preserved during conversion."""
+    def test_r2r_geocsv_data_integrity(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
+        """Test data integrity after conversion (no data loss, correct types)."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,
@@ -159,9 +184,12 @@ class TestR2RGeoCSVNavigation:
         assert df['latitude'].min() >= -90 and df['latitude'].max() <= 90
         assert df['longitude'].min() >= -180 and df['longitude'].max() <= 180
 
-    def test_r2r_geocsv_with_stac_generation(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+    def test_r2r_geocsv_with_stac_generation(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that STAC metadata includes R2R-specific information."""
         from oceanstream.config.settings import Settings
+        
+        # Use isolated metadata directory
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
         
         # Enable STAC generation
         monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
@@ -171,7 +199,7 @@ class TestR2RGeoCSVNavigation:
         
         convert(
             provider=r2r_provider,
-            input_source=r2r_nav_file.parent,
+            input_source=r2r_nav_file,  # Process file directly
             output_dir=output_dir,
             verbose=True,
             yes=True,
@@ -203,8 +231,10 @@ class TestR2RGeoCSVNavigation:
         # we can't assert which platform dominates. Just verify STAC was generated correctly.
         # The R2R-specific metadata will be in parquet files (tested in other tests).
 
-    def test_r2r_multiple_geocsv_files(self, r2r_provider, tmp_path):
-        """Test handling of multiple GeoCSV files (future: multiple instruments)."""
+    def test_r2r_multiple_geocsv_files(self, r2r_provider, tmp_path, metadata_dir, monkeypatch):
+        """Test processing multiple R2R GeoCSV files in a single run."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         # This test documents expected behavior for future multi-instrument support
         # Currently just verify single file works
         
@@ -228,8 +258,10 @@ class TestR2RGeoCSVNavigation:
             parquet_files = list(output_dir.rglob("*.parquet"))
             assert len(parquet_files) > 0
 
-    def test_r2r_campaign_id_from_metadata(self, r2r_nav_file, r2r_provider, tmp_path):
-        """Test that campaign_id is populated from GeoCSV cruise_id metadata."""
+    def test_r2r_campaign_id_from_metadata(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
+        """Test extraction of campaign_id from GeoCSV metadata."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         
         # Create a temporary directory with only the R2R file
@@ -261,8 +293,10 @@ class TestR2RGeoCSVNavigation:
         expected_cruise_id = "FK161229"  # From the test file
         assert (df["campaign_id"] == expected_cruise_id).all(), f"campaign_id should be {expected_cruise_id}"
 
-    def test_r2r_campaign_id_user_override(self, r2r_nav_file, r2r_provider, tmp_path):
-        """Test that user-supplied campaign_id overrides metadata cruise_id."""
+    def test_r2r_campaign_id_user_override(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
+        """Test that user-supplied campaign_id overrides file metadata."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         user_campaign_id = "MY_CUSTOM_CAMPAIGN_2024"
         
@@ -291,8 +325,10 @@ class TestR2RGeoCSVNavigation:
         assert (df["campaign_id"] == user_campaign_id).all(), \
             f"campaign_id should be user-supplied value '{user_campaign_id}'"
 
-    def test_r2r_platform_id_override(self, r2r_nav_file, r2r_provider, tmp_path):
+    def test_r2r_platform_id_override(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that user-supplied platform_id overrides auto-detected platform_id."""
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
+        
         output_dir = tmp_path / "output"
         user_platform_id = "RV_CUSTOM_PLATFORM"
         
@@ -321,9 +357,12 @@ class TestR2RGeoCSVNavigation:
         assert (df["platform_id"] == user_platform_id).all(), \
             f"platform_id should be user-supplied value '{user_platform_id}'"
 
-    def test_r2r_campaign_id_in_stac_metadata(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+    def test_r2r_campaign_id_in_stac_metadata(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that campaign_id appears in STAC metadata."""
         from oceanstream.config.settings import Settings
+        
+        # Use isolated metadata directory
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
         
         # Enable STAC generation
         monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
@@ -389,9 +428,12 @@ class TestR2RGeoCSVNavigation:
             f"item campaign_id should be 'FK161229', got '{item['properties'].get('campaign_id')}'"
         assert "platform_id" in item["properties"], "platform_id should be in STAC item properties"
 
-    def test_r2r_provenance_metadata_in_stac(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+    def test_r2r_provenance_metadata_in_stac(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that R2R provenance metadata (attribution, DOIs) appears in STAC."""
         from oceanstream.config.settings import Settings
+        
+        # Use isolated metadata directory
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
         
         # Enable STAC generation
         monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)
@@ -445,9 +487,12 @@ class TestR2RGeoCSVNavigation:
         # source_dataset should be present from R2R GeoCSV
         assert "source_dataset" in platform_metadata, "source_dataset should be in STAC platform metadata"
 
-    def test_r2r_user_supplied_provenance_metadata(self, r2r_nav_file, r2r_provider, tmp_path, monkeypatch):
+    def test_r2r_user_supplied_provenance_metadata(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that user-supplied provenance metadata overrides file metadata."""
         from oceanstream.config.settings import Settings
+        
+        # Use isolated metadata directory
+        monkeypatch.setattr(Settings, "METADATA_DIR", metadata_dir)
         
         # Enable STAC generation
         monkeypatch.setattr(Settings, "SEMANTIC_ENABLE", True)

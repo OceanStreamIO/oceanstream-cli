@@ -103,7 +103,17 @@ def read_geocsv(file_path: str | Path) -> Tuple[pd.DataFrame, Dict[str, str]]:
     return df, metadata
 
 
-def read_csv_files(raw_data_folder: str) -> pd.DataFrame:
+def read_csv_files(raw_data_folder: str, skip_non_spatial: bool = True) -> pd.DataFrame:
+    """Read CSV files from a folder, optionally keeping files without spatial coordinates.
+    
+    Args:
+        raw_data_folder: Path to folder containing CSV files
+        skip_non_spatial: If True, skip files without lat/lon. If False, keep them
+                         for later interpolation.
+    
+    Returns:
+        Consolidated DataFrame from all CSV files
+    """
     csv_files = [f for f in os.listdir(raw_data_folder) if f.endswith('.csv')]
     data_frames: List[pd.DataFrame] = []
 
@@ -112,12 +122,23 @@ def read_csv_files(raw_data_folder: str) -> pd.DataFrame:
         df = pd.read_csv(file_path, on_bad_lines='skip', low_memory=False)
         df = df.replace(to_replace=["nan", "NaN", "NULL", "None"], value=pd.NA)
         df = df.replace(r"^\s*$", pd.NA, regex=True)
-        if 'latitude' not in df.columns or 'longitude' not in df.columns:
-            continue
-        df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
-        df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
-        df = df.dropna(subset=['latitude', 'longitude'])
-        if df.empty: continue
+        
+        has_spatial = 'latitude' in df.columns and 'longitude' in df.columns
+        
+        if not has_spatial:
+            if skip_non_spatial:
+                # Old behavior: skip files without spatial coordinates
+                continue
+            else:
+                # New behavior: keep file but mark as needing interpolation
+                print(f"[geotrack] File {csv_file} has no spatial coordinates, will attempt interpolation")
+        else:
+            # File has spatial coordinates, process normally
+            df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+            df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+            df = df.dropna(subset=['latitude', 'longitude'])
+            if df.empty: continue
+        
         df['platform_id'] = extract_platform_id(csv_file)
         df = _sanitize_column_types(df)
         na_subset = [c for c in df.columns if c != 'platform_id']
@@ -142,7 +163,37 @@ def read_csv_files(raw_data_folder: str) -> pd.DataFrame:
 
 
 def extract_platform_id(file_name: str) -> str | None:
-    return file_name.split('_')[1] if '_' in file_name else None
+    """Extract platform ID from filename.
+    
+    Handles Saildrone filename format: sd{drone_id}_{mission}_{year}_{hash}_{hash}_{hash}.csv
+    Returns: sd{drone_id}_{mission}_{year} (matches ERDDAP Dataset ID pattern)
+    
+    For other formats, returns second underscore-separated part.
+    
+    Args:
+        file_name: Name of the file (e.g., "sd1030_tpos_2023_7ef2_e8f7_98f9.csv")
+        
+    Returns:
+        Platform/campaign ID extracted from filename, or None if not extractable
+    """
+    if not file_name or '_' not in file_name:
+        return None
+    
+    # Remove file extension
+    name_without_ext = file_name.rsplit('.', 1)[0]
+    parts = name_without_ext.split('_')
+    
+    # Saildrone pattern: sd{id}_{mission}_{year}_{hash}_{hash}_{hash}
+    # We want: sd{id}_{mission}_{year}
+    # Example: sd1030_tpos_2023_7ef2_e8f7_98f9 → sd1030_tpos_2023
+    if len(parts) >= 3 and parts[0].startswith('sd') and parts[0][2:].isdigit():
+        # Check if third part looks like a year (4 digits)
+        if len(parts[2]) == 4 and parts[2].isdigit():
+            # Saildrone format detected
+            return f"{parts[0]}_{parts[1]}_{parts[2]}"
+    
+    # Fallback: return second part (old behavior for other formats)
+    return parts[1] if len(parts) > 1 else None
 
 
 def _sanitize_column_types(df: pd.DataFrame) -> pd.DataFrame:

@@ -1,0 +1,35 @@
+{
+  "id": "gnss-navigation",
+  "name": "GNSS Navigation Receiver",
+  "manufacturer": "Various",
+  "model": "Multi-constellation GNSS",
+  "sensor_type": "navigation",
+  "description": "GNSS receiver providing precise position, velocity, and quality metrics from GPS/GLONASS/Galileo/BeiDou satellite systems",
+  "variables": [
+    "longitude",
+    "latitude",
+    "ship_longitude",
+    "ship_latitude",
+    "gps_quality",
+    "nmea_quality",
+    "num_satellites",
+    "nsv",
+    "horizontal_dilution",
+    "hdop",
+    "gps_antenna_height",
+    "antenna_height",
+    "speed_over_ground",
+    "speed_made_good",
+    "course_over_ground",
+    "course_made_good"
+  ],
+  "specifications": {
+    "system_type": "Multi-constellation GNSS",
+    "typical_horizontal_accuracy": "2-10m",
+    "typical_vertical_accuracy": "5-15m",
+    "update_rate": "1-10 Hz",
+    "supported_systems": "GPS, GLONASS, Galileo, BeiDou"
+  },
+  "typical_mount": "vessel superstructure or mast",
+  "documentation_url": "https://www.rvdata.us/about/data-formats"
+}

@@ -194,8 +194,10 @@ class TestSaildroneSensorDefinitions:
         
         assert sensor.sensor_type == SensorType.NAVIGATION
         
-        # Check for navigation variables
-        nav_vars = ["latitude", "longitude", "COG", "SOG", "HDG"]
+        # Check for IMU/navigation variables (Saildrone-specific filtered measurements)
+        # Note: latitude/longitude are in gnss-navigation sensor, not IMU
+        nav_vars = ["HDG", "SOG_FILTERED_MEAN", "COG_FILTERED_MEAN", 
+                    "ROLL_FILTERED_MEAN", "PITCH_FILTERED_MEAN"]
         for var in nav_vars:
             assert var in sensor.variables
 

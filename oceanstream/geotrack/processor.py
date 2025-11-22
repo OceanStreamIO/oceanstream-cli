@@ -15,6 +15,14 @@ except ImportError:
 
 from .csv_reader import _sanitize_column_types, extract_platform_id, is_geocsv, read_geocsv
 from .geoparquet_writer import write_geoparquet
+from .metadata import CampaignMetadata
+from .deduplication import (
+    deduplicate_dataframe,
+    read_existing_campaign_data,
+    merge_with_deduplication,
+    check_schema_compatibility,
+)
+from .interpolation import enrich_sensor_data_from_campaign, has_spatial_coordinates
 from ..stac import emit_stac_collection_and_item
 from ..config.settings import Settings
 from ..semantic.semantic import SemanticMapper, SemanticConfig, semantic_to_parquet_metadata
@@ -22,6 +30,7 @@ from .binning import suggest_lat_lon_bins_from_data
 from ..providers.base import ProviderBase
 from ..sensors import get_sensor_catalogue, Sensor
 from ..sensors.saildrone import detect_saildrone_platform, get_platform_sensors
+from ..sensors.processors.nmea_gnss import process_nmea_raw
 
 
 def _format_file_size(size_bytes: int) -> str:
@@ -86,9 +95,16 @@ def _display_files_summary(input_source: Path, csv_files: list[Path]) -> bool:
         return False
 
 
-def _read_single_csv(file_path: Path, filename: str, provider: ProviderBase | None = None) -> tuple[pd.DataFrame | None, dict | None]:
+def _read_single_csv(file_path: Path, filename: str, provider: ProviderBase | None = None, allow_non_spatial: bool = False) -> tuple[pd.DataFrame | None, dict | None]:
     """
     Read and validate a single CSV or GeoCSV file.
+    
+    Args:
+        file_path: Path to CSV file
+        filename: Filename for platform ID extraction
+        provider: Optional provider for platform identification
+        allow_non_spatial: If True, allow files without spatial coordinates
+                          (they will be enriched via interpolation later)
     
     Returns:
         Tuple of (DataFrame, metadata_dict) where metadata_dict is None for regular CSV
@@ -115,7 +131,12 @@ def _read_single_csv(file_path: Path, filename: str, provider: ProviderBase | No
         has_coords = True
     
     if not has_coords:
-        return None, None
+        if not allow_non_spatial:
+            # Old behavior: skip files without spatial coordinates
+            return None, None
+        else:
+            # New behavior: keep file for later interpolation
+            print(f"[geotrack] File {filename} has no spatial coordinates, will attempt interpolation")
     
     # Only validate coordinates if they're already in standard format
     # R2R files will be handled by the provider's enrich_dataframe
@@ -159,6 +180,88 @@ def _concat_data_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return df
 
 
+def _is_nmea_file(file_path: Path) -> bool:
+    """Check if a .txt file contains NMEA sentences.
+    
+    Args:
+        file_path: Path to .txt file
+        
+    Returns:
+        True if file contains NMEA sentences (lines with $ prefix)
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            # Check first 10 lines for NMEA patterns
+            for i, line in enumerate(f):
+                if i >= 10:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                # NMEA sentences start with $ (with or without timestamp prefix)
+                # Format: <ISO8601_timestamp> $GPGGA,... or just $GPGGA,...
+                if '$' in line:
+                    # Check if it looks like a NMEA sentence ($ followed by letters)
+                    parts = line.split('$', 1)
+                    if len(parts) == 2 and len(parts[1]) > 2 and parts[1][:2].isalpha():
+                        return True
+        return False
+    except Exception:
+        return False
+
+
+def _convert_nmea_to_csv(
+    nmea_path: Path,
+    work_dir: Path,
+    verbose: bool = False,
+    sentence_types: list[str] | None = None,
+    sampling_interval: float | None = None,
+) -> Path:
+    """Convert NMEA .txt file to CSV format.
+    
+    Args:
+        nmea_path: Path to NMEA .txt file
+        work_dir: Working directory for temporary CSV files
+        verbose: Whether to show progress messages
+        sentence_types: List of NMEA sentence types to process (e.g., ['GGA', 'RMC']).
+                       If None, processes all supported types (GGA, RMC, GNS, VTG, ZDA).
+        sampling_interval: Time interval in seconds for sampling/decimation.
+                          If None, keeps all data points.
+                          Example: 10.0 = 1 point per 10 seconds.
+        
+    Returns:
+        Path to generated CSV file
+    """
+    # Create work directory if it doesn't exist
+    work_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate output CSV path (same name with .csv extension)
+    csv_path = work_dir / f"{nmea_path.stem}.csv"
+    
+    if verbose:
+        print(f"[geotrack] Converting NMEA file: {nmea_path.name} → {csv_path.name}")
+        if sentence_types:
+            print(f"[geotrack]   Sentence types: {', '.join(sentence_types)}")
+        if sampling_interval:
+            print(f"[geotrack]   Sampling interval: {sampling_interval}s")
+    
+    # Process NMEA file
+    try:
+        stats = process_nmea_raw(
+            input_path=nmea_path,
+            output_path=csv_path,
+            sentence_types=sentence_types,
+            sampling_interval=sampling_interval,
+        )
+        
+        if verbose:
+            print(f"[geotrack]   ✓ Converted {stats['lines_parsed']} NMEA sentences → {stats['data_points_written']} CSV rows")
+        
+        return csv_path
+    except Exception as e:
+        raise ValueError(f"Failed to convert NMEA file {nmea_path.name}: {e}")
+
+
 class GeotrackProcessor:
     """Processor for geotrack data."""
     
@@ -172,6 +275,8 @@ class GeotrackProcessor:
         creation_date: str | None = None,
         source_dataset: str | None = None,
         source_repository: str | None = None,
+        nmea_sentence_types: list[str] | None = None,
+        nmea_sampling_interval: float | None = None,
     ):
         self.provider = provider
         self.verbose = verbose
@@ -183,6 +288,8 @@ class GeotrackProcessor:
         self._creation_date = creation_date  # User-supplied creation date
         self._source_dataset = source_dataset  # User-supplied source dataset DOI
         self._source_repository = source_repository  # User-supplied source repository DOI
+        self._nmea_sentence_types = nmea_sentence_types  # NMEA sentence types to process
+        self._nmea_sampling_interval = nmea_sampling_interval  # NMEA sampling interval in seconds
     
     def log(self, message: str) -> None:
         """Log a message if verbose is enabled."""
@@ -201,13 +308,19 @@ class GeotrackProcessor:
             print(f"[geotrack]   ✓ {label} ({perf_counter() - t0:0.2f}s)")
     
     def scan_input_source(self, input_source: Path) -> list[Path]:
-        """Scan input source (file or directory) for CSV files.
+        """Scan input source (file or directory) for processable files.
+        
+        Supports:
+        - CSV files (.csv, .geocsv)
+        - NMEA raw data files (.txt with NMEA sentences)
+        
+        NMEA files are automatically converted to CSV before processing.
         
         Args:
-            input_source: Path to a CSV file or directory containing CSV files
+            input_source: Path to a data file or directory containing data files
             
         Returns:
-            List of Path objects for CSV files to process
+            List of Path objects for CSV files to process (includes converted NMEA files)
         """
         t0 = self.step(f"scanning input source {input_source}")
         
@@ -215,23 +328,63 @@ class GeotrackProcessor:
             raise FileNotFoundError(f"Input source not found: {input_source}")
         
         csv_files = []
+        nmea_files = []
         
         if input_source.is_file():
-            # Single file input
-            if input_source.suffix in [".csv", ".geocsv"]:
+            # Single file input (case-insensitive extension check)
+            suffix = input_source.suffix.lower()
+            if suffix in [".csv", ".geocsv"]:
                 csv_files = [input_source]
+            elif suffix == ".txt":
+                # Check if it's a NMEA file
+                if _is_nmea_file(input_source):
+                    nmea_files = [input_source]
+                else:
+                    raise ValueError(
+                        f"File {input_source.name} is a .txt file but does not contain NMEA sentences. "
+                        "Supported formats: .csv, .geocsv, or .txt with NMEA data."
+                    )
             else:
-                raise ValueError(f"Input file must be .csv or .geocsv, got: {input_source.suffix}")
+                raise ValueError(
+                    f"Unsupported file type: {suffix}. "
+                    "Supported formats: .csv, .geocsv, or .txt (NMEA data)."
+                )
         elif input_source.is_dir():
-            # Directory input - scan for CSV files
-            csv_files = [
-                input_source / f for f in os.listdir(input_source)
-                if f.endswith(".csv") or f.endswith(".geocsv")
-            ]
+            # Directory input - scan for CSV and NMEA files (case-insensitive)
+            for f in os.listdir(input_source):
+                f_lower = f.lower()
+                file_path = input_source / f
+                if f_lower.endswith(".csv") or f_lower.endswith(".geocsv"):
+                    csv_files.append(file_path)
+                elif f_lower.endswith(".txt"):
+                    # Check if it's a NMEA file
+                    if _is_nmea_file(file_path):
+                        nmea_files.append(file_path)
         else:
             raise ValueError(f"Input source must be a file or directory: {input_source}")
         
-        self.done(f"found {len(csv_files)} CSV/GeoCSV file(s)", t0)
+        # Convert NMEA files to CSV
+        if nmea_files:
+            self.log(f"found {len(nmea_files)} NMEA file(s), converting to CSV...")
+            work_dir = Path.cwd() / ".oceanstream_work" / "nmea_conversions"
+            
+            for nmea_path in nmea_files:
+                csv_path = _convert_nmea_to_csv(
+                    nmea_path, 
+                    work_dir, 
+                    verbose=self.verbose,
+                    sentence_types=self._nmea_sentence_types,
+                    sampling_interval=self._nmea_sampling_interval,
+                )
+                csv_files.append(csv_path)
+        
+        if not csv_files:
+            raise ValueError(
+                f"No processable files found in {input_source}. "
+                "Looking for: .csv, .geocsv, or .txt (NMEA data)."
+            )
+        
+        self.done(f"found {len(csv_files)} file(s) to process ({len(nmea_files)} converted from NMEA)", t0)
         return csv_files
     
     def process_files(self, csv_files: list[Path]) -> pd.DataFrame:
@@ -279,7 +432,8 @@ class GeotrackProcessor:
         """
         fname = file_path.name
         try:
-            df_file, file_metadata = _read_single_csv(file_path, fname, self.provider)
+            # Allow non-spatial files for now, we'll try to interpolate later
+            df_file, file_metadata = _read_single_csv(file_path, fname, self.provider, allow_non_spatial=True)
         except Exception as e:
             if self.verbose:
                 print(f"[geotrack]   ! Skipping {fname} (read error: {e})")
@@ -298,7 +452,7 @@ class GeotrackProcessor:
         df_enriched = self.provider.enrich_dataframe(df_file, metadata=file_metadata)
         if df_enriched.empty:
             if self.verbose:
-                print(f"[geotrack]   · Skipping {fname} after enrichment (no lat/lon)")
+                print(f"[geotrack]   · Skipping {fname} after enrichment (no data)")
             return
         
         # Override platform_id if user supplied one
@@ -334,6 +488,62 @@ class GeotrackProcessor:
         mapper = SemanticMapper(sem_cfg)
         sem_result = mapper.apply(df)
         return semantic_to_parquet_metadata(sem_result)
+    
+    def enrich_non_spatial_data(self, df: pd.DataFrame, campaign_dir: Path, interpolation_method: str = "linear", max_time_gap: float = 60.0) -> pd.DataFrame:
+        """Enrich non-spatial sensor data with coordinates via interpolation.
+        
+        This method attempts to add lat/lon coordinates to data that doesn't have them
+        by interpolating from existing campaign data. If interpolation fails, empty
+        coordinates are added as a fallback.
+        
+        Args:
+            df: DataFrame that may contain data without spatial coordinates
+            campaign_dir: Path to campaign directory with existing GeoParquet data
+            interpolation_method: Method to use for interpolation (nearest, linear, ffill, bfill)
+            max_time_gap: Maximum time gap in seconds for valid interpolation
+            
+        Returns:
+            DataFrame with spatial coordinates enriched
+        """
+        # Check if data already has spatial coordinates
+        if has_spatial_coordinates(df):
+            return df
+        
+        if self.verbose:
+            print(f"[geotrack] Attempting spatial-temporal interpolation for non-spatial data...")
+        
+        # Try interpolation from existing campaign data
+        try:
+            enriched_df, success = enrich_sensor_data_from_campaign(
+                df, 
+                campaign_dir,
+                time_column='time',
+                method=interpolation_method,
+                max_time_gap_seconds=max_time_gap
+            )
+            
+            if success:
+                if self.verbose:
+                    # Count how many rows got interpolated coordinates
+                    non_null_coords = enriched_df[['latitude', 'longitude']].notna().all(axis=1).sum()
+                    print(f"[geotrack]   ✓ Successfully interpolated coordinates for {non_null_coords}/{len(enriched_df)} rows")
+                return enriched_df
+            else:
+                if self.verbose:
+                    print(f"[geotrack]   ⚠️  Interpolation failed or no reference data available, adding empty coordinates")
+                # Fall through to add empty coordinates
+        except Exception as e:
+            if self.verbose:
+                print(f"[geotrack]   ⚠️  Interpolation error: {e}, adding empty coordinates")
+            # Fall through to add empty coordinates
+        
+        # Fallback: add empty lat/lon columns
+        if 'latitude' not in df.columns:
+            df['latitude'] = pd.NA
+        if 'longitude' not in df.columns:
+            df['longitude'] = pd.NA
+        
+        return df
     
     def detect_sensors_and_platform(self, df: pd.DataFrame) -> tuple[list[Sensor], dict[str, Any]]:
         """Detect sensors and platform info from DataFrame.
@@ -374,7 +584,7 @@ class GeotrackProcessor:
                         'draft': '2.5m',
                         'displacement': '~750 kg',
                         'wing_height': '5m',
-                            'speed_range': '0-6 knots',
+                        'speed_range': '0-6 knots',
                         'endurance': '12+ months',
                         'power': 'solar + wind generator',
                         'communication': 'Iridium satellite'
@@ -732,6 +942,9 @@ def convert(
     creation_date: str | None = None,
     source_dataset: str | None = None,
     source_repository: str | None = None,
+    force_reprocess: bool = False,
+    nmea_sentence_types: list[str] | None = None,
+    nmea_sampling_interval: float | None = None,
 ) -> None:
     """
     Convert geotrack CSV data into GeoParquet format, and optionally PMTiles.
@@ -761,6 +974,13 @@ def convert(
         creation_date: Data creation date (overrides provider/file metadata)
         source_dataset: Source dataset DOI (overrides provider/file metadata)
         source_repository: Source repository DOI (overrides provider/file metadata)
+        force_reprocess: Force reprocess all files, clearing previous metadata (default: False)
+        nmea_sentence_types: List of NMEA sentence types to process (e.g., ['GGA', 'RMC']).
+                            If None, processes all supported types (GGA, RMC, GNS, VTG, ZDA).
+                            Only used for .txt NMEA files.
+        nmea_sampling_interval: Time interval in seconds for NMEA data sampling/decimation.
+                               If None, keeps all data points. Example: 10.0 = 1 point per 10 seconds.
+                               Only used for .txt NMEA files.
     """
     processor = GeotrackProcessor(
         provider, 
@@ -771,6 +991,8 @@ def convert(
         creation_date=creation_date,
         source_dataset=source_dataset,
         source_repository=source_repository,
+        nmea_sentence_types=nmea_sentence_types,
+        nmea_sampling_interval=nmea_sampling_interval,
     )
     
     # Step 1: Scan input source (file or directory)
@@ -801,7 +1023,90 @@ def convert(
     # Extract the campaign_id value (should be consistent across all rows)
     detected_campaign_id = df['campaign_id'].iloc[0]
     
-    # Handle introspection flags
+    # Step 3.7: Handle deduplication and metadata tracking
+    campaign_output_dir = output_dir / detected_campaign_id
+    
+    # Step 3.8: Enrich non-spatial data with interpolation
+    # If data lacks spatial coordinates, try to interpolate from existing campaign data
+    df = processor.enrich_non_spatial_data(df, campaign_output_dir)
+    
+    # Get metadata directory from settings
+    settings = Settings()
+    metadata_dir = settings.METADATA_DIR
+    campaign_metadata = CampaignMetadata(detected_campaign_id, metadata_dir)
+    
+    # Force reprocess: clear all previous metadata
+    if force_reprocess:
+        if verbose:
+            print("[geotrack] Force reprocess enabled - clearing previous metadata")
+        campaign_metadata.clear()
+    
+    # Check for previously processed files (unless force_reprocess or dry_run)
+    if not (force_reprocess or dry_run):
+        already_processed = []
+        for csv_file in csv_files:
+            if campaign_metadata.is_file_processed(csv_file):
+                file_info = campaign_metadata.get_file_info(csv_file)
+                already_processed.append((csv_file.name, file_info))
+        
+        if already_processed:
+            print("\n[geotrack] ⚠️  WARNING: The following files have already been processed:")
+            for filename, info in already_processed:
+                processed_at = info.get('processed_at', 'unknown')
+                rows = info.get('rows', 'unknown')
+                print(f"  - {filename} (processed: {processed_at}, rows: {rows})")
+            
+            print("\n[geotrack] Processing these files again may create duplicates!")
+            print("[geotrack] Duplicates will be automatically removed during merge.")
+            print("[geotrack] Use --force-reprocess to clear metadata and reprocess everything from scratch.")
+            return
+    
+    # Check for existing data in campaign directory for deduplication
+    existing_data = None
+    needs_full_rewrite = False
+    if campaign_output_dir.exists() and not force_reprocess:
+        if verbose:
+            print("[geotrack] Checking for existing campaign data...")
+        existing_data = read_existing_campaign_data(campaign_output_dir)
+        
+        if existing_data is not None and not existing_data.empty:
+            if verbose:
+                print(f"[geotrack] Found {len(existing_data)} existing rows in campaign")
+            
+            # Check schema compatibility
+            compatible, issues = check_schema_compatibility(df, existing_data)
+            if not compatible:
+                print("\n[geotrack] ⚠️  Schema compatibility issues detected:")
+                for issue in issues:
+                    print(f"  - {issue}")
+                print("\n[geotrack] Proceeding with merge, but results may be unpredictable.")
+                print("[geotrack] Consider using --force-reprocess to start fresh.")
+            
+            # Merge with deduplication
+            if verbose:
+                print("[geotrack] Merging new data with existing data (deduplicating)...")
+            df_before_dedup = len(df)
+            df = merge_with_deduplication(df, existing_data)
+            df_after_dedup = len(df)
+            
+            if df_after_dedup < df_before_dedup + len(existing_data):
+                if verbose:
+                    print(f"[geotrack] Removed duplicates: {df_before_dedup + len(existing_data) - df_after_dedup} rows")
+            
+            # Flag that we need to rewrite the entire dataset
+            needs_full_rewrite = True
+    
+    # If deduplication occurred, we need to delete old data and write fresh
+    if needs_full_rewrite and campaign_output_dir.exists():
+        import shutil
+        # Remove old parquet files but keep stac and metadata
+        for partition_dir in campaign_output_dir.iterdir():
+            if partition_dir.is_dir() and partition_dir.name.startswith(('lat_', 'lon_')):
+                shutil.rmtree(partition_dir)
+        if verbose:
+            print("[geotrack] Removed old parquet partitions for clean rewrite")
+    
+    # Handle introspection flags    # Handle introspection flags
     if list_columns:
         print(f"[geotrack] Columns ({len(df.columns)}):")
         for c in df.columns:
@@ -853,11 +1158,22 @@ def convert(
     lat_min, lat_max = float(df['latitude'].min()), float(df['latitude'].max())
     lon_min, lon_max = float(df['longitude'].min()), float(df['longitude'].max())
     
-    # Create campaign-based output directory
-    campaign_output_dir = output_dir / detected_campaign_id
-    
-    # Write GeoParquet
+    # Write GeoParquet (campaign_output_dir already defined above)
     processor.write_geoparquet_dataset(df, campaign_output_dir, semantic_meta)
+    
+    # Update metadata tracking (track processed files)
+    if not dry_run:
+        for csv_file in csv_files:
+            # Calculate rows contributed by this file (approximate)
+            rows_per_file = len(df) // len(csv_files)
+            campaign_metadata.mark_file_processed(csv_file, rows_per_file)
+        
+        campaign_metadata.increment_run_count()
+        campaign_metadata.save()
+        
+        if verbose:
+            print(f"[geotrack] Metadata updated: run #{campaign_metadata.get_run_count()}, "
+                  f"{campaign_metadata.get_processed_file_count()} unique files tracked")
     
     # Generate PMTiles if requested (before STAC so we can include the path)
     pmtiles_generated = False
