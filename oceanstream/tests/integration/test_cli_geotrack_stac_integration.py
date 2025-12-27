@@ -41,7 +41,7 @@ def test_cli_geotrack_emits_stac_when_semantic_enabled(tmp_path: Path, monkeypat
     monkeypatch.setenv("SEMANTIC_GENERATE_STAC", "true")
     monkeypatch.setenv("SEMANTIC_ALIAS_TABLE", str(alias_table))
     monkeypatch.setenv("SEMANTIC_CF_TABLE", str(cf_table))
-    monkeypatch.setenv("METADATA_DIR", str(metadata_dir))  # Use isolated metadata dir
+    monkeypatch.setenv("OCEANSTREAM_METADATA_DIR", str(metadata_dir))  # Use isolated metadata dir
 
     # Ensure settings are reloaded so Settings reads the monkeypatched env vars even
     # if other tests imported the modules earlier in the session.
@@ -76,6 +76,7 @@ def test_cli_geotrack_emits_stac_when_semantic_enabled(tmp_path: Path, monkeypat
             str(in_dir),
             "--output-dir",
             str(out_dir),
+            "--force-reprocess",
             "--yes",
             "-v",
         ],

@@ -15,32 +15,67 @@ import pyarrow.parquet as pq
 
 from ...storage.azure_blob import upload_to_azure_blob
 
+import re
 
-# Auto-selected important oceanographic measurements
-DEFAULT_MEASUREMENT_COLUMNS = [
-    # Temperature
-    'TEMP_AIR_MEAN',
-    'TEMP_SBE37_MEAN',
-    'TEMP_DEPTH_HALFMETER_MEAN',
-    # Salinity
-    'SAL_SBE37_MEAN',
-    # Dissolved Oxygen
-    'O2_CONC_SBE37_MEAN',
-    'O2_SAT_SBE37_MEAN',
-    # Chlorophyll
-    'CHLOR_WETLABS_MEAN',
-    # Wind
-    'WIND_SPEED_MEAN',
-    'WIND_FROM_MEAN',
-    # Waves
-    'WAVE_SIGNIFICANT_HEIGHT',
-    'WAVE_DOMINANT_PERIOD',
-    # Pressure
-    'BARO_PRES_MEAN',
-    # Additional
-    'RH_MEAN',  # Relative humidity
-    'PAR_AIR_MEAN',  # Photosynthetically active radiation
+# Default patterns to exclude verbose/redundant columns
+# These are typically statistical variants that inflate tile size
+DEFAULT_EXCLUDE_PATTERNS = [
+    r'.*_STDDEV$',      # Standard deviation columns
+    r'.*_STD$',         # Alternative std suffix
+    r'.*_MIN$',         # Minimum values
+    r'.*_MAX$',         # Maximum values
+    r'.*_PEAK$',        # Peak values
+    r'^UWND_.*',        # U-component wind (derived)
+    r'^VWND_.*',        # V-component wind (derived)
+    r'^WWND_.*',        # W-component wind (derived)
+    r'.*_WING_.*',      # Wing-specific sensors (redundant for most use cases)
+    r'^WING_.*',        # Wing measurements
+    r'^HDG$',           # Raw heading (HDG_FILTERED_MEAN is preferred)
+    r'^SOG$',           # Raw speed over ground (SOG_FILTERED_MEAN is preferred)
+    r'^COG$',           # Raw course over ground (COG_FILTERED_MEAN is preferred)
 ]
+
+# System columns that should never be treated as measurements
+SYSTEM_COLUMNS = {
+    'time', 'latitude', 'longitude', 'geometry', 'platform_id',
+    'campaign_id', 'trajectory', 'lat_bin', 'lon_bin',
+}
+
+
+def _discover_measurement_columns(
+    parquet_file: Path,
+    exclude_patterns: list[str] | None = None,
+) -> list[str]:
+    """
+    Auto-discover measurement columns from a GeoParquet file.
+    
+    Args:
+        parquet_file: Path to any parquet file in the dataset
+        exclude_patterns: Regex patterns to exclude columns (None = use defaults)
+        
+    Returns:
+        List of measurement column names (excluding system and filtered columns)
+    """
+    with open(parquet_file, 'rb') as f:
+        pf = pq.ParquetFile(f)
+        all_columns = set(pf.schema.names)
+    
+    # Start with all non-system columns
+    measurement_cols = all_columns - {c.lower() for c in SYSTEM_COLUMNS} - SYSTEM_COLUMNS
+    
+    # Also filter out lowercase columns (system columns might have various cases)
+    measurement_cols = {c for c in measurement_cols if not c.islower()}
+    
+    # Apply exclusion patterns
+    patterns = exclude_patterns if exclude_patterns is not None else DEFAULT_EXCLUDE_PATTERNS
+    compiled_patterns = [re.compile(p, re.IGNORECASE) for p in patterns]
+    
+    filtered_cols = []
+    for col in measurement_cols:
+        if not any(p.match(col) for p in compiled_patterns):
+            filtered_cols.append(col)
+    
+    return sorted(filtered_cols)
 
 
 class MissingDependencyError(RuntimeError):
@@ -58,34 +93,46 @@ def _iter_partition_points(
     partition_path: Path,
     sample_rate: int = 1,
     measurement_columns: list[str] | None = None,
-) -> Iterable[tuple[float, float, dt.datetime, dict | None]]:
+    exclude_patterns: list[str] | None = None,
+) -> Iterable[tuple[float, float, dt.datetime, dict | None, str | None]]:
     """
-    Iterate over (longitude, latitude, timestamp, measurements) from a GeoParquet partition file.
+    Iterate over (longitude, latitude, timestamp, measurements, platform_id) from a GeoParquet partition file.
     
     Args:
         partition_path: Path to parquet file
         sample_rate: Take every Nth point (1 = all points)
-        measurement_columns: Measurement columns to include (None = only coords and time)
+        measurement_columns: Specific columns to include (None = auto-discover)
+        exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults)
         
     Yields:
-        Tuples of (lon, lat, timestamp, measurements_dict)
+        Tuples of (lon, lat, timestamp, measurements_dict, platform_id)
     """
     # Build columns to read
     base_columns = ['longitude', 'latitude', 'time']
-    read_columns = base_columns.copy()
-    if measurement_columns:
-        read_columns.extend(measurement_columns)
     
     with open(partition_path, 'rb') as f:
         pf = pq.ParquetFile(f)
-        
-        # Check which requested measurement columns actually exist
         available_cols = set(pf.schema.names)
-        available_measurements = [c for c in measurement_columns or [] if c in available_cols]
-        actual_read_columns = base_columns + available_measurements if measurement_columns else base_columns
+        
+        # Determine measurement columns to use
+        if measurement_columns is not None:
+            # Use explicit list, filtering to available columns
+            available_measurements = [c for c in measurement_columns if c in available_cols]
+        else:
+            # Auto-discover from this file
+            available_measurements = _discover_measurement_columns(partition_path, exclude_patterns)
+        
+        read_columns = base_columns.copy()
+        if available_measurements:
+            read_columns.extend(available_measurements)
+        
+        # Also read platform_id if available
+        has_platform_id = 'platform_id' in available_cols
+        if has_platform_id:
+            read_columns = list(set(read_columns + ['platform_id']))
         
         for rg in range(pf.num_row_groups):
-            table = pf.read_row_group(rg, columns=actual_read_columns)
+            table = pf.read_row_group(rg, columns=read_columns)
             df = table.to_pandas()
             
             # Normalize column names
@@ -116,85 +163,104 @@ def _iter_partition_points(
                             if pd.notna(val):  # Skip NaN values
                                 measurements[col] = float(val) if isinstance(val, (int, float)) else val
                 
-                yield lon, lat, t, measurements
+                # Get platform_id if available
+                plat_id = None
+                if has_platform_id and hasattr(row, 'platform_id'):
+                    plat_id = str(row.platform_id) if pd.notna(row.platform_id) else None
+                
+                yield lon, lat, t, measurements, plat_id
 
 
 def _segments_from_points(
-    points: list[tuple[float, float, dt.datetime, dict | None]],
+    points: list[tuple[float, float, dt.datetime, dict | None, str | None]],
     time_gap_minutes: int = 60,
 ) -> list[dict]:
     """
-    Split points into segments based on time gaps.
+    Split points into segments based on time gaps and platform_id.
     
     Args:
-        points: List of (lon, lat, timestamp, measurements) tuples
+        points: List of (lon, lat, timestamp, measurements, platform_id) tuples
         time_gap_minutes: Minutes of gap to split segments
         
     Returns:
-        List of segment dicts with coords, t_start, t_end, measurements_avg
+        List of segment dicts with coords, t_start, t_end, measurements_avg, platform_id
     """
     segments = []
     current = []
     gap = dt.timedelta(minutes=max(0, time_gap_minutes))
     last_t = None
+    last_platform = None
     
-    for lon, lat, t, measurements in points:
+    for lon, lat, t, measurements, platform_id in points:
         if not isinstance(t, dt.datetime):
             continue
         
-        # Start new segment if gap is too large
-        if last_t is not None and (t - last_t) > gap:
+        # Start new segment if gap is too large or platform changes
+        should_split = (last_t is not None and (t - last_t) > gap) or (
+            last_platform is not None and platform_id != last_platform
+        )
+        
+        if should_split:
             if len(current) > 1:
-                coords = [(float(x), float(y)) for x, y, _, _ in current]
+                coords = [(float(x), float(y)) for x, y, _, _, _ in current]
                 
                 # Compute average measurements for segment
                 avg_measurements = None
-                if any(m for _, _, _, m in current if m):
+                if any(m for _, _, _, m, _ in current if m):
                     avg_measurements = {}
                     measurement_keys = set()
-                    for _, _, _, m in current:
+                    for _, _, _, m, _ in current:
                         if m:
                             measurement_keys.update(m.keys())
                     
                     for key in measurement_keys:
-                        values = [m[key] for _, _, _, m in current if m and key in m and isinstance(m[key], (int, float))]
+                        values = [m[key] for _, _, _, m, _ in current if m and key in m and isinstance(m[key], (int, float))]
                         if values:
                             avg_measurements[key] = sum(values) / len(values)
+                
+                # Use the platform_id from the segment
+                seg_platform_id = current[0][4] if current else None
                 
                 segments.append({
                     "coords": coords,
                     "t_start": current[0][2],
                     "t_end": current[-1][2],
                     "measurements": avg_measurements,
+                    "platform_id": seg_platform_id,
                 })
             current = []
         
-        current.append((float(lon), float(lat), t, measurements))
+        current.append((float(lon), float(lat), t, measurements, platform_id))
         last_t = t
+        last_platform = platform_id
     
     # Add final segment
     if len(current) > 1:
-        coords = [(float(x), float(y)) for x, y, _, _ in current]
+        coords = [(float(x), float(y)) for x, y, _, _, _ in current]
         
         # Compute average measurements for segment
         avg_measurements = None
-        if any(m for _, _, _, m in current if m):
+        if any(m for _, _, _, m, _ in current if m):
             avg_measurements = {}
             measurement_keys = set()
-            for _, _, _, m in current:
+            for _, _, _, m, _ in current:
                 if m:
                     measurement_keys.update(m.keys())
             
             for key in measurement_keys:
-                values = [m[key] for _, _, _, m in current if m and key in m and isinstance(m[key], (int, float))]
+                values = [m[key] for _, _, _, m, _ in current if m and key in m and isinstance(m[key], (int, float))]
                 if values:
                     avg_measurements[key] = sum(values) / len(values)
+        
+        # Use the platform_id from the segment
+        seg_platform_id = current[0][4] if current else None
         
         segments.append({
             "coords": coords,
             "t_start": current[0][2],
             "t_end": current[-1][2],
             "measurements": avg_measurements,
+            "platform_id": seg_platform_id,
         })
     
     return segments
@@ -209,6 +275,7 @@ def _build_ndjson_from_geoparquet(
     platform_id: str | None = None,
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
 ) -> int:
     """
     Build NDJSON file from GeoParquet partitions with segments and day markers.
@@ -220,30 +287,36 @@ def _build_ndjson_from_geoparquet(
         time_gap_minutes: Minutes of gap to split segments
         platform_id: Optional platform/cruise identifier
         include_measurements: Whether to include oceanographic measurements
-        measurement_columns: Specific columns to include (None = auto-select)
+        measurement_columns: Specific columns to include (None = auto-discover from data)
+        exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults)
         
     Returns:
         Number of features written
     """
-    # Determine which measurements to include
-    actual_measurements = None
-    if include_measurements:
-        actual_measurements = measurement_columns if measurement_columns else DEFAULT_MEASUREMENT_COLUMNS.copy()
-    
     # Read metadata to get partition list
     metadata_path = geoparquet_root / "metadata.parquet"
     if not metadata_path.exists():
-        # Fallback: scan for parquet files
-        parquet_files = list(geoparquet_root.rglob("*.parquet"))
+        # Fallback: scan for parquet files - store as absolute paths to avoid path joining issues
+        parquet_files = [p.resolve() for p in geoparquet_root.rglob("*.parquet")]
         if not parquet_files:
             raise ValueError(f"No parquet files found in {geoparquet_root}")
         meta_df = pd.DataFrame({'partition_path': [str(p) for p in parquet_files]})
     else:
         meta_df = pd.read_parquet(metadata_path)
     
+    # Determine measurement settings
+    # If include_measurements is False, pass empty list to disable
+    # If measurement_columns is provided, use those explicitly
+    # Otherwise, let auto-discovery happen in _iter_partition_points
+    if not include_measurements:
+        actual_measurements: list[str] | None = []  # Empty list means no measurements
+    else:
+        actual_measurements = measurement_columns  # None means auto-discover
+    
     seg_id = 0
     count_feats = 0
     day_stats = {}  # Track start/end per UTC day
+    discovered_columns: list[str] | None = None  # Track discovered columns for logging
     
     with open(output_path, 'w', encoding='utf-8') as out:
         for _, row in meta_df.iterrows():
@@ -257,11 +330,19 @@ def _build_ndjson_from_geoparquet(
                 print(f"Warning: partition not found: {partition_path}", file=sys.stderr)
                 continue
             
+            # Discover columns from first partition if auto-discovering
+            if discovered_columns is None and actual_measurements is None:
+                discovered_columns = _discover_measurement_columns(partition_path, exclude_patterns)
+                print(f"Auto-discovered {len(discovered_columns)} measurement columns:")
+                for col in discovered_columns:
+                    print(f"  - {col}")
+            
             try:
                 points = list(_iter_partition_points(
                     partition_path,
                     sample_rate=sample_rate,
                     measurement_columns=actual_measurements,
+                    exclude_patterns=exclude_patterns,
                 ))
             except Exception as e:
                 print(f"Warning: failed to read {partition_path}: {e}", file=sys.stderr)
@@ -270,17 +351,21 @@ def _build_ndjson_from_geoparquet(
             if not points:
                 continue
             
-            # Update per-day stats
-            for lon, lat, t, _ in points:
+            # Update per-day stats (now with platform_id tracking)
+            for lon, lat, t, _, plat_id in points:
                 t_ts = pd.Timestamp(t)
                 day_key = t_ts.strftime("%Y-%m-%d")
-                st = day_stats.get(day_key)
+                # Include platform_id in key for multi-platform support
+                combined_key = f"{day_key}:{plat_id}" if plat_id else day_key
+                st = day_stats.get(combined_key)
                 if st is None:
-                    day_stats[day_key] = {
+                    day_stats[combined_key] = {
                         "t_start": t_ts,
                         "t_end": t_ts,
                         "start_coord": (float(lon), float(lat)),
                         "end_coord": (float(lon), float(lat)),
+                        "platform_id": plat_id,
+                        "day": day_key,
                     }
                 else:
                     if t_ts < st["t_start"]:
@@ -326,8 +411,10 @@ def _build_ndjson_from_geoparquet(
                     "day": day_str,
                 }
                 
-                if platform_id:
-                    props["platform_id"] = str(platform_id)
+                # Use segment's platform_id (from data), or fallback to function parameter
+                seg_platform_id = seg.get("platform_id") or platform_id
+                if seg_platform_id:
+                    props["platform_id"] = str(seg_platform_id)
                 if lon_grid is not None:
                     props['lon_grid'] = int(lon_grid)
                 if lat_grid is not None:
@@ -351,8 +438,11 @@ def _build_ndjson_from_geoparquet(
                 count_feats += 1
                 seg_id += 1
         
-        # Add day markers: start and end point per UTC day
-        for day_key, st in sorted(day_stats.items()):
+        # Add day markers: start and end point per UTC day (per platform)
+        for combined_key, st in sorted(day_stats.items()):
+            day_key = st.get("day", combined_key.split(":")[0] if ":" in combined_key else combined_key)
+            marker_platform_id = st.get("platform_id") or platform_id
+            
             for kind, coord, t_iso in (
                 ("start", st["start_coord"], pd.Timestamp(st["t_start"]).isoformat()),
                 ("end", st["end_coord"], pd.Timestamp(st["t_end"]).isoformat()),
@@ -362,8 +452,8 @@ def _build_ndjson_from_geoparquet(
                     "kind": kind,
                     "t": t_iso,
                 }
-                if platform_id:
-                    props["platform_id"] = str(platform_id)
+                if marker_platform_id:
+                    props["platform_id"] = str(marker_platform_id)
                 
                 feat = {
                     "type": "Feature",
@@ -392,6 +482,7 @@ def generate_pmtiles_from_geoparquet(
     use_tippecanoe: bool = True,
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
 ) -> Path:
     """
     Generate a PMTiles file from a partitioned GeoParquet dataset.
@@ -413,7 +504,10 @@ def generate_pmtiles_from_geoparquet(
         keep_intermediate_files: Keep NDJSON and MBTiles files for debugging
         use_tippecanoe: Use tippecanoe (True, recommended) or ogr2ogr (False, basic)
         include_measurements: Include oceanographic measurements in tiles
-        measurement_columns: Specific columns to include (None = auto-select important ones)
+        measurement_columns: Specific columns to include (None = auto-discover from data)
+        exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults).
+            Default excludes: _STDDEV, _STD, _MIN, _MAX, _PEAK suffixes and wind components.
+            Pass empty list [] to include all columns.
         
     Returns:
         Path to generated PMTiles file
@@ -442,6 +536,7 @@ def generate_pmtiles_from_geoparquet(
             keep_intermediate_files=keep_intermediate_files,
             include_measurements=include_measurements,
             measurement_columns=measurement_columns,
+            exclude_patterns=exclude_patterns,
         )
     else:
         # Fallback to ogr2ogr (basic conversion, no segments)
@@ -470,6 +565,7 @@ def _generate_with_tippecanoe(
     keep_intermediate_files: bool,
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
 ) -> Path:
     """Generate PMTiles using tippecanoe for better control over segments."""
     
@@ -487,6 +583,7 @@ def _generate_with_tippecanoe(
             platform_id=platform_id,
             include_measurements=include_measurements,
             measurement_columns=measurement_columns,
+            exclude_patterns=exclude_patterns,
         )
         print(f"Created {feat_count} features (segments + day markers)")
         

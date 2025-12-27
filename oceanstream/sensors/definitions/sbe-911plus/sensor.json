@@ -1,0 +1,107 @@
+{
+  "id": "sbe-911plus",
+  "name": "Sea-Bird SBE 911plus CTD",
+  "manufacturer": "Sea-Bird Scientific",
+  "model": "SBE 911plus / 917plus",
+  "sensor_type": "ctd",
+  "description": "Ship-based profiling CTD system for continuous vertical profiles of temperature, conductivity, and pressure. Supports multiple auxiliary sensors via external voltage channels.",
+  "variables": [
+    "temperature",
+    "conductivity", 
+    "pressure",
+    "temperature2",
+    "conductivity2",
+    "salinity",
+    "density",
+    "sound_velocity",
+    "depth",
+    "oxygen",
+    "fluorescence",
+    "turbidity",
+    "par",
+    "transmissivity"
+  ],
+  "raw_variables": [
+    "temperature_freq",
+    "conductivity_freq",
+    "pressure_freq",
+    "temperature2_freq",
+    "conductivity2_freq",
+    "volt0",
+    "volt1",
+    "volt2",
+    "volt3",
+    "volt4",
+    "volt5",
+    "volt6",
+    "volt7",
+    "surface_par",
+    "pump_status"
+  ],
+  "specifications": {
+    "temperature_range": "-5 to +35°C",
+    "temperature_accuracy": "±0.001°C",
+    "temperature_resolution": "0.0001°C",
+    "conductivity_range": "0 to 7 S/m",
+    "conductivity_accuracy": "±0.0003 S/m",
+    "conductivity_resolution": "0.00004 S/m",
+    "pressure_range": "0 to 10,500 m (various ranges)",
+    "pressure_accuracy": "±0.015% full scale",
+    "pressure_resolution": "0.001% full scale",
+    "sampling_rate": "24 Hz",
+    "auxiliary_channels": "8 voltage channels (0-5V)",
+    "frequency_channels": "up to 5 (T, C, P, T2, C2)"
+  },
+  "file_formats": {
+    "hex": "Raw hexadecimal scan data",
+    "hdr": "Header file with metadata (lat/lon, time, station)",
+    "xmlcon": "XML configuration with sensor calibration coefficients",
+    "cnv": "Processed ASCII data (from SBE Data Processing)",
+    "bl": "Bottle fire data",
+    "btl": "Bottle summary data"
+  },
+  "typical_sensors": [
+    {
+      "channel": "0",
+      "type": "Primary Temperature",
+      "model": "SBE 3plus"
+    },
+    {
+      "channel": "1", 
+      "type": "Primary Conductivity",
+      "model": "SBE 4C"
+    },
+    {
+      "channel": "2",
+      "type": "Pressure",
+      "model": "Digiquartz"
+    },
+    {
+      "channel": "3",
+      "type": "Secondary Temperature",
+      "model": "SBE 3plus"
+    },
+    {
+      "channel": "4",
+      "type": "Secondary Conductivity",
+      "model": "SBE 4C"
+    },
+    {
+      "channel": "volt0-1",
+      "type": "Oxygen",
+      "model": "SBE 43"
+    },
+    {
+      "channel": "volt2-3",
+      "type": "Fluorometer / Transmissometer",
+      "model": "Various"
+    }
+  ],
+  "documentation_url": "https://www.seabird.com/sbe-911plus-ctd/product?id=60761421596",
+  "software": {
+    "acquisition": "Seasave V7",
+    "processing": "SBE Data Processing",
+    "toolkit": "seabirdscientific (Python)"
+  },
+  "notes": "The SBE 911plus is the industry standard for ship-based CTD profiling. Raw .hex files contain frequency counts that must be converted to engineering units using calibration coefficients from the .xmlcon file. The seabirdscientific Python library provides hex file parsing and conversion functions."
+}

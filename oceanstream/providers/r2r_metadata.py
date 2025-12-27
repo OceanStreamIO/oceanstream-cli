@@ -102,6 +102,9 @@ def parse_bag_info(path: Path) -> R2RSensorInfo:
 	``bag-info.txt`` typically contains information about the sensor
 	and the bagged data. We extract a best-effort sensor type/id and
 	description, preserving all keys in ``extra`` for future use.
+	
+	Also extracts R2R-specific metadata like cruise ID and DOIs for
+	platform identification.
 	"""
 
 	if not path.is_file():
@@ -116,9 +119,12 @@ def parse_bag_info(path: Path) -> R2RSensorInfo:
 				return extra.pop(k)
 		return None
 
-	sensor_type = pop_first("Sensor Type", "sensor_type", "Instrument", "instrument")
-	sensor_id = pop_first("Sensor ID", "sensor_id", "SerialNumber", "serial_number")
-	description = pop_first("Description", "description")
+	# Extract sensor information
+	sensor_type = pop_first("Sensor Type", "sensor_type", "Instrument", "instrument", 
+	                        "R2R-DeviceType", "DeviceType")
+	sensor_id = pop_first("Sensor ID", "sensor_id", "SerialNumber", "serial_number",
+	                      "R2R-DeviceModel", "DeviceModel")
+	description = pop_first("Description", "description", "Internal-Sender-Description")
 
 	return R2RSensorInfo(
 		sensor_type=sensor_type,

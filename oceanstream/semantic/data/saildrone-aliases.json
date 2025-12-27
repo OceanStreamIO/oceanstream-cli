@@ -1,0 +1,293 @@
+{
+  "sea_water_temperature": [
+    "TEMP_CTD_RBR_MEAN",
+    "TEMP_CTD_MEAN",
+    "TEMP_O2_RBR_MEAN",
+    "TEMP_SBE37_MEAN",
+    "temp_ctd",
+    "temp_ctd_mean",
+    "temperature",
+    "sst",
+    "SST",
+    "water_temp",
+    "ocean_temp",
+    "temp_ocean",
+    "sea_temp"
+  ],
+  "sea_water_practical_salinity": [
+    "SAL_RBR_MEAN",
+    "SAL_MEAN",
+    "SAL_SBE37_MEAN",
+    "sal_ctd",
+    "sal_mean",
+    "salinity",
+    "practical_salinity",
+    "psal",
+    "PSAL"
+  ],
+  "sea_water_electrical_conductivity": [
+    "COND_RBR_MEAN",
+    "COND_MEAN",
+    "conductivity",
+    "cond_ctd"
+  ],
+  "sea_water_pressure": [
+    "PRES_RBR_MEAN",
+    "PRES_MEAN",
+    "pressure_ctd",
+    "water_pressure"
+  ],
+  "depth": [
+    "DEPTH_MEAN",
+    "depth",
+    "depth_m",
+    "water_depth"
+  ],
+  "air_temperature": [
+    "TEMP_AIR_MEAN",
+    "TEMP_AIR",
+    "air_temp",
+    "temp_air_mean",
+    "temperature_air",
+    "atmospheric_temperature",
+    "temp_atm"
+  ],
+  "air_pressure": [
+    "BARO_PRES_MEAN",
+    "BARO_PRES",
+    "baro_pressure",
+    "atmospheric_pressure",
+    "pressure_atm",
+    "atmos_pressure",
+    "air_press"
+  ],
+  "relative_humidity": [
+    "RH_MEAN",
+    "RH",
+    "rh",
+    "relative_humidity",
+    "humidity"
+  ],
+  "wind_speed": [
+    "WSPD_MEAN",
+    "WSPD",
+    "wind_spd",
+    "wind_speed_mean",
+    "windspeed",
+    "wind_velocity"
+  ],
+  "wind_from_direction": [
+    "WDIR_MEAN",
+    "WDIR",
+    "wind_dir",
+    "wind_direction",
+    "wind_from_dir"
+  ],
+  "eastward_wind": [
+    "UWND_MEAN",
+    "UWND",
+    "u_wind",
+    "wind_u",
+    "u_component_wind"
+  ],
+  "northward_wind": [
+    "VWND_MEAN",
+    "VWND",
+    "v_wind",
+    "wind_v",
+    "v_component_wind"
+  ],
+  "wind_speed_of_gust": [
+    "GUST_WND_MEAN",
+    "GUST_MEAN",
+    "wind_gust",
+    "gust_speed"
+  ],
+  "surface_downwelling_shortwave_flux_in_air": [
+    "SW_IRRAD_MEAN",
+    "SW_IRRAD",
+    "shortwave_radiation",
+    "solar_radiation",
+    "sw_down"
+  ],
+  "surface_downwelling_longwave_flux_in_air": [
+    "LW_IRRAD_MEAN",
+    "LW_IRRAD",
+    "longwave_radiation",
+    "lw_down"
+  ],
+  "downwelling_photosynthetic_photon_flux_in_sea_water": [
+    "PAR_MEAN",
+    "PAR",
+    "photosynthetically_active_radiation",
+    "par"
+  ],
+  "mass_concentration_of_oxygen_in_sea_water": [
+    "O2_CONC_RBR_MEAN",
+    "O2_CONC_MEAN",
+    "oxygen_concentration",
+    "dissolved_oxygen",
+    "do",
+    "DO"
+  ],
+  "fractional_saturation_of_oxygen_in_sea_water": [
+    "O2_SAT_RBR_MEAN",
+    "O2_SAT_MEAN",
+    "oxygen_saturation",
+    "o2_sat"
+  ],
+  "mass_concentration_of_chlorophyll_a_in_sea_water": [
+    "CHLA_WETLABS_MEAN",
+    "CHLA_MEAN",
+    "chlorophyll_a",
+    "chlorophyll",
+    "chla",
+    "CHLA",
+    "chl_a"
+  ],
+  "mass_concentration_of_chlorophyll_in_sea_water": [
+    "CHL_MEAN",
+    "chlorophyll",
+    "chl"
+  ],
+  "sea_water_turbidity": [
+    "TURBIDITY_WETLABS_MEAN",
+    "TURBIDITY_MEAN",
+    "turbidity",
+    "turb"
+  ],
+  "volume_beam_attenuation_coefficient_of_radiative_flux_in_sea_water": [
+    "CDOM_WETLABS_MEAN",
+    "CDOM_MEAN",
+    "cdom",
+    "colored_dissolved_organic_matter"
+  ],
+  "volume_backwards_scattering_coefficient_of_radiative_flux_in_sea_water": [
+    "BACKSCATTER_WETLABS_MEAN",
+    "BACKSCATTER_MEAN",
+    "backscatter",
+    "backscattering"
+  ],
+  "sea_water_ph_reported_on_total_scale": [
+    "PH_MEAN",
+    "PH",
+    "ph",
+    "ph_total"
+  ],
+  "partial_pressure_of_carbon_dioxide_in_sea_water": [
+    "PCO2_MEAN",
+    "PCO2",
+    "pco2",
+    "pCO2",
+    "carbon_dioxide_partial_pressure"
+  ],
+  "surface_partial_pressure_of_carbon_dioxide_in_air": [
+    "XCO2_AIR_MEAN",
+    "XCO2_AIR",
+    "xco2_air",
+    "co2_air"
+  ],
+  "mole_fraction_of_carbon_dioxide_in_air": [
+    "XCO2_MEAN",
+    "XCO2",
+    "xco2"
+  ],
+  "sea_surface_wave_significant_height": [
+    "WAVE_SIGNIFICANT_HEIGHT",
+    "SIG_WAVE_HEIGHT",
+    "significant_wave_height",
+    "wave_height",
+    "hs",
+    "Hs"
+  ],
+  "sea_surface_wave_period": [
+    "WAVE_DOMINANT_PERIOD",
+    "WAVE_PERIOD",
+    "dominant_wave_period",
+    "wave_period",
+    "tp",
+    "Tp"
+  ],
+  "sea_surface_wave_from_direction": [
+    "WAVE_DIRECTION",
+    "wave_dir",
+    "wave_from_direction"
+  ],
+  "platform_speed_wrt_ground": [
+    "SOG_MEAN",
+    "SOG",
+    "speed_over_ground",
+    "sog",
+    "platform_speed"
+  ],
+  "platform_course": [
+    "COG_MEAN",
+    "COG",
+    "course_over_ground",
+    "cog",
+    "heading"
+  ],
+  "platform_yaw_angle": [
+    "HDG_MEAN",
+    "HDG",
+    "heading",
+    "yaw"
+  ],
+  "platform_pitch_angle": [
+    "PITCH_MEAN",
+    "PITCH",
+    "pitch"
+  ],
+  "platform_roll_angle": [
+    "ROLL_MEAN",
+    "ROLL",
+    "roll"
+  ],
+  "eastward_sea_water_velocity": [
+    "UCUR_MEAN",
+    "UCUR",
+    "u_current",
+    "current_u",
+    "eastward_current"
+  ],
+  "northward_sea_water_velocity": [
+    "VCUR_MEAN",
+    "VCUR",
+    "v_current",
+    "current_v",
+    "northward_current"
+  ],
+  "sea_floor_depth_below_sea_surface": [
+    "DEPTH_BATHY",
+    "bathymetry",
+    "bottom_depth",
+    "seafloor_depth"
+  ],
+  "mass_concentration_of_nitrate_in_sea_water": [
+    "NITRATE_MEAN",
+    "NO3_MEAN",
+    "nitrate",
+    "no3",
+    "NO3"
+  ],
+  "mass_concentration_of_phosphate_in_sea_water": [
+    "PHOSPHATE_MEAN",
+    "PO4_MEAN",
+    "phosphate",
+    "po4",
+    "PO4"
+  ],
+  "mass_concentration_of_silicate_in_sea_water": [
+    "SILICATE_MEAN",
+    "SI_MEAN",
+    "silicate",
+    "si",
+    "SI"
+  ],
+  "sea_water_alkalinity_expressed_as_mole_equivalent": [
+    "ALKALINITY_MEAN",
+    "ALK_MEAN",
+    "alkalinity",
+    "alk"
+  ]
+}

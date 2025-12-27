@@ -29,6 +29,39 @@ from oceanstream.sensors.processors import get_sensor_processor
 from ..base import ProcessingModule, ProviderBase
 
 
+# R2R vessel code mappings (cruise ID prefix -> vessel name)
+# Based on UNOLS vessel codes and common R2R cruise ID patterns
+R2R_VESSEL_CODES = {
+    "RR": "R/V Roger Revelle",
+    "AT": "R/V Atlantis",
+    "FK": "R/V Falkor",
+    "TN": "R/V Thomas G. Thompson",
+    "NBP": "RVIB Nathaniel B. Palmer",
+    "LMG": "ARVLMG Laurence M. Gould",
+    "PS": "RV Polarstern",
+    "MGL": "R/V Marcus G. Langseth",
+    "KN": "R/V Knorr",
+    "OC": "R/V Oceanus",
+    "EN": "R/V Endeavor",
+    "AR": "R/V Armstrong",
+    "PS": "R/V Point Sur",
+    "SA": "R/V Sikuliaq",
+    "SKQ": "R/V Sikuliaq",
+    "HLY": "USCGC Healy",
+    "MV": "R/V Melville",
+    "NB": "R/V Neil Armstrong",
+    "RB": "R/V Ron Brown",
+    "KK": "R/V Kilo Moana",
+    "JC": "RRS James Cook",
+    "TT": "R/V Thompson",
+    "SJ": "R/V Sally Ride",
+    "SR": "R/V Sally Ride",
+    "PS": "R/V Point Sur",
+    "WS": "R/V Wecoma",
+    "CH": "R/V Clifford A. Barnes",
+}
+
+
 class R2RProvider(ProviderBase):
     """Provider for R2R (Rolling Deck to Repository) GeoCSV data."""
 
@@ -95,6 +128,31 @@ class R2RProvider(ProviderBase):
             if re.match(r"^[A-Z]{2,4}\d{2,6}(-\d+)?$", cruise_id, re.IGNORECASE):
                 return cruise_id.upper()
 
+        return None
+
+    def get_platform_from_cruise_id(self, cruise_id: str) -> str | None:
+        """Get platform (vessel) name from an R2R cruise ID.
+        
+        R2R cruise IDs typically start with a 2-4 letter vessel code.
+        For example: RR2402 -> R/V Roger Revelle, FK161229 -> R/V Falkor
+        
+        Args:
+            cruise_id: R2R cruise identifier (e.g., "RR2402", "FK161229")
+            
+        Returns:
+            Vessel name or None if not found
+        """
+        if not cruise_id:
+            return None
+        
+        # Extract vessel code (usually first 2-4 letters)
+        # Try 4 letters first, then 3, then 2
+        for length in [4, 3, 2]:
+            if len(cruise_id) >= length:
+                vessel_code = cruise_id[:length].upper()
+                if vessel_code in R2R_VESSEL_CODES:
+                    return R2R_VESSEL_CODES[vessel_code]
+        
         return None
 
     def inspect_archives(

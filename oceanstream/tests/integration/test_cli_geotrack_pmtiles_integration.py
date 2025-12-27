@@ -122,7 +122,7 @@ def test_cli_geotrack_without_pmtiles(tmp_path: Path, monkeypatch):
             "convert",
             "--input-source", str(in_dir),
             "--output-dir", str(out_dir / "geoparquet"),
-            "--yes",
+            "--force-reprocess",            "--yes",
             "-v",
         ],
     )
@@ -185,6 +185,7 @@ def test_cli_geotrack_pmtiles_missing_tools(tmp_path: Path, monkeypatch):
             "--input-source", str(in_dir),
             "--output-dir", str(out_dir / "geoparquet"),
             "--generate-pmtiles",
+            "--force-reprocess",
             "--yes",
             "-v",
         ],

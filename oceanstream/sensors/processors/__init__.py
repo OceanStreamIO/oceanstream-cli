@@ -72,6 +72,8 @@ def get_raw_processor(sensor_id: str) -> RawProcessorFunc | None:
 # NOTE: These must be imported AFTER the registry functions are defined
 from . import r2r_fluorometer  # noqa: F401, E402
 from . import r2r_ssv  # noqa: F401, E402
+from . import r2r_ctd  # noqa: F401, E402
+from . import r2r_winch  # noqa: F401, E402
 from . import nmea_gnss  # noqa: F401, E402
 
 # Register NMEA processor (deferred to avoid circular imports)

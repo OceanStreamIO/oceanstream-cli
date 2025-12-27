@@ -1,0 +1,555 @@
+/* OceanStream docs overrides
+   Matches the oceanstream.io brand identity with professional polish.
+*/
+
+/* ========================================================================
+   BRAND COLORS
+   OceanStream uses a deep navy (#03080C) with cyan accents (#6EF2FC)
+   ======================================================================== */
+
+:root {
+  --os-navy: #03080C;
+  --os-navy-light: #0b1520;
+  --os-cyan: #6EF2FC;
+  --os-cyan-dim: #4ed8e8;
+  --os-text-on-dark: #E8E8E8;
+  --os-text-muted-dark: #94a3b8;
+}
+
+/* ========================================================================
+   HEADER - Dark navy with OceanStream logo
+   ======================================================================== */
+
+header.os-header {
+  background: var(--os-navy) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+header.os-header,
+header.os-header * {
+  color: var(--os-text-on-dark) !important;
+}
+
+header.os-header a:hover,
+header.os-header button:hover {
+  color: var(--os-cyan) !important;
+  background: transparent !important;
+}
+
+/* Logo image in header */
+.os-header-logo {
+  height: 22px;
+  width: auto;
+}
+
+.os-logo-link:hover {
+  background: transparent !important;
+}
+
+/* ========================================================================
+   PAGE TITLE (H1) - Thinner font, more breathing room
+   ======================================================================== */
+
+article #page-header {
+  padding-top: 2rem;
+  padding-bottom: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+article #page-header h1 {
+  font-weight: 400 !important;
+  letter-spacing: -0.03em;
+  font-size: 2.5rem !important;
+  line-height: 1.2;
+  background: linear-gradient(135deg, var(--color-foreground) 0%, var(--color-muted-foreground) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Summary/description below title */
+article #summary {
+  margin-top: 0.75rem;
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+/* ========================================================================
+   LEFT SIDEBAR - Compact navigation, no uppercase
+   ======================================================================== */
+
+/* Sidebar container */
+[data-slot="sidebar-group"] {
+  padding: 0.5rem 0.25rem !important;
+}
+
+/* Section headers - NOT uppercase, compact */
+.nav-section > summary {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-foreground);
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.nav-section > summary:hover {
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-muted) 40%, transparent);
+}
+
+/* Nav links - compact vertical spacing */
+.toc-link {
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem !important;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.toc-link:hover {
+  background: color-mix(in srgb, var(--color-muted) 50%, transparent);
+}
+
+/* Active page indicator */
+.toc-link[data-active="true"],
+.toc-link.active {
+  background: color-mix(in srgb, var(--os-cyan) 15%, transparent);
+  color: var(--os-cyan) !important;
+  font-weight: 500;
+}
+
+/* Reduce nested section spacing */
+.nav-section[data-level="1"],
+.nav-section[data-level="2"],
+.nav-section[data-level="3"] {
+  margin-left: 0.5rem !important;
+}
+
+.nav-section .nav-section-children ul {
+  padding-left: 0.5rem !important;
+}
+
+/* ========================================================================
+   RIGHT SIDEBAR (TOC) - Progress indicator with proper spacing
+   ======================================================================== */
+
+#toc-sidebar {
+  padding-left: 1rem;
+  padding-right: 1.5rem;
+}
+
+/* "On This Page" heading */
+#toc-sidebar .text-xs {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted-foreground);
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+#toc-sidebar a {
+  display: block;
+  position: relative;
+  padding: 0.35rem 1rem 0.35rem 1rem;
+  margin-left: 0;
+  line-height: 1.4;
+  border-radius: 0 6px 6px 0;
+  transition: all 0.15s ease;
+}
+
+#toc-sidebar a[data-depth="2"] {
+  padding-left: 1rem;
+}
+
+#toc-sidebar a[data-depth="3"] {
+  padding-left: 1.75rem;
+}
+
+#toc-sidebar a[data-depth="4"] {
+  padding-left: 2.5rem;
+}
+
+#toc-sidebar a:hover {
+  background: color-mix(in srgb, var(--color-muted) 40%, transparent);
+}
+
+/* Active section: vertical bar indicator */
+#toc-sidebar a[data-active="true"],
+#toc-sidebar a[data-active="True"] {
+  color: var(--os-cyan) !important;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--os-cyan) 10%, transparent);
+}
+
+#toc-sidebar a[data-active="true"]::before,
+#toc-sidebar a[data-active="True"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--os-cyan);
+  border-radius: 1px;
+}
+
+/* ========================================================================
+   CODE BLOCKS - Terminal-style with polish
+   ======================================================================== */
+
+article pre,
+article .codehilite {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-muted) 60%, transparent);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+article pre code,
+article .codehilite code {
+  display: block;
+}
+
+article pre.os-terminal,
+article .codehilite.os-terminal {
+  padding-top: 38px;
+}
+
+article pre.os-terminal::before,
+article .codehilite.os-terminal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: color-mix(in srgb, var(--color-background) 65%, var(--color-foreground) 35%);
+  border-bottom: 1px solid var(--color-border);
+  pointer-events: none;
+}
+
+/* Traffic lights */
+article pre.os-terminal::after,
+article .codehilite.os-terminal::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ff5f57;
+  box-shadow:
+    16px 0 0 #febc2e,
+    32px 0 0 #28c840;
+  pointer-events: none;
+}
+
+/* Copy button */
+.os-code-copy-button {
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  z-index: 2;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--os-text-muted-dark);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.os-code-copy-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--os-text-on-dark);
+}
+
+.os-code-copy-button[data-copied="true"] {
+  background: var(--os-cyan);
+  color: #000;
+}
+
+/* ========================================================================
+   CONTENT AREA - Typography & spacing
+   ======================================================================== */
+
+/* Article paragraphs */
+article .typography p {
+  line-height: 1.75;
+  margin-bottom: 1.25rem;
+}
+
+/* Headings in content */
+article .typography h2 {
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+article .typography h3 {
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  font-weight: 500;
+}
+
+/* Lists */
+article .typography ul,
+article .typography ol {
+  margin-bottom: 1.25rem;
+}
+
+article .typography li {
+  margin-bottom: 0.5rem;
+  line-height: 1.7;
+}
+
+/* Links in content */
+article .typography a:not([data-slot]) {
+  color: var(--os-cyan);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+
+article .typography a:not([data-slot]):hover {
+  border-bottom-color: var(--os-cyan);
+}
+
+/* Inline code */
+article .typography code:not(pre code) {
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-muted) 70%, transparent);
+  font-size: 0.875em;
+}
+
+/* ========================================================================
+   ADMONITIONS - Cleaner callouts
+   ======================================================================== */
+
+article .admonition {
+  border-radius: 8px;
+  border-left-width: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+article .admonition-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* ========================================================================
+   TABLES - Clean styling
+   ======================================================================== */
+
+article .typography table {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+article .typography th {
+  background: color-mix(in srgb, var(--color-muted) 50%, transparent);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+article .typography td,
+article .typography th {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+article .typography tr:last-child td {
+  border-bottom: none;
+}
+
+/* ========================================================================
+   FOOTER - Matching oceanstream.io exactly
+   ======================================================================== */
+
+footer.os-footer {
+  background-color: var(--os-navy);
+  background-repeat: no-repeat;
+  background-position: bottom;
+  background-size: cover;
+  color: var(--os-text-on-dark);
+  padding-top: 60px;
+  min-height: 400px;
+}
+
+footer.os-footer .row {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+footer.os-footer .col-12 {
+  flex: 1 1 300px;
+}
+
+footer.os-footer .footer-logo {
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+  width: 154px;
+  height: 25px;
+  margin-bottom: 21px;
+}
+
+footer.os-footer p {
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--os-text-on-dark);
+  margin: 0 0 10px 0;
+}
+
+footer.os-footer .social-links {
+  display: flex;
+  align-items: center;
+  margin-top: 20px;
+  margin-bottom: 40px;
+  gap: 0;
+}
+
+footer.os-footer .social-links a {
+  display: block;
+}
+
+footer.os-footer .social-links .twitter,
+footer.os-footer .social-links .linkedin,
+footer.os-footer .social-links .github {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  width: 42px;
+  height: 42px;
+  margin-right: 34px;
+  display: inline-block;
+}
+
+footer.os-footer .social-links + p {
+  font-size: 14px;
+}
+
+footer.os-footer .right-side {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+footer.os-footer .right-side ul {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+}
+
+footer.os-footer .right-side ul li {
+  padding-bottom: 24px;
+}
+
+footer.os-footer .right-side ul li a {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--os-text-on-dark);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+footer.os-footer .right-side ul li a:hover {
+  color: var(--os-cyan);
+}
+
+footer.os-footer a.footer-link {
+  color: var(--os-text-on-dark);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+footer.os-footer a.footer-link:hover {
+  color: var(--os-cyan);
+}
+
+/* ========================================================================
+   REMOVE PERMALINK MARKERS
+   ======================================================================== */
+
+a.headerlink,
+a[title="Permanent link"],
+.headerlink {
+  display: none !important;
+}
+
+/* ========================================================================
+   SUBTLE ANIMATIONS & POLISH
+   ======================================================================== */
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Focus states */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--os-cyan);
+  outline-offset: 2px;
+}
+
+/* Selection color */
+::selection {
+  background: color-mix(in srgb, var(--os-cyan) 30%, transparent);
+}
+
+/* Scrollbar styling (webkit) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* ========================================================================
+   RESPONSIVE ADJUSTMENTS
+   ======================================================================== */
+
+@media only screen and (max-width: 768px) {
+  footer.os-footer .right-side {
+    justify-content: flex-start;
+    margin-top: 30px;
+  }
+  
+  footer.os-footer .right-side ul {
+    margin-top: 0;
+  }
+}

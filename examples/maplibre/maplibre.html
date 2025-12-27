@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MapLibre PMTiles Track Viewer</title>
+  <!-- Bootstrap 5 CSS for simple layout and optional controls -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <!-- MapLibre GL JS CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/maplibre-gl@5.10.0/dist/maplibre-gl.css"
+  />
+  <!-- mapbox-gl-controls CSS (for TooltipControl) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/mapbox-gl-controls@2.3.5/lib/controls.css"
+  />
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+    /* Hover cursor circle that follows the snapped point on the track */
+    .hover-cursor {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.9);
+      border: 2px solid #000;
+      box-shadow: 0 0 2px rgba(0,0,0,0.4);
+      pointer-events: none;
+    }
+  /* Ensure ONLY the hover popup never steals pointer events */
+  .maplibregl-popup.hover-popup { pointer-events: none; }
+    .maplibregl-popup-content { padding: 6px 8px; font-size: 12px; line-height: 1.2; }
+    /* Larger, media-friendly click popup */
+    .maplibregl-popup.detail-popup { max-width: 420px; }
+    .maplibregl-popup.detail-popup .maplibregl-popup-content {
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.3;
+      max-width: 380px;
+    }
+    .maplibregl-popup.detail-popup img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin-top: 6px;
+      border-radius: 4px;
+    }
+    /* Make the popup arrow (tip) a bit longer for the detail popup */
+    .maplibregl-popup.detail-popup .maplibregl-popup-tip {
+      width: 16px;
+      height: 16px;
+    }
+  </style>
+  <!-- MapLibre GL JS -->
+  <script src="https://unpkg.com/maplibre-gl@5.10.0/dist/maplibre-gl.js"></script>
+  <!-- PMTiles JS library -->
+  <script src="https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js"></script>
+  <!-- Import map to resolve potential 'mapbox-gl' specifier if needed by plugin -->
+  <script type="importmap">
+    {
+      "imports": {
+        "mapbox-gl": "https://esm.sh/maplibre-gl@5.10.0"
+      }
+    }
+  </script>
+</head>
+<body>
+  
+  <!-- Map container -->
+  <div id="map"></div>
+  
+  <!-- Bootstrap JS bundle -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+  ></script>
+  <!-- App logic + plugin controls -->
+  <script type="module">
+  // TooltipControl was replaced with a custom Popup for sticky hover reliability and performance
+    // PMTiles file hosted on Azure Blob Storage
+    const PMTILES_URL =
+      'https://ne1osvmdevtest.blob.core.windows.net/test-export/campaigns/saildrone_tpos_2023/tiles/track.pmtiles';
+
+    // Map zoom configuration
+    const INITIAL_ZOOM = 3; // lower initial zoom
+    const MAX_ZOOM = 10; // cap zoom because basemap doesn't support very high zoom
+    const NEAR_PX = 18; // proximity threshold in screen pixels to keep sticky hover
+    const CLICK_NEAR_PX = 20; // click tolerance in px when sticky (or near line)
+    const SUBPIXEL_EPS_SQ = 0.09; // 0.3px squared: skip tiny movements under this
+
+    // Optional: set the exact time field name here to override auto-detection
+    // Example: const TIME_FIELD = 'timestamp_utc';
+    const TIME_FIELD = null;
+    // Will be set from PMTiles metadata/tilejson if available
+    let detectedTimeField = null;
+    const guessTimeFieldFromKeys = (keys) => {
+      if (!keys || !keys.length) return null;
+      const exact = [
+        'time','timestamp','datetime','date','DateTime','ts','t','dt','datetime_utc','timestamp_utc','time_utc','utc','date_time','dtg'
+      ];
+      for (const k of exact) if (keys.includes(k)) return k;
+      const re = /(time|date|timestamp|utc|epoch)/i;
+      const hit = keys.find(k => re.test(k));
+      return hit || null;
+    };
+
+    // Basemap definitions: raster tile sources
+    const BASEMAP_SOURCES = {
+      ocean: {
+        type: 'raster',
+        tiles: [
+          // ArcGIS World Ocean Base tiles
+          'https://services.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}'
+        ],
+        tileSize: 256,
+        attribution: '© Esri, GEBCO',
+        maxzoom: 10
+      },
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors',
+        maxzoom: 10
+      }
+    };
+
+    // Initialize PMTiles protocol and register with MapLibre
+    const protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol('pmtiles', protocol.tile);
+    const pm = new pmtiles.PMTiles(PMTILES_URL);
+    // Register the PMTiles instance for sharing cache between the protocol and user code
+    protocol.add(pm);
+
+    // Main function to initialize the map once PMTiles header is loaded
+    async function initializeMap() {
+      // Fetch header to determine zoom and center
+      const header = await pm.getHeader();
+      // Attempt to determine the vector source layer name from metadata or tilejson
+      let sourceLayerName = 'layer';
+      try {
+        // Try metadata
+        const metadata = await pm.getMetadata();
+        if (
+          metadata &&
+          metadata.vector_layers &&
+          Array.isArray(metadata.vector_layers) &&
+          metadata.vector_layers.length > 0
+        ) {
+          sourceLayerName = metadata.vector_layers[0].id;
+          // Try to detect a likely time field from declared fields
+          const fields = metadata.vector_layers[0].fields ? Object.keys(metadata.vector_layers[0].fields) : [];
+          detectedTimeField = guessTimeFieldFromKeys(fields);
+        } else {
+          // Fallback: try tilejson
+          const tilejson = await pm.getTileJson(`pmtiles://${PMTILES_URL}`);
+          if (
+            tilejson &&
+            tilejson.vector_layers &&
+            Array.isArray(tilejson.vector_layers) &&
+            tilejson.vector_layers.length > 0
+          ) {
+            sourceLayerName = tilejson.vector_layers[0].id;
+            const fields = tilejson.vector_layers[0].fields ? Object.keys(tilejson.vector_layers[0].fields) : [];
+            detectedTimeField = guessTimeFieldFromKeys(fields);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not determine source layer name from metadata:', err);
+      }
+
+      // Build the initial style with the default ocean basemap and the vector layer
+      const style = {
+        version: 8,
+        sources: {
+          basemap: BASEMAP_SOURCES['ocean'],
+          track: {
+            type: 'vector',
+            url: `pmtiles://${PMTILES_URL}`
+          }
+        },
+        layers: [
+          {
+            id: 'basemap',
+            type: 'raster',
+            source: 'basemap'
+          },
+          {
+            id: 'track-line',
+            type: 'line',
+            source: 'track',
+            'source-layer': sourceLayerName,
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#000000',
+              'line-width': 3
+            }
+          }
+        ]
+      };
+
+      // Create the map
+      const map = new maplibregl.Map({
+        container: 'map',
+        style: style,
+        center: [header.centerLon, header.centerLat],
+        zoom: INITIAL_ZOOM,
+        maxZoom: MAX_ZOOM
+      });
+
+      // Explicitly enforce max zoom at runtime
+      map.setMaxZoom(MAX_ZOOM);
+
+      // Expose for other modules/debugging
+      window.mapInstance = map;
+
+      // Add MapLibre built-in controls
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }));
+      map.addControl(new maplibregl.FullscreenControl());
+
+      // Tooltip content helpers
+      const TIME_KEYS_PRIORITY = [
+        'time','timestamp','datetime','date','DateTime','ts','t','dt','datetime_utc','dtg','utc','time_utc','date_time'
+      ];
+      const parseTimeValue = (value) => {
+        if (value == null) return null;
+        if (typeof value === 'number') {
+          const ms = value < 1e12 ? value * 1000 : value; // seconds vs ms
+          const d = new Date(ms);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        if (typeof value === 'string') {
+          const v = value.trim();
+          if (/^\d{10}(?:\.\d+)?$/.test(v)) {
+            const d = new Date(parseFloat(v) * 1000);
+            return isNaN(d.getTime()) ? null : d;
+          }
+          if (/^\d{13}$/.test(v)) {
+            const d = new Date(parseInt(v, 10));
+            return isNaN(d.getTime()) ? null : d;
+          }
+          const d = new Date(v);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+      };
+      //
+      // Performance cache for projected line geometry
+      // Recomputed when the map moves/zooms/rotates or when re-entering the layer
+  let projectedCache = null; // { pts: [ [x,y], ... ], segLens: number[], totalLen: number, coords: [ [lng,lat], ... ] }
+      let projectedCacheDirty = true;
+      let lastNearestIdx = null; // persists across mousemove for locality search
+  let cachedCoords = null;   // keep original lng/lat coords to rebuild cache on map move
+
+      // Ramer–Douglas–Peucker polyline simplification in screen space
+  function rdpSimplify(points, epsilon) {
+        if (!points || points.length < 3) return points;
+        const sq = (x) => x * x;
+        const distPointToSegSq = (p, a, b) => {
+          const ax = a[0], ay = a[1], bx = b[0], by = b[1];
+          const abx = bx - ax, aby = by - ay;
+          const apx = p[0] - ax, apy = p[1] - ay;
+          const ab2 = abx * abx + aby * aby || 1;
+          let t = (apx * abx + apy * aby) / ab2;
+          t = Math.max(0, Math.min(1, t));
+          const qx = ax + t * abx, qy = ay + t * aby;
+          return sq(p[0] - qx) + sq(p[1] - qy);
+        };
+        const eps2 = epsilon * epsilon;
+        const out = [0];
+        const stack = [[0, points.length - 1]];
+        while (stack.length) {
+          const [s, e] = stack.pop();
+          let maxDist = -1, idx = -1;
+          for (let i = s + 1; i < e; i++) {
+            const d = distPointToSegSq(points[i], points[s], points[e]);
+            if (d > maxDist) { maxDist = d; idx = i; }
+          }
+          if (maxDist > eps2 && idx !== -1) {
+            stack.push([s, idx], [idx, e]);
+          } else {
+            out.push(e);
+          }
+        }
+        out.sort((a,b)=>a-b);
+        return out.map(i => points[i]);
+      }
+      function buildProjectedCache(map, feature) {
+        let coords = null;
+        if (feature && feature.geometry) {
+          const geom = feature.geometry;
+          const paths = [];
+          if (geom.type === 'LineString') {
+            paths.push(geom.coordinates);
+          } else if (geom.type === 'MultiLineString') {
+            for (const arr of geom.coordinates) paths.push(arr);
+          }
+          if (paths.length) coords = paths.length > 1 ? paths.reduce((a,b)=> (a.length>=b.length?a:b)) : paths[0];
+        }
+        if (!coords || coords.length < 2) {
+          // fallback to last known coords to rebuild after move/zoom
+          coords = cachedCoords;
+        }
+        if (!coords || coords.length < 2) { projectedCache = null; return; }
+        cachedCoords = coords;
+        const ptsRaw = coords.map(([lng,lat]) => {
+          const p = map.project({ lng, lat });
+          return [p.x, p.y];
+        });
+        // Simplify in screen space to reduce segments; small epsilon keeps shape
+  const pts = rdpSimplify(ptsRaw, 0.6) || ptsRaw;
+        let totalLen = 0;
+        const segLens = [];
+        for (let i=0;i<pts.length-1;i++) {
+          const a = pts[i], b = pts[i+1];
+          const len = Math.hypot(b[0]-a[0], b[1]-a[1]);
+          segLens.push(len);
+          totalLen += len;
+        }
+        projectedCache = { pts, segLens, totalLen, coords };
+        projectedCacheDirty = false;
+        lastNearestIdx = null; // reset locality index when cache rebuilt
+      }
+      map.on('move', () => { projectedCacheDirty = true; });
+
+      // Nearest point search with locality window around lastNearestIdx
+      function findNearestOnPolyline(map, feature, hoverLngLat) {
+        if (!projectedCache || projectedCacheDirty) buildProjectedCache(map, feature);
+        const cache = projectedCache;
+        if (!cache) return null;
+        const { pts, segLens, totalLen } = cache;
+        const P = map.project(hoverLngLat);
+        const px = [P.x, P.y];
+        const n = pts.length;
+        const search = (start, end) => {
+          let best = { dist: Infinity, cum: 0, t: 0, idx: 0 };
+          let cum = 0;
+          // If not starting at 0, accumulate up to start
+          for (let i=0;i<start;i++) cum += segLens[i] || 0;
+          for (let i = start; i < end; i++) {
+            const a = pts[i], b = pts[i + 1];
+            const ax = a[0], ay = a[1], bx = b[0], by = b[1];
+            const abx = bx - ax, aby = by - ay;
+            const apx = px[0] - ax, apy = px[1] - ay;
+            const ab2 = abx * abx + aby * aby || 1;
+            let t = (apx * abx + apy * aby) / ab2;
+            t = Math.max(0, Math.min(1, t));
+            const qx = ax + t * abx, qy = ay + t * aby;
+            const d = Math.hypot(px[0] - qx, px[1] - qy);
+            if (d < best.dist) best = { dist: d, cum, t, idx: i };
+            cum += segLens[i] || 0;
+          }
+          return best;
+        };
+        let best;
+        if (lastNearestIdx != null) {
+          const win = 16; // small window for locality
+          const s = Math.max(0, lastNearestIdx - win);
+          const e = Math.min(n - 1, lastNearestIdx + win + 1);
+          best = search(s, e);
+          // Fallback to full scan if far away (> 12 px)
+          if (best.dist > 12) best = search(0, n - 1);
+        } else {
+          best = search(0, n - 1);
+        }
+        lastNearestIdx = best.idx;
+        return { best, totalLen };
+      }
+
+      // Compute fraction [0..1] along line at the hover point (screen space approximation)
+      function computeLineProgressFraction(map, feature, hoverLngLat) {
+        const res = findNearestOnPolyline(map, feature, hoverLngLat);
+        if (!res) return null;
+        const { best, totalLen } = res;
+        if (totalLen === 0) return 0;
+        const segLenAtBest = (projectedCache && projectedCache.segLens && projectedCache.segLens[best.idx]) || 0;
+        const pos = best.cum + best.t * segLenAtBest;
+        return Math.max(0, Math.min(1, pos / totalLen));
+      }
+      function formatInterpolatedTime(props, e, map) {
+        const dStart = parseTimeValue(props?.t_start);
+        const dEnd = parseTimeValue(props?.t_end);
+        if (!dStart || !dEnd) return '—';
+        const frac = computeLineProgressFraction(map, e.features?.[0], e.lngLat);
+        if (frac == null) return dStart.toLocaleString();
+        const t0 = dStart.getTime();
+        const t1 = dEnd.getTime();
+        const ti = t0 + frac * (t1 - t0);
+        const d = new Date(ti);
+        return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+      }
+      function formatTooltipHTML(dtStr, lngLat) {
+        const { lng, lat } = lngLat || {};
+        const latStr = typeof lat === 'number' ? lat.toFixed(5) : '—';
+        const lonStr = typeof lng === 'number' ? lng.toFixed(5) : '—';
+        return `<div><strong>Date/Time:</strong> ${dtStr}</div>
+                <div><strong>Lat:</strong> ${latStr} &nbsp; <strong>Lon:</strong> ${lonStr}</div>`;
+      }
+
+      // Compute snapped lng/lat position on the line under the hover point
+      function computeSnappedLngLat(map, feature, hoverLngLat) {
+        const res = findNearestOnPolyline(map, feature, hoverLngLat);
+        if (!res) return null;
+        const { best } = res;
+        if (best == null) return null;
+        const a = projectedCache.pts[best.idx];
+        const b = projectedCache.pts[best.idx + 1];
+        const ax = a[0], ay = a[1], bx = b[0], by = b[1];
+        const qx = ax + best.t * (bx - ax);
+        const qy = ay + best.t * (by - ay);
+        const lngLat = map.unproject({ x: qx, y: qy });
+        return { lng: lngLat.lng, lat: lngLat.lat };
+      }
+  // Custom sticky popup (replaces plugin TooltipControl)
+  const hoverPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 20, className: 'hover-popup' });
+  let clickPopup = null; // singleton click popup
+      let hoverPopupAdded = false;
+
+      // Snap-follow circle cursor on the track line
+      const hoverCursorEl = document.createElement('div');
+      hoverCursorEl.className = 'hover-cursor';
+  const hoverCursor = new maplibregl.Marker({ element: hoverCursorEl, draggable: false });
+      let hoverCursorAdded = false;
+      let rafPending = false;
+  let stickyHover = false; // keep snap active even when pointer leaves the line
+  let cachedProperties = null; // feature props used to compute time
+
+      map.on('mouseenter', 'track-line', (e) => {
+        map.getCanvas().style.cursor = 'none';
+        stickyHover = true;
+        // Build projection cache once when entering hover state
+        const f0 = e && e.features && e.features[0];
+        if (f0 && f0.properties) cachedProperties = f0.properties;
+        buildProjectedCache(map, f0);
+        const f = e && e.features && e.features[0];
+        const snapped = computeSnappedLngLat(map, f, e.lngLat) || e.lngLat || null;
+        if (snapped) {
+          hoverCursor.setLngLat(snapped);
+          if (!hoverCursorAdded) {
+            hoverCursor.addTo(map);
+            hoverCursorAdded = true;
+          }
+          // Show hover popup only if no click popup is open
+          if (!clickPopup) {
+            const fakeEvt = { features: [ { geometry: { type: 'LineString', coordinates: cachedCoords } } ], lngLat: snapped };
+            const dt = formatInterpolatedTime(cachedProperties || {}, fakeEvt, map);
+            const html = formatTooltipHTML(dt, snapped);
+            if (!hoverPopupAdded) {
+              hoverPopup.setLngLat(snapped).setHTML(html).addTo(map);
+              hoverPopupAdded = true;
+            } else {
+              hoverPopup.setLngLat(snapped).setHTML(html);
+            }
+          }
+        }
+      });
+      // Global mousemove handler to keep snapping even if not exactly over the line
+      map.on('mousemove', (e) => {
+        if (!stickyHover) return;
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          if (projectedCacheDirty) {
+            // rebuild from cachedCoords
+            buildProjectedCache(map, null);
+          }
+          const res = projectedCache ? findNearestOnPolyline(map, { geometry: { type: 'LineString', coordinates: cachedCoords } }, e.lngLat) : null;
+          if (!res || res.best.dist > NEAR_PX) {
+            // too far: release sticky
+            clearStickyHover();
+            rafPending = false;
+            return;
+          }
+          const snapped = computeSnappedLngLat(map, { geometry: { type: 'LineString', coordinates: cachedCoords } }, e.lngLat) || e.lngLat || null;
+          if (snapped) {
+            const px = map.project(snapped);
+            if (!window.__lastSnappedPx) window.__lastSnappedPx = { x: px.x, y: px.y };
+            const dx = px.x - window.__lastSnappedPx.x;
+            const dy = px.y - window.__lastSnappedPx.y;
+            const movedSq = dx * dx + dy * dy;
+            if (movedSq > SUBPIXEL_EPS_SQ) {
+              if (!hoverCursorAdded) {
+                hoverCursor.setLngLat(snapped);
+                hoverCursor.addTo(map);
+                hoverCursorAdded = true;
+              } else {
+                hoverCursor.setLngLat(snapped);
+              }
+              if (!clickPopup) {
+                const fakeEvt = { features: [ { geometry: { type: 'LineString', coordinates: cachedCoords } } ], lngLat: snapped };
+                const dt = formatInterpolatedTime(cachedProperties || {}, fakeEvt, map);
+                const html = formatTooltipHTML(dt, snapped);
+                if (!hoverPopupAdded) {
+                  hoverPopup.setLngLat(snapped).setHTML(html).addTo(map);
+                  hoverPopupAdded = true;
+                } else {
+                  hoverPopup.setLngLat(snapped).setHTML(html);
+                }
+              } else if (hoverPopupAdded) {
+                // Ensure hover popup stays hidden while click popup is present
+                hoverPopup.remove();
+                hoverPopupAdded = false;
+              }
+              window.__lastSnappedPx = { x: px.x, y: px.y };
+            }
+          }
+          rafPending = false;
+        });
+      });
+      // Do not remove on layer mouseleave; keep sticky mode until ESC or leaving the map container
+      map.on('mouseleave', 'track-line', () => {
+        // no-op to preserve stickyHover
+      });
+
+      function clearStickyHover() {
+        map.getCanvas().style.cursor = '';
+        if (hoverCursorAdded) {
+          hoverCursor.remove();
+          hoverCursorAdded = false;
+        }
+        if (hoverPopupAdded) {
+          hoverPopup.remove();
+          hoverPopupAdded = false;
+        }
+        // Do not clear click popup here; it's independent and has its own lifecycle
+        lastNearestIdx = null;
+        window.__lastSnappedPx = null;
+        stickyHover = false;
+      }
+      // Leave sticky mode when pointer leaves the map or on ESC
+      map.getCanvasContainer().addEventListener('mouseleave', clearStickyHover);
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') clearStickyHover();
+      });
+
+      // Also relax stickiness if user starts panning (dragging the map)
+      map.on('dragstart', () => clearStickyHover());
+
+      // --- Click popup on the track-line ---
+      function escapeHTML(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+      function buildPropertiesHTML(props) {
+        if (!props || typeof props !== 'object') return '<em>No properties</em>';
+        const entries = Object.entries(props);
+        if (!entries.length) return '<em>No properties</em>';
+        entries.sort(([a],[b]) => a.localeCompare(b));
+        const rows = entries.map(([k,v]) => {
+          const val = (v !== null && typeof v === 'object') ? escapeHTML(JSON.stringify(v)) : escapeHTML(v);
+          return `<tr><th style="padding-right:8px; white-space:nowrap;">${escapeHTML(k)}</th><td>${val}</td></tr>`;
+        }).join('');
+        return `<div style="font-weight:600; margin-bottom:4px;">Properties</div><table>${rows}</table>`;
+      }
+      // Unified click popup creation
+      function openClickPopupAt(lngLat, props, offsetPx = 28) {
+        const html = buildPropertiesHTML(props || {});
+        // Hide hover popup to avoid visual overlap/confusion
+        if (hoverPopupAdded) { hoverPopup.remove(); hoverPopupAdded = false; }
+        if (clickPopup) clickPopup.remove();
+        clickPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: offsetPx, className: 'detail-popup' })
+          .setLngLat(lngLat)
+          .setHTML(html)
+          .addTo(map);
+        // Track lifecycle so hover popup can resume after close
+        clickPopup.on('close', () => { clickPopup = null; });
+      }
+      // Click directly on the line (standard hit-test)
+      map.on('click', 'track-line', (e) => {
+        const f = e && e.features && e.features[0];
+        const snapped = computeSnappedLngLat(map, f, e.lngLat) || e.lngLat;
+        const props = (f && f.properties) || {};
+        openClickPopupAt(snapped, props);
+      });
+      // Click near the line while in sticky hover (proximity-based)
+      map.on('click', (e) => {
+        if (!stickyHover) return;
+        if (projectedCacheDirty) buildProjectedCache(map, null);
+        if (!projectedCache || !cachedCoords) return;
+        const res = findNearestOnPolyline(map, { geometry: { type: 'LineString', coordinates: cachedCoords } }, e.lngLat);
+        if (!res || res.best.dist > CLICK_NEAR_PX) return; // not close enough
+        const snapped = computeSnappedLngLat(map, { geometry: { type: 'LineString', coordinates: cachedCoords } }, e.lngLat) || e.lngLat;
+        // Try to fetch properties from a small query window around the snapped pixel; fallback to cachedProperties
+        const pxy = map.project(snapped);
+        const pad = 5;
+        const bbox = [
+          { x: pxy.x - pad, y: pxy.y - pad },
+          { x: pxy.x + pad, y: pxy.y + pad }
+        ];
+        const features = map.queryRenderedFeatures([ [bbox[0].x, bbox[0].y], [bbox[1].x, bbox[1].y] ], { layers: ['track-line'] }) || [];
+        const props = features[0]?.properties || cachedProperties || {};
+        openClickPopupAt(snapped, props);
+      });
+
+
+      // Basemap selector removed per request; ocean basemap remains default.
+    }
+
+    // Kick off the initialization
+    initializeMap().catch((err) => {
+      console.error('Failed to initialize map:', err);
+    });
+  </script>
+</body>
+</html>

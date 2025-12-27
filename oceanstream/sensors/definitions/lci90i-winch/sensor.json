@@ -1,0 +1,41 @@
+{
+  "id": "lci90i-winch",
+  "name": "MacArtney/Markey LCI-90i Winch Monitoring System",
+  "manufacturer": "MacArtney/Markey",
+  "model": "LCI-90i",
+  "sensor_type": "winch",
+  "description": "Precision winch monitoring system for oceanographic research vessels, providing real-time measurements of wire payout, tension, and speed. Commonly used with trawl, CTD, and other deep-sea deployment winches.",
+  "variables": [
+    "WIRE_OUT",
+    "WIRE_TENSION",
+    "WIRE_SPEED",
+    "DRUM_TURNS"
+  ],
+  "specifications": {
+    "payout_range": "0-10000 m (typical)",
+    "payout_resolution": "0.001 m",
+    "tension_range": "0-50000 lbs (winch dependent)",
+    "tension_accuracy": "±0.5% FS",
+    "speed_range": "0-100 m/min",
+    "sampling_rate": "20 Hz",
+    "output_format": "Serial/Ethernet",
+    "display_options": "Remote display, deck unit, ship integration"
+  },
+  "data_format": {
+    "description": "Space-delimited ASCII with ISO timestamps",
+    "example": "2022-06-14T06:25:23.876888Z <RS><SOH>03RD,2022-05-14T16:17:36.502,-0000168,00000000,-00004.8,2839",
+    "fields": [
+      {"name": "timestamp_logged", "type": "ISO8601", "description": "Timestamp when data was logged to file"},
+      {"name": "device_id", "type": "string", "description": "Winch device identifier"},
+      {"name": "timestamp_instrument", "type": "ISO8601", "description": "Timestamp from winch instrument"},
+      {"name": "wire_out_raw", "type": "integer", "description": "Raw wire payout value (units vary)"},
+      {"name": "turns", "type": "integer", "description": "Drum turns counter"},
+      {"name": "speed", "type": "float", "description": "Wire speed (negative = paying out)"},
+      {"name": "tension", "type": "integer", "description": "Wire tension in lbs"}
+    ]
+  },
+  "documentation_url": "https://www.macartney.com/what-we-do/winches-and-handling-systems/",
+  "r2r_device_types": ["winch"],
+  "typical_mount": "ship deck/winch room",
+  "notes": "The LCI-90i is a popular winch monitoring system used across the US academic research fleet. Data files typically contain control characters (RS=0x1E, SOH=0x01) between the logged timestamp and device ID."
+}

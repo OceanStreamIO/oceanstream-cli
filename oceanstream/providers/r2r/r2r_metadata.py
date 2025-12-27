@@ -86,18 +86,21 @@ def parse_bag_info(path: Path) -> R2RSensorInfo:
         return None
 
     sensor_type = pop_first([
+        "R2R-DeviceType",  # R2R standard field for device type
         "Sensor Type",
         "sensor_type",
         "Instrument",
         "instrument",
     ])
     sensor_id = pop_first([
+        "R2R-DeviceModel",  # R2R standard field for device model
         "Sensor ID",
         "sensor_id",
         "SerialNumber",
         "serial_number",
     ])
     description = pop_first([
+        "Internal-Sender-Description",  # R2R description field
         "Description",
         "description",
     ])

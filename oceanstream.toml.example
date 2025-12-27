@@ -1,0 +1,56 @@
+# OceanStream Configuration File
+# Copy this file to oceanstream.toml and customize as needed
+
+[paths]
+# Base directory for OceanStream metadata (campaigns, processing logs, etc.)
+# Supports environment variable substitution: ${VAR_NAME} or ${VAR_NAME:-default}
+metadata_dir = "~/.oceanstream"
+
+# Default output directory for processed data (GeoParquet, STAC, etc.)
+output_dir = "./output"
+
+[campaigns]
+# Automatically register campaigns in metadata directory after processing
+auto_register = true
+
+[processing]
+# Default processing settings (can be overridden by CLI flags)
+verbose = false
+force_reprocess = false
+
+[storage]
+# Azure Storage configuration (optional)
+# Uses environment variable substitution for sensitive credentials
+# Example:
+# connection_string = "${AZURE_STORAGE_CONNECTION_STRING}"
+# account_name = "${AZURE_STORAGE_ACCOUNT}"
+# account_key = "${AZURE_STORAGE_KEY}"
+# container_name = "oceanstream-data"
+
+# You can also provide default values:
+# connection_string = "${AZURE_STORAGE_CONNECTION_STRING:-DefaultEndpointsProtocol=https;AccountName=myaccount;...}"
+
+[semantic]
+# Semantic mapping configuration for automatic column name standardization
+# Environment variable overrides: SEMANTIC_ENABLE, SEMANTIC_GENERATE_STAC, 
+#                                 SEMANTIC_MIN_CONFIDENCE, SEMANTIC_CF_TABLE, 
+#                                 SEMANTIC_ALIAS_TABLE
+
+# Enable semantic mapping for column names (off by default)
+enable = false
+
+# Generate STAC metadata when semantic mapping is enabled
+# Default: true (users get discovery metadata out of the box)
+generate_stac = true
+
+# Minimum confidence score for semantic matches (0.0-1.0)
+# Lower values accept more fuzzy matches, higher values require stronger matches
+min_confidence = 0.7
+
+# Path to CF (Climate and Forecast) standard names table (optional)
+# Leave empty to use built-in CF table
+cf_table = ""
+
+# Path to custom alias table for semantic mapping (optional)
+# Leave empty to use built-in aliases
+alias_table = ""

@@ -18,6 +18,7 @@ class SensorType(str, Enum):
     ACOUSTIC = "acoustic"
     CURRENT = "current"
     THERMISTOR = "thermistor"
+    WINCH = "winch"
     OTHER = "other"
 
 

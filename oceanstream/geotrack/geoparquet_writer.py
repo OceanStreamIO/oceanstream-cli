@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 
 from .binning import suggest_lat_lon_bins_from_data
@@ -49,10 +50,30 @@ def write_geoparquet(
     geo_metadata: dict[str, Any] | None = None,
     provider_metadata: dict[str, Any] | None = None,
     semantic_metadata: dict[str, Any] | None = None,
+    filesystem: Optional[pafs.FileSystem] = None,
 ):
-    """Write the DataFrame to a GeoParquet dataset partitioned by lat/lon bins."""
-    output_dir = Path(output_path)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Write the DataFrame to a GeoParquet dataset partitioned by lat/lon bins.
+    
+    Args:
+        dataframe: DataFrame to write.
+        output_path: Output path (local path or cloud path like container/prefix).
+        lat_bins: Latitude bin edges.
+        lon_bins: Longitude bin edges.
+        units_metadata: Optional units metadata dict.
+        alias_mapping: Optional column alias mapping.
+        geo_metadata: Optional geo metadata.
+        provider_metadata: Optional provider-specific metadata.
+        semantic_metadata: Optional semantic metadata.
+        filesystem: Optional PyArrow filesystem for cloud storage.
+                   If None, writes to local filesystem.
+    """
+    output_dir = str(output_path)
+    
+    # Create directory if using local filesystem (or no filesystem specified)
+    if filesystem is None:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    elif isinstance(filesystem, pafs.LocalFileSystem):
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     if lat_bins is None or lon_bins is None:
         s_lat_bins, s_lon_bins = suggest_lat_lon_bins_from_data(dataframe)
@@ -151,4 +172,9 @@ def write_geoparquet(
 
     if meta:
         table = table.replace_schema_metadata(meta)
-    pq.write_to_dataset(table, root_path=output_dir, partition_cols=['lat_bin', 'lon_bin'])
+    pq.write_to_dataset(
+        table,
+        root_path=output_dir,
+        partition_cols=['lat_bin', 'lon_bin'],
+        filesystem=filesystem,
+    )

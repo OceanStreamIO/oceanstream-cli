@@ -67,6 +67,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,  # Skip confirmation prompt
+            force_reprocess=True,
         )
         
         # Verify output structure
@@ -88,6 +89,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Read one parquet file to check columns
@@ -116,6 +118,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Read parquet metadata
@@ -146,6 +149,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Read parquet metadata
@@ -169,6 +173,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Read output data
@@ -203,6 +208,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Find the campaign subdirectory (should be based on cruise_id from metadata)
@@ -251,6 +257,7 @@ class TestR2RGeoCSVNavigation:
                 output_dir=output_dir,
                 verbose=True,
                 yes=True,
+            force_reprocess=True,
             )
             
             # Should successfully process
@@ -277,6 +284,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Read parquet file and check campaign_id
@@ -313,6 +321,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
             campaign_id=user_campaign_id,
         )
         
@@ -345,6 +354,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
             platform_id=user_platform_id,
         )
         
@@ -383,6 +393,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Find the campaign subdirectory
@@ -454,6 +465,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
         )
         
         # Find the campaign subdirectory
@@ -519,6 +531,7 @@ class TestR2RGeoCSVNavigation:
             output_dir=output_dir,
             verbose=True,
             yes=True,
+            force_reprocess=True,
             attribution=user_attribution,
             creation_date=user_creation_date,
             source_dataset=user_source_dataset,

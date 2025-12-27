@@ -9,6 +9,7 @@ from oceanstream.geotrack.processor import convert
 from oceanstream.providers.saildrone import SaildroneProvider
 from oceanstream.geotrack.metadata import CampaignMetadata
 from oceanstream.config.settings import Settings
+from oceanstream.geotrack.campaign import get_campaigns_dir
 
 
 class TestAppendUpdateFunctionality:
@@ -32,6 +33,31 @@ class TestAppendUpdateFunctionality:
     def metadata_dir(self, tmp_path):
         """Test metadata directory."""
         return tmp_path / "metadata"
+    
+    @pytest.fixture(autouse=True)
+    def cleanup_campaign_metadata(self):
+        """Clean up campaign metadata before and after each test."""
+        # Clean up before test
+        campaigns_dir = get_campaigns_dir()
+        test_campaign_ids = [
+            "append_test_campaign",
+            "duplicate_test_campaign",
+            "dedup_test_campaign",
+            "force_reprocess_campaign",
+            "metadata_tracking_campaign",
+        ]
+        for campaign_id in test_campaign_ids:
+            campaign_dir = campaigns_dir / campaign_id
+            if campaign_dir.exists():
+                shutil.rmtree(campaign_dir)
+        
+        yield
+        
+        # Clean up after test
+        for campaign_id in test_campaign_ids:
+            campaign_dir = campaigns_dir / campaign_id
+            if campaign_dir.exists():
+                shutil.rmtree(campaign_dir)
     
     def test_multiple_runs_different_files_appends(self, saildrone_files, provider, tmp_path, metadata_dir, monkeypatch):
         """Test that running convert() twice with different files appends data correctly."""

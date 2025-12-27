@@ -47,17 +47,41 @@ class SemanticMapper:
         if config.enabled:
             self._load_tables()
 
+    def _get_builtin_table_path(self, filename: str) -> Path:
+        """Get path to built-in semantic table."""
+        return Path(__file__).parent / "data" / filename
+
     def _load_tables(self) -> None:
+        # Load CF standard names table
+        # Priority: 1. User-supplied path, 2. Built-in table
+        cf_path = None
         if self.config.cf_table_path and Path(self.config.cf_table_path).exists():
-            with open(self.config.cf_table_path, "r", encoding="utf-8") as f:
+            cf_path = Path(self.config.cf_table_path)
+        else:
+            builtin_cf = self._get_builtin_table_path("cf-standard-names.json")
+            if builtin_cf.exists():
+                cf_path = builtin_cf
+        
+        if cf_path:
+            with open(cf_path, "r", encoding="utf-8") as f:
                 cf_list = json.load(f)
             if isinstance(cf_list, list):
                 self._cf_table = {str(x).lower() for x in cf_list}
             elif isinstance(cf_list, dict):
                 self._cf_table = {str(k).lower() for k in cf_list.keys()}
-        # alias table
+        
+        # Load alias table
+        # Priority: 1. User-supplied path, 2. Built-in Saildrone aliases
+        alias_path = None
         if self.config.alias_table_path and Path(self.config.alias_table_path).exists():
-            with open(self.config.alias_table_path, "r", encoding="utf-8") as f:
+            alias_path = Path(self.config.alias_table_path)
+        else:
+            builtin_alias = self._get_builtin_table_path("saildrone-aliases.json")
+            if builtin_alias.exists():
+                alias_path = builtin_alias
+        
+        if alias_path:
+            with open(alias_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
                 # assume mapping canonical->list[aliases] OR alias->canonical; normalize both
