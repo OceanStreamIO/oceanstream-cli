@@ -3,3 +3,5 @@ pyarrow>=14
 azure-storage-blob>=12.19
 # Optional
 geopandas>=0.14
+pynmea2>=1.18
+seabirdscientific>=2.7

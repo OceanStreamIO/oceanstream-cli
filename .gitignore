@@ -33,6 +33,7 @@ dist/
 .coverage.*
 htmlcov/
 .cache/
+coverage_html/
 
 # Logs
 *.log
@@ -41,6 +42,10 @@ htmlcov/
 out/
 **/out/
 **/geoparquet/
+
+# Documentation build
+.docs-website/site/
+docs/site/
 
 # Local overrides
 .env

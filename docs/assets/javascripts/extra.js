@@ -10,44 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if ((a.textContent || "").trim() === "¶") a.remove();
   });
 
-  // Add copy buttons to code blocks.
-  document.querySelectorAll("pre").forEach((pre) => {
-    if (pre.querySelector(".os-code-copy-button") || pre.querySelector(".md-clipboard")) {
-      return;
-    }
-
-    const code = pre.querySelector("code");
-    if (!code) return;
-
-    // Mark up for terminal-style chrome in CSS.
-    pre.classList.add("os-terminal");
-
-    const button = document.createElement("button");
-    button.className = "os-code-copy-button";
-    button.type = "button";
-    button.textContent = "Copy";
-    button.setAttribute("aria-label", "Copy code to clipboard");
-
-    button.addEventListener("click", async () => {
-      const text = code.textContent || "";
-      try {
-        await navigator.clipboard.writeText(text);
-        button.textContent = "Copied";
-        button.setAttribute("data-copied", "true");
-        window.setTimeout(() => {
-          button.textContent = "Copy";
-          button.removeAttribute("data-copied");
-        }, 2000);
-      } catch {
-        button.textContent = "Failed";
-        window.setTimeout(() => {
-          button.textContent = "Copy";
-        }, 2000);
-      }
-    });
-
-    pre.appendChild(button);
-  });
+  // Note: Copy buttons are handled by .mkdocs-shadcn-fork/shadcn/js/copy-button.js
 
   // Right sidebar TOC: update active section as the user scrolls.
   const toc = document.getElementById("toc-sidebar");

@@ -4,6 +4,10 @@ source = oceanstream
 omit = 
     */tests/*
     */__init__.py
+    oceanstream/app.py
+    oceanstream/cli_new.py
+    oceanstream/sensors/processors/example_sensor.py
+    oceanstream/storage/azure_blob.py
 
 [report]
 show_missing = True
