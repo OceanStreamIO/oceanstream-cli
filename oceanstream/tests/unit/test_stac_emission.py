@@ -242,8 +242,8 @@ def test_stac_with_pmtiles_asset(tmp_path: Path):
     out_dir = tmp_path / "dataset"
     write_geoparquet(df, out_dir, lat_bins, lon_bins)
     
-    # Create a fake PMTiles file
-    tiles_dir = tmp_path / "tiles"
+    # Create a fake PMTiles file in the dataset directory (relative to geoparquet root)
+    tiles_dir = out_dir / "tiles"
     tiles_dir.mkdir()
     pmtiles_path = tiles_dir / "track.pmtiles"
     pmtiles_path.write_text("fake pmtiles data")
@@ -256,13 +256,13 @@ def test_stac_with_pmtiles_asset(tmp_path: Path):
         pmtiles_path=pmtiles_path,
     )
     
-    # Check first item has PMTiles asset
-    item = json.loads(item_paths[0].read_text())
+    # PMTiles is now a collection-level asset (not per-item)
+    collection = json.loads(coll_path.read_text())
     
-    assert 'assets' in item
-    assert 'pmtiles' in item['assets']
+    assert 'assets' in collection
+    assert 'pmtiles' in collection['assets']
     
-    pmtiles_asset = item['assets']['pmtiles']
+    pmtiles_asset = collection['assets']['pmtiles']
     assert pmtiles_asset['type'] == 'application/vnd.pmtiles'
     assert 'visual' in pmtiles_asset['roles']
     assert 'tiles' in pmtiles_asset['roles']

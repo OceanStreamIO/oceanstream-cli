@@ -72,9 +72,13 @@ if typer:
     def create_campaign_command(
         campaign_id: str = typer.Argument(None, help="Campaign/cruise identifier (e.g., FK161229, SD1030_2023). If omitted, interactive mode is used."),
         output_dir: str = typer.Option(None, "--output-dir", "-o", help="Default output path for processed data. Local path or cloud URI (az://container/path, s3://bucket/path)."),
-        platform_id: str = typer.Option(None, help="Platform identifier (e.g., sd1030, R/V Falkor)"),
-        platform_name: str = typer.Option(None, help="Full platform name (e.g., 'Saildrone Explorer 1030', 'R/V Falkor')"),
-        platform_type: str = typer.Option(None, help="Platform type (e.g., 'Saildrone Explorer', 'Research Vessel')"),
+        platform: list[str] = typer.Option(
+            None,
+            "--platform",
+            help="Platform specification as 'id:name:type' (e.g., 'sd1030:Saildrone 1030:Saildrone Explorer'). "
+                 "Can be specified multiple times for multi-platform campaigns. "
+                 "Name and type are optional: 'sd1030' or 'sd1030:Saildrone 1030' are valid.",
+        ),
         description: str = typer.Option(None, help="Campaign description"),
         start_date: str = typer.Option(None, help="Campaign start date in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)"),
         end_date: str = typer.Option(None, help="Campaign end date in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)"),
@@ -109,18 +113,25 @@ if typer:
         
             oceanstream campaign create FK161229 --output-dir az://mycontainer/campaigns
         
-        Example (with metadata):
+        Example (single platform - new style):
         
             oceanstream campaign create FK161229 \\
-                --output-dir az://mycontainer/campaigns \\
-                --platform-id "R/V Falkor" \\
-                --platform-name "Research Vessel Falkor" \\
-                --description "Hydrothermal vent study in the Pacific" \\
-                --start-date 2016-12-29 \\
-                --end-date 2017-01-20 \\
-                --attribution "Schmidt Ocean Institute"
+                --platform "falkor:Research Vessel Falkor:Research Vessel"
+        
+        Example (multi-platform campaign):
+        
+            oceanstream campaign create TPOS_2023 \\
+                --platform "sd1030:Saildrone 1030:Saildrone Explorer" \\
+                --platform "sd1033:Saildrone 1033:Saildrone Explorer" \\
+                --platform "sd1079:Saildrone 1079:Saildrone Explorer" \\
+                --description "TPOS 2023 multi-platform deployment"
         """
         from .geotrack.campaign import create_campaign
+        
+        # Initialize platform variables (used in interactive mode, but need to exist for CLI mode too)
+        platform_id = None
+        platform_name = None
+        platform_type = None
         
         # Interactive mode: prompt for all fields when no campaign_id provided
         if campaign_id is None:
@@ -323,13 +334,30 @@ if typer:
         if keywords:
             keywords_list = [k.strip() for k in keywords.split(',')]
         
+        # Parse platforms from new --platform option
+        platforms_list = []
+        if platform:
+            for p in platform:
+                parts = p.split(":", 2)  # Split on first two colons only
+                p_id = parts[0].strip()
+                p_name = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+                p_type = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+                
+                if not p_id:
+                    typer.echo(f"[campaign create] ERROR: Platform ID is required in --platform '{p}'")
+                    raise typer.Exit(code=1)
+                
+                platform_dict = {"id": p_id}
+                if p_name:
+                    platform_dict["name"] = p_name
+                if p_type:
+                    platform_dict["type"] = p_type
+                platforms_list.append(platform_dict)
+        
         # Create campaign metadata dict
         metadata = {
             'campaign_id': campaign_id,
             'output_dir': output_dir,
-            'platform_id': platform_id,
-            'platform_name': platform_name,
-            'platform_type': platform_type,
             'description': description,
             'start_date': start_date,
             'end_date': end_date,
@@ -345,6 +373,31 @@ if typer:
             'funding': funding,
         }
         
+        # Handle platforms - from --platform CLI option or interactive mode
+        if platforms_list:
+            # From --platform CLI option(s)
+            metadata['platforms'] = platforms_list
+            # Also set legacy fields for backward compatibility (first platform)
+            metadata['platform_id'] = platforms_list[0]['id']
+            if 'name' in platforms_list[0]:
+                metadata['platform_name'] = platforms_list[0]['name']
+            if 'type' in platforms_list[0]:
+                metadata['platform_type'] = platforms_list[0]['type']
+        elif platform_id:
+            # From interactive mode - convert to platforms array
+            platform_dict = {"id": platform_id}
+            if platform_name:
+                platform_dict["name"] = platform_name
+            if platform_type:
+                platform_dict["type"] = platform_type
+            metadata['platforms'] = [platform_dict]
+            # Also set legacy fields
+            metadata['platform_id'] = platform_id
+            if platform_name:
+                metadata['platform_name'] = platform_name
+            if platform_type:
+                metadata['platform_type'] = platform_type
+        
         # Remove None values
         metadata = {k: v for k, v in metadata.items() if v is not None}
         
@@ -357,6 +410,13 @@ if typer:
             
             typer.echo(f"[campaign create] ✓ Campaign created successfully")
             typer.echo(f"[campaign create]   Campaign ID: {campaign_id}")
+            if platforms_list:
+                if len(platforms_list) == 1:
+                    typer.echo(f"[campaign create]   Platform: {platforms_list[0]['id']}")
+                else:
+                    typer.echo(f"[campaign create]   Platforms: {len(platforms_list)}")
+                    for p in platforms_list:
+                        typer.echo(f"[campaign create]     - {p['id']}")
             if output_dir:
                 typer.echo(f"[campaign create]   Output directory: {output_dir}")
             typer.echo(f"[campaign create]   Metadata stored in: {campaign_path / 'campaign.json'}")
@@ -391,15 +451,43 @@ if typer:
             typer.echo(f"\n[campaign show] Campaign: {campaign_id}")
             typer.echo(f"{'=' * 60}")
             
-            # Core fields
-            if "platform_id" in metadata:
+            # Platforms (new multi-platform format)
+            if "platforms" in metadata and metadata["platforms"]:
+                platforms = metadata["platforms"]
+                if len(platforms) == 1:
+                    p = platforms[0]
+                    typer.echo(f"Platform ID:        {p.get('id', 'N/A')}")
+                    if 'name' in p:
+                        typer.echo(f"Platform Name:      {p['name']}")
+                    if 'type' in p:
+                        typer.echo(f"Platform Type:      {p['type']}")
+                    if 'row_count' in p:
+                        typer.echo(f"Row Count:          {p['row_count']:,}")
+                else:
+                    typer.echo(f"Platforms:          {len(platforms)}")
+                    for i, p in enumerate(platforms, 1):
+                        typer.echo(f"  [{i}] {p.get('id', 'unknown')}")
+                        if 'name' in p:
+                            typer.echo(f"      Name: {p['name']}")
+                        if 'type' in p:
+                            typer.echo(f"      Type: {p['type']}")
+                        if 'row_count' in p:
+                            typer.echo(f"      Rows: {p['row_count']:,}")
+            # Legacy single-platform fields (backward compatibility)
+            elif "platform_id" in metadata:
                 typer.echo(f"Platform ID:        {metadata['platform_id']}")
-            if "platform_name" in metadata:
-                typer.echo(f"Platform Name:      {metadata['platform_name']}")
-            if "platform_type" in metadata:
-                typer.echo(f"Platform Type:      {metadata['platform_type']}")
+                if "platform_name" in metadata:
+                    typer.echo(f"Platform Name:      {metadata['platform_name']}")
+                if "platform_type" in metadata:
+                    typer.echo(f"Platform Type:      {metadata['platform_type']}")
             
             typer.echo()
+            
+            # Data statistics (if available from processing)
+            if "total_rows" in metadata:
+                typer.echo(f"Total Rows:         {metadata['total_rows']:,}")
+            if "total_files" in metadata:
+                typer.echo(f"Total Files:        {metadata['total_files']}")
             
             # Temporal bounds
             if "start_date" in metadata:
@@ -445,6 +533,15 @@ if typer:
             if "keywords" in metadata and metadata["keywords"]:
                 typer.echo(f"Keywords:           {', '.join(metadata['keywords'])}")
             
+            # Sensors (if available from processing)
+            if "sensors" in metadata and metadata["sensors"]:
+                typer.echo()
+                typer.echo(f"Sensors:            {len(metadata['sensors'])}")
+                for sensor in metadata["sensors"][:5]:  # Show first 5
+                    typer.echo(f"  - {sensor.get('name', sensor.get('id', 'unknown'))}")
+                if len(metadata["sensors"]) > 5:
+                    typer.echo(f"  ... and {len(metadata['sensors']) - 5} more")
+            
             typer.echo()
             
             # Metadata
@@ -486,8 +583,16 @@ if typer:
                     campaign_id = campaign.get("campaign_id", "unknown")
                     typer.echo(f"{i}. {campaign_id}")
                     
-                    if "platform_id" in campaign:
+                    # Show platforms (new format) or legacy platform_id
+                    if "platforms" in campaign and campaign["platforms"]:
+                        platforms = campaign["platforms"]
+                        if len(platforms) == 1:
+                            typer.echo(f"   Platform:     {platforms[0].get('id', 'N/A')}")
+                        else:
+                            typer.echo(f"   Platforms:    {len(platforms)} ({', '.join(p.get('id', '?') for p in platforms)})")
+                    elif "platform_id" in campaign:
                         typer.echo(f"   Platform:     {campaign['platform_id']}")
+                    
                     if "description" in campaign:
                         desc = campaign['description']
                         if len(desc) > 60:
@@ -497,6 +602,8 @@ if typer:
                         typer.echo(f"   Start Date:   {campaign['start_date']}")
                     if "end_date" in campaign:
                         typer.echo(f"   End Date:     {campaign['end_date']}")
+                    if "total_rows" in campaign:
+                        typer.echo(f"   Total Rows:   {campaign['total_rows']:,}")
                     
                     typer.echo(f"   Created:      {campaign.get('created_at', 'N/A')}")
                     typer.echo(f"   Updated:      {campaign.get('updated_at', 'N/A')}")
@@ -505,16 +612,26 @@ if typer:
                 # Compact view
                 for campaign in campaigns:
                     campaign_id = campaign.get("campaign_id", "unknown")
-                    platform = campaign.get("platform_id", "N/A")
+                    
+                    # Build platform display string
+                    if "platforms" in campaign and campaign["platforms"]:
+                        platforms = campaign["platforms"]
+                        if len(platforms) == 1:
+                            platform_str = platforms[0].get('id', 'N/A')
+                        else:
+                            platform_str = f"{len(platforms)} platforms"
+                    else:
+                        platform_str = campaign.get("platform_id", "N/A")
+                    
                     description = campaign.get("description", "")
                     
                     if description and len(description) > 40:
                         description = description[:37] + "..."
                     
                     if description:
-                        typer.echo(f"  • {campaign_id} [{platform}] - {description}")
+                        typer.echo(f"  • {campaign_id} [{platform_str}] - {description}")
                     else:
-                        typer.echo(f"  • {campaign_id} [{platform}]")
+                        typer.echo(f"  • {campaign_id} [{platform_str}]")
                 
                 typer.echo(f"\nUse 'oceanstream campaign show <campaign_id>' for details")
             
@@ -550,8 +667,17 @@ if typer:
             # Confirmation prompt (unless --yes)
             if not yes:
                 typer.echo(f"[campaign delete] About to delete campaign: {campaign_id}")
-                if "platform_id" in metadata:
+                
+                # Show platforms (new format) or legacy platform_id
+                if "platforms" in metadata and metadata["platforms"]:
+                    platforms = metadata["platforms"]
+                    if len(platforms) == 1:
+                        typer.echo(f"[campaign delete]   Platform: {platforms[0].get('id', 'N/A')}")
+                    else:
+                        typer.echo(f"[campaign delete]   Platforms: {len(platforms)} ({', '.join(p.get('id', '?') for p in platforms)})")
+                elif "platform_id" in metadata:
                     typer.echo(f"[campaign delete]   Platform: {metadata['platform_id']}")
+                
                 if "description" in metadata:
                     typer.echo(f"[campaign delete]   Description: {metadata['description']}")
                 typer.echo(f"[campaign delete]")
@@ -614,7 +740,17 @@ if typer:
             typer.echo(f"{'=' * 70}")
             
             if metadata:
-                if "platform_id" in metadata:
+                # Show platforms (new format) or legacy platform_id
+                if "platforms" in metadata and metadata["platforms"]:
+                    platforms = metadata["platforms"]
+                    if len(platforms) == 1:
+                        typer.echo(f"Platform:         {platforms[0].get('id', 'N/A')}")
+                    else:
+                        typer.echo(f"Platforms:        {len(platforms)}")
+                        for p in platforms:
+                            row_info = f" ({p['row_count']:,} rows)" if 'row_count' in p else ""
+                            typer.echo(f"  - {p.get('id', 'unknown')}{row_info}")
+                elif "platform_id" in metadata:
                     typer.echo(f"Platform:         {metadata['platform_id']}")
                 if "description" in metadata:
                     desc = metadata['description']
@@ -1035,32 +1171,727 @@ if typer:
     # Register nested geotrack commands
     process_app.add_typer(geotrack_app, name="geotrack")
 
-    @process_app.command(
-        "echodata",
-        help=(
-            "Process raw echosounder data (EK60/EK80) into Zarr using echopype."
-        ),
+    # ============================================================================
+    # Echodata Processing Commands (EK60/EK80 echosounders)
+    # ============================================================================
+    
+    echodata_app = typer.Typer(
+        help="Process echosounder data (EK60/EK80) into Zarr with STAC metadata.",
+        no_args_is_help=True,
     )
-    def echodata_command(
-        input_dir: Path = typer.Option(Path("raw_echodata"), exists=True, file_okay=False, help="Directory containing raw echosounder files (EK60/EK80)."),
-        output_dir: Path = typer.Option(Path("out/echodata"), help="Output directory for processed Zarr dataset."),
-        verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
-        upload: bool = typer.Option(False, help="Upload processed data to cloud storage after conversion (future)."),
+    
+    @echodata_app.command(
+        "convert",
+        help="Convert raw echosounder files to EchoData Zarr format.",
+    )
+    def echodata_convert_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to raw .raw file or directory containing raw files.",
+        ),
+        output_dir: Path = typer.Option(
+            Path("out/echodata"),
+            "--output-dir", "-o",
+            help="Output directory for Zarr stores.",
+        ),
+        campaign_id: str = typer.Option(
+            None,
+            "--campaign-id",
+            help="Campaign identifier for organizing outputs.",
+        ),
+        sonar_model: str = typer.Option(
+            "EK80",
+            "--sonar-model",
+            help="Echosounder model: EK80 or EK60.",
+        ),
+        calibration_file: Optional[Path] = typer.Option(
+            None,
+            "--calibration-file",
+            exists=True,
+            help="Path to calibration file (.xlsx, .ecs, .json).",
+        ),
+        compute_sv: bool = typer.Option(
+            False,
+            "--compute-sv",
+            help="Compute Sv after conversion.",
+        ),
+        enrich_environment: bool = typer.Option(
+            False,
+            "--enrich-environment",
+            help="Enrich with environmental data from geoparquet (or Copernicus fallback).",
+        ),
+        geoparquet_dir: Optional[Path] = typer.Option(
+            None,
+            "--geoparquet-dir",
+            exists=True,
+            help="Path to geoparquet campaign directory for environment enrichment.",
+        ),
+        parallel: bool = typer.Option(
+            True,
+            "--parallel/--no-parallel",
+            help="Enable parallel processing with Dask.",
+        ),
+        workers: int = typer.Option(
+            4,
+            "--workers",
+            help="Number of Dask workers for parallel processing.",
+        ),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
-        global _provider_obj
-        provider_obj = _provider_obj
-        if provider_obj is None:
-            typer.echo("[echodata] ERROR: Provider not initialized")
+        """Convert raw EK60/EK80 files to EchoData Zarr format.
+        
+        Example:
+            oceanstream process echodata convert \\
+                --input-source ./raw_data/saildrone-ek80-raw \\
+                --output-dir ./out/echodata \\
+                --campaign-id TPOS2023 \\
+                --sonar-model EK80 \\
+                --calibration-file ./calibration_values.xlsx
+        """
+        from oceanstream.echodata.convert import convert_raw_file, convert_raw_files
+        from oceanstream.echodata.calibrate import apply_calibration
+        
+        input_source = Path(input_source)
+        output_dir = Path(output_dir)
+        
+        # Discover raw files
+        if input_source.is_file():
+            raw_files = [input_source]
+        else:
+            raw_files = sorted(input_source.glob("*.raw"))
+        
+        if not raw_files:
+            typer.echo(f"[echodata] No .raw files found in {input_source}")
             raise typer.Exit(code=1)
         
-        echodata.process(
-            provider=provider_obj,
-            input_dir=input_dir,
-            output_dir=output_dir,
-            verbose=verbose,
-            dry_run=dry_run,
+        if verbose:
+            typer.echo(f"[echodata] Found {len(raw_files)} raw files")
+            for f in raw_files[:5]:
+                typer.echo(f"  - {f.name}")
+            if len(raw_files) > 5:
+                typer.echo(f"  ... and {len(raw_files) - 5} more")
+        
+        if dry_run:
+            typer.echo("\n[echodata] Dry Run Summary")
+            typer.echo("─" * 40)
+            typer.echo(f"Input:           {input_source}")
+            typer.echo(f"Output:          {output_dir}")
+            typer.echo(f"Campaign:        {campaign_id or '(auto)'}")
+            typer.echo(f"Sonar model:     {sonar_model}")
+            typer.echo(f"Calibration:     {calibration_file or '(none)'}")
+            typer.echo(f"Raw files:       {len(raw_files)}")
+            typer.echo(f"Compute Sv:      {compute_sv}")
+            typer.echo(f"Enrich env:      {enrich_environment}")
+            typer.echo(f"Parallel:        {parallel} ({workers} workers)")
+            return
+        
+        # Setup output directory
+        if campaign_id:
+            output_dir = output_dir / campaign_id / "echodata" / "raw"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Convert files
+            if verbose:
+                typer.echo(f"\n[echodata] Converting {len(raw_files)} files...")
+            
+            zarr_paths = convert_raw_files(
+                raw_files,
+                output_dir,
+                sonar_model=sonar_model,
+                parallel=parallel,
+                n_workers=workers,
+            )
+            
+            if verbose:
+                typer.echo(f"[echodata] Converted {len(zarr_paths)} files to Zarr")
+            
+            # Apply calibration
+            if calibration_file:
+                if verbose:
+                    typer.echo(f"[echodata] Applying calibration from {calibration_file}")
+                
+                from oceanstream.echodata.convert import open_converted
+                
+                for zarr_path in zarr_paths:
+                    ed = open_converted(zarr_path)
+                    ed = apply_calibration(ed, calibration_file)
+                    ed.to_zarr(zarr_path, overwrite=True)
+            
+            # Enrich environment
+            if enrich_environment and geoparquet_dir:
+                if verbose:
+                    typer.echo(f"[echodata] Enriching with environmental data from {geoparquet_dir}")
+                
+                from oceanstream.echodata.environment import enrich_environment as enrich_env
+                
+                for zarr_path in zarr_paths:
+                    enrich_env(zarr_path, geoparquet_dir)
+            
+            typer.echo(f"\n[echodata] ✓ Conversion complete: {len(zarr_paths)} files")
+            typer.echo(f"  Output: {output_dir}")
+            
+        except ImportError as e:
+            typer.echo(f"[echodata] ERROR: {e}")
+            typer.echo("\nInstall echodata dependencies:")
+            typer.echo('  pip install "oceanstream[echodata]"')
+            typer.echo("  pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge")
+            raise typer.Exit(code=1)
+        except Exception as e:
+            typer.echo(f"[echodata] ERROR: {e}")
+            raise typer.Exit(code=1)
+    
+    @echodata_app.command(
+        "compute-sv",
+        help="Compute Sv (Volume Backscattering Strength) from EchoData.",
+    )
+    def echodata_compute_sv_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to EchoData Zarr store or directory.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for Sv Zarr (default: alongside input).",
+        ),
+        add_depth: bool = typer.Option(True, help="Add depth coordinate."),
+        add_location: bool = typer.Option(True, help="Add lat/lon coordinates."),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Compute Sv from calibrated EchoData.
+        
+        Example:
+            oceanstream process echodata compute-sv \\
+                --input-source ./out/echodata/TPOS2023/raw \\
+                --output-dir ./out/echodata/TPOS2023/sv
+        """
+        from oceanstream.echodata.compute import compute_sv
+        
+        input_source = Path(input_source)
+        
+        # Find Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        if verbose:
+            typer.echo(f"[echodata] Computing Sv for {len(zarr_paths)} datasets")
+        
+        for zarr_path in zarr_paths:
+            sv_output = output_dir / f"{zarr_path.stem}_Sv.zarr" if output_dir else zarr_path.with_suffix(".Sv.zarr")
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {sv_output.name}")
+            
+            compute_sv(
+                zarr_path,
+                output_path=sv_output,
+                add_depth=add_depth,
+                add_location=add_location,
+            )
+        
+        typer.echo(f"[echodata] ✓ Computed Sv for {len(zarr_paths)} datasets")
+    
+    @echodata_app.command(
+        "compute-mvbs",
+        help="Compute MVBS (Mean Volume Backscattering Strength).",
+    )
+    def echodata_compute_mvbs_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to Sv Zarr store or directory.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for MVBS Zarr.",
+        ),
+        range_bin: str = typer.Option("1m", help="Vertical bin size (e.g., 1m, 5m)."),
+        ping_time_bin: str = typer.Option("5s", help="Temporal bin size (e.g., 5s, 10s)."),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Compute MVBS from Sv data.
+        
+        Example:
+            oceanstream process echodata compute-mvbs \\
+                --input-source ./out/echodata/TPOS2023/sv \\
+                --range-bin 1m --ping-time-bin 5s
+        """
+        from oceanstream.echodata.compute import compute_mvbs
+        import xarray as xr
+        
+        input_source = Path(input_source)
+        
+        # Find Sv Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*_Sv.zarr")) or sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No Sv .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        if verbose:
+            typer.echo(f"[echodata] Computing MVBS for {len(zarr_paths)} datasets")
+            typer.echo(f"  range_bin={range_bin}, ping_time_bin={ping_time_bin}")
+        
+        for zarr_path in zarr_paths:
+            sv_ds = xr.open_zarr(zarr_path)
+            mvbs_output = output_dir / f"{zarr_path.stem}_mvbs.zarr" if output_dir else zarr_path.parent / f"{zarr_path.stem}_mvbs.zarr"
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {mvbs_output.name}")
+            
+            compute_mvbs(
+                sv_ds,
+                range_bin=range_bin,
+                ping_time_bin=ping_time_bin,
+                output_path=mvbs_output,
+            )
+        
+        typer.echo(f"[echodata] ✓ Computed MVBS for {len(zarr_paths)} datasets")
+    
+    @echodata_app.command(
+        "denoise",
+        help="Apply denoising pipeline to Sv data.",
+    )
+    def echodata_denoise_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to Sv Zarr store or directory.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for denoised Zarr.",
+        ),
+        methods: str = typer.Option(
+            "background,transient,impulse,attenuation",
+            help="Comma-separated denoising methods.",
+        ),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Apply denoising to Sv data.
+        
+        Methods: background, transient, impulse, attenuation
+        
+        Example:
+            oceanstream process echodata denoise \\
+                --input-source ./out/echodata/TPOS2023/sv \\
+                --methods background,impulse
+        """
+        from oceanstream.echodata.denoise import apply_denoising
+        from oceanstream.echodata.config import DenoiseConfig
+        
+        input_source = Path(input_source)
+        method_list = [m.strip() for m in methods.split(",")]
+        
+        # Find Sv Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*_Sv.zarr")) or sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No Sv .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        if verbose:
+            typer.echo(f"[echodata] Applying denoising to {len(zarr_paths)} datasets")
+            typer.echo(f"  methods: {method_list}")
+        
+        config = DenoiseConfig(methods=method_list)
+        
+        for zarr_path in zarr_paths:
+            denoised_output = output_dir / f"{zarr_path.stem}_denoised.zarr" if output_dir else zarr_path.parent / f"{zarr_path.stem}_denoised.zarr"
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {denoised_output.name}")
+            
+            apply_denoising(
+                zarr_path,
+                methods=method_list,
+                config=config,
+                output_path=denoised_output,
+            )
+        
+        typer.echo(f"[echodata] ✓ Denoised {len(zarr_paths)} datasets")
+    
+    @echodata_app.command(
+        "compute-nasc",
+        help="Compute NASC (Nautical Area Scattering Coefficient).",
+    )
+    def echodata_compute_nasc_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to Sv Zarr store or directory.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for NASC Zarr.",
+        ),
+        range_bin: str = typer.Option("10m", help="Vertical bin size (e.g., 10m, 20m)."),
+        dist_bin: str = typer.Option("0.5nmi", help="Distance bin size (e.g., 0.5nmi, 1nmi)."),
+        transducer_depth: float = typer.Option(
+            0.0,
+            "--transducer-depth",
+            help="Transducer depth below surface in meters (e.g., 0.6 for Saildrone).",
+        ),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Compute NASC from Sv data.
+        
+        NASC integrates acoustic backscatter over depth layers and
+        horizontal distance, providing a measure of acoustic biomass
+        per unit area (m² per nautical mile²).
+        
+        Requirements:
+        - Sv dataset must have latitude/longitude (use enrich-location first)
+        - Sv dataset must have echo_range or depth
+        - Sv dataset must have frequency_nominal
+        
+        Example:
+            # First enrich with location data
+            oceanstream process echodata enrich-location \\
+                --input-source ./sv/TPOS2023_Sv.zarr \\
+                --campaign-id TPOS2023
+            
+            # Then compute NASC
+            oceanstream process echodata compute-nasc \\
+                --input-source ./sv/TPOS2023_Sv.zarr \\
+                --range-bin 10m --dist-bin 0.5nmi \\
+                --transducer-depth 0.6
+        """
+        from oceanstream.echodata.compute import compute_nasc
+        import xarray as xr
+        
+        input_source = Path(input_source)
+        
+        # Find Sv Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*_Sv.zarr")) or sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No Sv .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        if verbose:
+            typer.echo(f"[echodata] Computing NASC for {len(zarr_paths)} datasets")
+            typer.echo(f"  range_bin={range_bin}, dist_bin={dist_bin}, transducer_depth={transducer_depth}m")
+        
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        
+        for zarr_path in zarr_paths:
+            sv_ds = xr.open_zarr(zarr_path)
+            nasc_output = output_dir / f"{zarr_path.stem}_nasc.zarr" if output_dir else zarr_path.parent / f"{zarr_path.stem}_nasc.zarr"
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {nasc_output.name}")
+            
+            try:
+                compute_nasc(
+                    sv_ds,
+                    range_bin=range_bin,
+                    dist_bin=dist_bin,
+                    transducer_depth=transducer_depth,
+                    output_path=nasc_output,
+                )
+            except ValueError as e:
+                typer.echo(f"[echodata] ⚠️ Failed to compute NASC for {zarr_path.name}: {e}")
+                typer.echo("  Hint: Use 'enrich-location' command first if missing lat/lon")
+                continue
+        
+        typer.echo(f"[echodata] ✓ Computed NASC for {len(zarr_paths)} datasets")
+
+    @echodata_app.command(
+        "enrich-location",
+        help="Enrich Sv dataset with GPS location data from geoparquet.",
+    )
+    def echodata_enrich_location_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to Sv Zarr store or directory.",
+        ),
+        campaign_dir: Path = typer.Option(
+            None,
+            "--campaign-dir",
+            help="Path to geoparquet campaign directory with GPS data.",
+        ),
+        campaign_id: str = typer.Option(
+            None,
+            "--campaign-id",
+            help="Campaign ID to look up in ~/.oceanstream/campaigns/.",
+        ),
+        geoparquet_url: str = typer.Option(
+            None,
+            "--geoparquet-url",
+            help="Cloud URL to geoparquet file (az://, s3://, gs://, https://).",
+        ),
+        time_col: str = typer.Option(
+            "time",
+            "--time-col",
+            help="Column name for time in geoparquet (used with --geoparquet-url).",
+        ),
+        lat_col: str = typer.Option(
+            "latitude",
+            "--lat-col",
+            help="Column name for latitude in geoparquet (used with --geoparquet-url).",
+        ),
+        lon_col: str = typer.Option(
+            "longitude",
+            "--lon-col",
+            help="Column name for longitude in geoparquet (used with --geoparquet-url).",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for enriched Sv Zarr (default: overwrites input).",
+        ),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Enrich Sv dataset with GPS coordinates from geoparquet.
+        
+        This command adds latitude/longitude coordinates to an Sv dataset
+        by interpolating from a campaign's geoparquet trajectory data.
+        This is required for NASC computation which needs location data
+        for distance calculations.
+        
+        Similar to how environment enrichment adds sound speed and absorption
+        from geoparquet CTD data, this enriches Sv with GPS data.
+        
+        Supports three source modes:
+        
+        1. **Campaign directory** - local path to campaign with geoparquet
+        2. **Campaign ID** - looks up path from ~/.oceanstream/campaigns/
+        3. **Geoparquet URL** - cloud-native source with custom column mappings
+        
+        Examples:
+            # Using campaign directory path
+            oceanstream process echodata enrich-location \\
+                --input-source ./out/sv/TPOS2023_Sv.zarr \\
+                --campaign-dir ./campaigns/TPOS2023
+            
+            # Using campaign ID (looks up path from ~/.oceanstream/campaigns/)
+            oceanstream process echodata enrich-location \\
+                --input-source ./out/sv/TPOS2023_Sv.zarr \\
+                --campaign-id TPOS2023
+            
+            # Using cloud geoparquet with custom column names
+            oceanstream process echodata enrich-location \\
+                --input-source ./out/sv/cruise_Sv.zarr \\
+                --geoparquet-url az://container/path/to/nav.parquet \\
+                --time-col iso_time \\
+                --lat-col ship_latitude \\
+                --lon-col ship_longitude
+        """
+        from oceanstream.echodata.environment import (
+            enrich_sv_with_location,
+            enrich_sv_with_location_from_url,
         )
+        import xarray as xr
+        
+        # Count how many source options were provided
+        sources = [campaign_dir, campaign_id, geoparquet_url]
+        source_count = sum(1 for s in sources if s is not None)
+        
+        if source_count == 0:
+            typer.echo("[echodata] Error: Must provide one of: --campaign-dir, --campaign-id, or --geoparquet-url")
+            raise typer.Exit(code=1)
+        
+        if source_count > 1:
+            typer.echo("[echodata] Error: Provide only one of: --campaign-dir, --campaign-id, or --geoparquet-url")
+            raise typer.Exit(code=1)
+        
+        input_source = Path(input_source)
+        
+        # Find Sv Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*_Sv.zarr")) or sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No Sv .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        # Describe the source
+        if geoparquet_url:
+            source_desc = geoparquet_url
+        elif campaign_id:
+            source_desc = f"campaign:{campaign_id}"
+        else:
+            source_desc = str(campaign_dir)
+            
+        if verbose:
+            typer.echo(f"[echodata] Enriching location for {len(zarr_paths)} datasets from {source_desc}")
+            if geoparquet_url:
+                typer.echo(f"  Column mappings: time={time_col}, lat={lat_col}, lon={lon_col}")
+        
+        for zarr_path in zarr_paths:
+            sv_ds = xr.open_zarr(zarr_path)
+            
+            # Determine output path
+            if output_dir:
+                output_path = Path(output_dir) / zarr_path.name
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                output_path = zarr_path  # Overwrite
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {output_path}")
+            
+            try:
+                if geoparquet_url:
+                    sv_enriched = enrich_sv_with_location_from_url(
+                        sv_ds,
+                        url=geoparquet_url,
+                        time_col=time_col,
+                        lat_col=lat_col,
+                        lon_col=lon_col,
+                    )
+                else:
+                    sv_enriched = enrich_sv_with_location(
+                        sv_ds,
+                        campaign_dir=campaign_dir,
+                        campaign_id=campaign_id,
+                    )
+                sv_enriched.to_zarr(output_path, mode="w")
+                
+                if verbose:
+                    lat_range = f"[{float(sv_enriched.latitude.min()):.3f}, {float(sv_enriched.latitude.max()):.3f}]"
+                    lon_range = f"[{float(sv_enriched.longitude.min()):.3f}, {float(sv_enriched.longitude.max()):.3f}]"
+                    typer.echo(f"    Added: lat={lat_range}, lon={lon_range}")
+            except Exception as e:
+                typer.echo(f"[echodata] ⚠️ Failed to enrich {zarr_path.name}: {e}")
+        
+        typer.echo(f"[echodata] ✓ Enriched location for {len(zarr_paths)} datasets")
+
+    @echodata_app.command(
+        "plot",
+        help="Generate echogram visualizations from Sv data.",
+    )
+    def echodata_plot_command(
+        input_source: Path = typer.Option(
+            ...,
+            "--input-source",
+            exists=True,
+            help="Path to Sv Zarr store or directory.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for echogram images.",
+        ),
+        channels: str = typer.Option(
+            None,
+            "--channels",
+            help="Comma-separated channel indices to plot (default: all).",
+        ),
+        cmap: str = typer.Option("ocean_r", help="Matplotlib colormap."),
+        vmin: float = typer.Option(-80.0, help="Minimum Sv value for color scale (dB)."),
+        vmax: float = typer.Option(-50.0, help="Maximum Sv value for color scale (dB)."),
+        dpi: int = typer.Option(180, help="Output image resolution."),
+        file_base_name: str = typer.Option(None, help="Base name for output files."),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress."),
+    ) -> None:
+        """Generate echogram PNG visualizations from Sv data.
+        
+        Produces publication-quality echogram plots for each channel,
+        with configurable color scale, resolution, and colormap.
+        
+        Example:
+            oceanstream process echodata plot \\
+                --input-source ./out/echodata/TPOS2023/sv \\
+                --output-dir ./echograms \\
+                --vmin -80 --vmax -50 --cmap ocean_r
+        """
+        from oceanstream.echodata.plot import generate_echograms
+        import xarray as xr
+        
+        input_source = Path(input_source)
+        
+        # Find Sv Zarr stores
+        if input_source.suffix == ".zarr":
+            zarr_paths = [input_source]
+        else:
+            zarr_paths = sorted(input_source.glob("*_Sv.zarr")) or sorted(input_source.glob("*.zarr"))
+        
+        if not zarr_paths:
+            typer.echo(f"[echodata] No Sv .zarr stores found in {input_source}")
+            raise typer.Exit(code=1)
+        
+        # Parse channels
+        channel_list = None
+        if channels:
+            channel_list = [int(c.strip()) for c in channels.split(",")]
+        
+        if verbose:
+            typer.echo(f"[echodata] Generating echograms for {len(zarr_paths)} datasets")
+            typer.echo(f"  channels: {channel_list or 'all'}")
+            typer.echo(f"  cmap={cmap}, vmin={vmin}, vmax={vmax}, dpi={dpi}")
+        
+        all_echograms = []
+        for zarr_path in zarr_paths:
+            sv_ds = xr.open_zarr(zarr_path)
+            
+            # Determine output directory
+            if output_dir:
+                plot_output_dir = Path(output_dir)
+            else:
+                plot_output_dir = zarr_path.parent / "echograms"
+            plot_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Determine base name
+            base_name = file_base_name or zarr_path.stem.replace("_Sv", "")
+            
+            if verbose:
+                typer.echo(f"  {zarr_path.name} -> {plot_output_dir}/")
+            
+            echogram_files = generate_echograms(
+                sv_ds,
+                output_dir=plot_output_dir,
+                file_base_name=base_name,
+                channels=channel_list,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                dpi=dpi,
+            )
+            all_echograms.extend(echogram_files)
+            
+            if verbose:
+                for ef in echogram_files:
+                    typer.echo(f"    Created: {ef.name}")
+        
+        typer.echo(f"[echodata] ✓ Generated {len(all_echograms)} echograms")
+    
+    # Register echodata app
+    process_app.add_typer(echodata_app, name="echodata")
 
     @process_app.command(
         "multibeam",

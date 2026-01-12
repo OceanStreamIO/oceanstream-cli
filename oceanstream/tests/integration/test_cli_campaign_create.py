@@ -81,9 +81,7 @@ class TestCampaignCreateCLI:
         result = runner.invoke(app, [
             "campaign", "create", campaign_id,
             "--output-dir", "s3://bucket/path",
-            "--platform-id", "R/V Falkor",
-            "--platform-name", "Research Vessel Falkor",
-            "--platform-type", "Research Vessel",
+            "--platform", "R/V Falkor:Research Vessel Falkor:Research Vessel",
             "--description", "Test campaign description",
             "--start-date", "2024-01-01",
             "--end-date", "2024-12-31",
@@ -110,9 +108,12 @@ class TestCampaignCreateCLI:
         
         assert metadata["campaign_id"] == campaign_id
         assert metadata["output_dir"] == "s3://bucket/path"
-        assert metadata["platform_id"] == "R/V Falkor"
-        assert metadata["platform_name"] == "Research Vessel Falkor"
-        assert metadata["platform_type"] == "Research Vessel"
+        # Check platforms array (new format)
+        assert "platforms" in metadata
+        assert len(metadata["platforms"]) == 1
+        assert metadata["platforms"][0]["id"] == "R/V Falkor"
+        assert metadata["platforms"][0]["name"] == "Research Vessel Falkor"
+        assert metadata["platforms"][0]["type"] == "Research Vessel"
         assert metadata["description"] == "Test campaign description"
         assert metadata["start_date"] == "2024-01-01"
         assert metadata["end_date"] == "2024-12-31"

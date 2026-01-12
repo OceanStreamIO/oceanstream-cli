@@ -75,9 +75,7 @@ class TestCreateCampaignCommand:
         with patch('oceanstream.geotrack.campaign.create_campaign', return_value=mock_campaign_path) as mock_create:
             result = runner.invoke(app, [
                 "campaign", "create", "FK161229",
-                "--platform-id", "R/V_Falkor",
-                "--platform-name", "Research Vessel Falkor",
-                "--platform-type", "Research Vessel",
+                "--platform", "R/V_Falkor:Research Vessel Falkor:Research Vessel",
                 "--description", "Test campaign",
                 "--start-date", "2016-12-29",
                 "--end-date", "2017-01-20",
@@ -99,8 +97,12 @@ class TestCreateCampaignCommand:
         call_kwargs = mock_create.call_args[1]
         metadata = call_kwargs['metadata']
         assert metadata['campaign_id'] == "FK161229"
-        assert metadata['platform_id'] == "R/V_Falkor"
-        assert metadata['platform_name'] == "Research Vessel Falkor"
+        # Check platforms array (new format)
+        assert 'platforms' in metadata
+        assert len(metadata['platforms']) == 1
+        assert metadata['platforms'][0]['id'] == "R/V_Falkor"
+        assert metadata['platforms'][0]['name'] == "Research Vessel Falkor"
+        assert metadata['platforms'][0]['type'] == "Research Vessel"
         assert metadata['bbox'] == [-180.0, -90.0, 180.0, 90.0]
         assert metadata['keywords'] == ['hydrothermal', 'vents', 'pacific']
         assert metadata['attribution'] == "Schmidt Ocean Institute"

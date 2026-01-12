@@ -971,37 +971,54 @@ class GeotrackProcessor:
         return df
     
     def detect_sensors_and_platform(self, df: pd.DataFrame) -> tuple[list[Sensor], dict[str, Any]]:
-        """Detect sensors and platform info from DataFrame.
+        """Detect sensors and platform info from DataFrame (backward compatible).
+        
+        For multi-platform support, use detect_sensors_and_platforms() instead.
+        This method returns only the FIRST platform for backward compatibility.
         
         Args:
             df: Consolidated DataFrame with all data
             
         Returns:
-            Tuple of (detected_sensors, platform_metadata)
+            Tuple of (detected_sensors, platform_metadata) - single platform dict
+        """
+        detected_sensors, all_platforms = self.detect_sensors_and_platforms(df)
+        # Return first platform for backward compatibility
+        platform_metadata = all_platforms[0] if all_platforms else {}
+        return detected_sensors, platform_metadata
+    
+    def detect_sensors_and_platforms(self, df: pd.DataFrame) -> tuple[list[Sensor], list[dict[str, Any]]]:
+        """Detect sensors and ALL platforms from DataFrame.
+        
+        Args:
+            df: Consolidated DataFrame with all data
+            
+        Returns:
+            Tuple of (detected_sensors, platforms_list) where platforms_list
+            contains metadata for ALL platforms in the dataset
         """
         # Detect sensors from available columns
         available_vars = set(df.columns)
         catalogue = get_sensor_catalogue()
         detected_sensors = catalogue.detect_sensors(available_vars)
         
-        # Extract platform information
-        platform_metadata = {}
+        # Extract ALL platforms from the data
+        platforms: list[dict[str, Any]] = []
         
-        # Get trajectory/platform ID
+        # Get unique trajectory/platform IDs
         if 'trajectory' in df.columns:
-            # Find first non-NaN trajectory value
-            trajectory_values = df['trajectory'].dropna()
-            if len(trajectory_values) > 0:
-                trajectory_id = int(trajectory_values.iloc[0])
+            trajectory_values = df['trajectory'].dropna().unique()
+            for trajectory_id in sorted(trajectory_values):
+                trajectory_id = int(trajectory_id)
                 platform_type = detect_saildrone_platform(trajectory_id)
-            
-                platform_metadata = {
+                
+                platform_metadata: dict[str, Any] = {
                     'id': f'sd{trajectory_id}',
                     'trajectory': trajectory_id,
                     'type': f'Saildrone {platform_type}',
                     'model': platform_type,
                 }
-            
+                
                 # Add specifications based on platform type
                 if platform_type == "Explorer":
                     platform_metadata['specifications'] = {
@@ -1025,50 +1042,83 @@ class GeotrackProcessor:
                         'power': 'solar + wind generator',
                         'communication': 'Iridium satellite + high-bandwidth'
                     }
+                
+                # Add platform_id from column if available (match by trajectory)
+                if 'platform_id' in df.columns:
+                    platform_rows = df[df['trajectory'] == trajectory_id]
+                    if len(platform_rows) > 0:
+                        platform_id_val = str(platform_rows['platform_id'].iloc[0])
+                        platform_metadata['platform_id'] = platform_id_val
+                
+                # Add campaign_id from column if available
+                if 'campaign_id' in df.columns:
+                    campaign_id_value = df['campaign_id'].iloc[0]
+                    if pd.notna(campaign_id_value):
+                        platform_metadata['campaign_id'] = str(campaign_id_value)
+                
+                # Count rows for this platform
+                platform_rows = df[df['trajectory'] == trajectory_id]
+                platform_metadata['row_count'] = len(platform_rows)
+                
+                platforms.append(platform_metadata)
         
-        # Get platform_id from first row if available
-        if 'platform_id' in df.columns:
-            platform_id_val = str(df['platform_id'].iloc[0])
-            platform_metadata['platform_id'] = platform_id_val
-            
-            # For R2R data, try to get actual vessel name from cruise ID
-            if self.provider.name == 'r2r':
-                from oceanstream.providers.r2r.r2r import R2RProvider
-                if isinstance(self.provider, R2RProvider):
-                    vessel_name = self.provider.get_platform_from_cruise_id(platform_id_val)
-                    if vessel_name:
-                        platform_metadata['name'] = vessel_name
-                        platform_metadata['type'] = vessel_name
+        # Fallback: if no trajectory column, use platform_id column
+        elif 'platform_id' in df.columns:
+            unique_platform_ids = df['platform_id'].dropna().unique()
+            for platform_id_val in sorted(unique_platform_ids):
+                platform_id_val = str(platform_id_val)
+                platform_metadata = {
+                    'platform_id': platform_id_val,
+                }
+                
+                # For R2R data, try to get actual vessel name from cruise ID
+                if self.provider.name == 'r2r':
+                    from oceanstream.providers.r2r.r2r import R2RProvider
+                    if isinstance(self.provider, R2RProvider):
+                        vessel_name = self.provider.get_platform_from_cruise_id(platform_id_val)
+                        if vessel_name:
+                            platform_metadata['name'] = vessel_name
+                            platform_metadata['type'] = vessel_name
+                
+                # Add campaign_id from column if available
+                if 'campaign_id' in df.columns:
+                    campaign_id_value = df['campaign_id'].iloc[0]
+                    if pd.notna(campaign_id_value):
+                        platform_metadata['campaign_id'] = str(campaign_id_value)
+                
+                # Count rows for this platform
+                platform_rows = df[df['platform_id'] == platform_id_val]
+                platform_metadata['row_count'] = len(platform_rows)
+                
+                platforms.append(platform_metadata)
         
-        # Get campaign_id from first row if available
-        if 'campaign_id' in df.columns:
-            campaign_id_value = df['campaign_id'].iloc[0]
-            if pd.notna(campaign_id_value):
-                platform_metadata['campaign_id'] = str(campaign_id_value)
-        
-        # Add citation and provenance metadata (user-supplied or from file metadata)
-        # Priority: user-supplied > file metadata
+        # Add citation and provenance metadata to ALL platforms
         file_metadata = next(iter(self._file_metadata.values())) if self._file_metadata else None
         
+        provenance: dict[str, Any] = {}
         if self._attribution:
-            platform_metadata['attribution'] = self._attribution
+            provenance['attribution'] = self._attribution
         elif file_metadata and 'attribution' in file_metadata:
-            platform_metadata['attribution'] = file_metadata['attribution']
+            provenance['attribution'] = file_metadata['attribution']
         
         if self._creation_date:
-            platform_metadata['creation_date'] = self._creation_date
+            provenance['creation_date'] = self._creation_date
         elif file_metadata and 'creation_date' in file_metadata:
-            platform_metadata['creation_date'] = file_metadata['creation_date']
+            provenance['creation_date'] = file_metadata['creation_date']
         
         if self._source_dataset:
-            platform_metadata['source_dataset'] = self._source_dataset
+            provenance['source_dataset'] = self._source_dataset
         elif file_metadata and 'source_dataset' in file_metadata:
-            platform_metadata['source_dataset'] = file_metadata['source_dataset']
+            provenance['source_dataset'] = file_metadata['source_dataset']
         
         if self._source_repository:
-            platform_metadata['source_repository'] = self._source_repository
+            provenance['source_repository'] = self._source_repository
         elif file_metadata and 'source_repository' in file_metadata:
-            platform_metadata['source_repository'] = file_metadata['source_repository']
+            provenance['source_repository'] = file_metadata['source_repository']
+        
+        # Add provenance to each platform
+        for platform in platforms:
+            platform.update(provenance)
         
         # Log findings
         if self.verbose:
@@ -1077,10 +1127,14 @@ class GeotrackProcessor:
                 print(f"[geotrack]     • {sensor.name}")
             if len(detected_sensors) > 3:
                 print(f"[geotrack]     • ... and {len(detected_sensors) - 3} more")
-            if platform_metadata:
-                print(f"[geotrack]   Platform: {platform_metadata.get('type', 'Unknown')}")
+            if platforms:
+                print(f"[geotrack]   Platforms detected: {len(platforms)}")
+                for p in platforms[:3]:  # Show first 3
+                    print(f"[geotrack]     • {p.get('id', p.get('platform_id', 'Unknown'))} ({p.get('row_count', '?')} rows)")
+                if len(platforms) > 3:
+                    print(f"[geotrack]     • ... and {len(platforms) - 3} more")
         
-        return detected_sensors, platform_metadata
+        return detected_sensors, platforms
     
     def write_geoparquet_dataset(
         self,
@@ -1138,6 +1192,7 @@ class GeotrackProcessor:
         semantic_meta: dict[str, Any] | None,
         detected_sensors: list[Sensor] | None = None,
         platform_metadata: dict[str, Any] | None = None,
+        platforms: list[dict[str, Any]] | None = None,
         pmtiles_path: Path | None = None,
         measurement_columns: list[str] | None = None,
     ) -> None:
@@ -1148,7 +1203,8 @@ class GeotrackProcessor:
             df: DataFrame with the data
             semantic_meta: Semantic metadata
             detected_sensors: List of detected sensors
-            platform_metadata: Platform metadata
+            platform_metadata: Platform metadata (deprecated, use platforms)
+            platforms: List of platform metadata dicts for multi-platform campaigns
             pmtiles_path: Optional path to PMTiles file
             measurement_columns: Optional list of measurement columns for statistics
         """
@@ -1178,6 +1234,7 @@ class GeotrackProcessor:
                 provider_name=self.provider.name,
                 instruments=detected_sensors,
                 platform=platform_metadata,
+                platforms=platforms,
                 pmtiles_path=pmtiles_path,
                 measurement_stats=measurement_stats,
                 software_version=software_version,
@@ -1675,8 +1732,10 @@ def convert(
     # Step 2-3: Process files
     df = processor.process_files(csv_files)
     
-    # Step 3.5: Detect sensors and platform
-    detected_sensors, platform_metadata = processor.detect_sensors_and_platform(df)
+    # Step 3.5: Detect sensors and ALL platforms (multi-platform support)
+    detected_sensors, detected_platforms = processor.detect_sensors_and_platforms(df)
+    # For backward compatibility, also get single platform_metadata
+    platform_metadata = detected_platforms[0] if detected_platforms else {}
     
     # Step 3.6: Validate campaign_id is present
     # campaign_id is now REQUIRED - check if it's in the DataFrame
@@ -1695,7 +1754,15 @@ def convert(
     
     if is_cloud:
         # Cloud storage: combine cloud base path with campaign_id
-        cloud_campaign_path = f"{resolved_output_dir}/{detected_campaign_id}"
+        # BUT: check if user already included campaign_id in the path to avoid duplication
+        resolved_path_parts = resolved_output_dir.rstrip('/').split('/')
+        if resolved_path_parts[-1] == detected_campaign_id:
+            # User already specified campaign_id in path (e.g., az://container/campaign_id)
+            cloud_campaign_path = resolved_output_dir.rstrip('/')
+        else:
+            # Append campaign_id to the base path
+            cloud_campaign_path = f"{resolved_output_dir.rstrip('/')}/{detected_campaign_id}"
+        
         # For cloud storage, use a local staging directory for metadata/STAC generation
         # These will be uploaded to cloud after generation
         # Use current working directory as the local staging area
@@ -1704,8 +1771,15 @@ def convert(
         campaign_output_dir.mkdir(parents=True, exist_ok=True)
     else:
         # Local storage: standard path handling
-        local_output_dir = Path(resolved_output_dir)
-        campaign_output_dir = local_output_dir / detected_campaign_id
+        # Also check if user already included campaign_id in the path
+        resolved_path = Path(resolved_output_dir)
+        if resolved_path.name == detected_campaign_id:
+            # User already specified campaign_id in path
+            local_output_dir = resolved_path.parent
+            campaign_output_dir = resolved_path
+        else:
+            local_output_dir = resolved_path
+            campaign_output_dir = local_output_dir / detected_campaign_id
         cloud_campaign_path = None
     
     # Step 3.8: Enrich non-spatial data with interpolation
@@ -1999,6 +2073,7 @@ def convert(
             semantic_meta, 
             detected_sensors, 
             platform_metadata,
+            platforms=detected_platforms,
             pmtiles_path=pmtiles_path,
             measurement_columns=pmtiles_measurement_columns if pmtiles_include_measurements else None,
         )
@@ -2053,6 +2128,7 @@ def convert(
             }
         
         # Add platform information if available
+        # For backward compatibility, keep single platform_id/name/type
         if platform_metadata:
             if 'id' in platform_metadata:
                 campaign_meta['platform_id'] = platform_metadata['id']
@@ -2060,6 +2136,20 @@ def convert(
                 campaign_meta['platform_name'] = platform_metadata['name']
             if 'type' in platform_metadata:
                 campaign_meta['platform_type'] = platform_metadata['type']
+        
+        # Add multi-platform support: store ALL platforms in platforms array
+        if detected_platforms:
+            campaign_meta['platforms'] = [
+                {
+                    'id': p.get('id'),
+                    'platform_id': p.get('platform_id'),
+                    'name': p.get('name'),
+                    'type': p.get('type'),
+                    'model': p.get('model'),
+                    'row_count': p.get('row_count'),
+                }
+                for p in detected_platforms
+            ]
         
         # Add temporal bounds if available in DataFrame
         if 'time' in df.columns and not df['time'].isna().all():

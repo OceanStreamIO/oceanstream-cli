@@ -168,7 +168,6 @@ oceanstream process geotrack convert \
   --input-source raw_data/gnss_logs/ \
   --output-dir out/geoparquet \
   --campaign-id arctic_expedition_2024 \
-  --platform-id rv_polarstern \
   --nmea-sentence-types GGA RMC GNS \
   --nmea-sampling-interval 5.0 \
   --attribution "Alfred Wegener Institute - RV Polarstern Arctic Expedition 2024" \
@@ -566,7 +565,6 @@ Convert historical ship navigation logs:
 oceanstream process geotrack convert \
   --input-source archive/RV_atlantis_2023/gnss/ \
   --campaign-id at42_cruise_2023 \
-  --platform-id rv_atlantis \
   --nmea-sentence-types GGA RMC \
   --nmea-sampling-interval 60.0 \
   --attribution "Woods Hole Oceanographic Institution" \
@@ -582,7 +580,6 @@ Process Saildrone navigation data:
 oceanstream process geotrack convert \
   --input-source raw_data/sd1030_nmea_logs/ \
   --campaign-id tpos_2023 \
-  --platform-id 1030 \
   --nmea-sentence-types GGA \
   --nmea-sampling-interval 10.0 \
   --generate-pmtiles \
@@ -598,7 +595,6 @@ Process autonomous glider surface GPS fixes:
 oceanstream process geotrack convert \
   --input-source raw_data/glider_gps.txt \
   --campaign-id antarctica_survey_2024 \
-  --platform-id sg001 \
   --nmea-sentence-types GGA \
   --attribution "Southern Ocean Observing System" \
   --verbose
@@ -614,7 +610,6 @@ for vessel in ship1 ship2 ship3; do
   oceanstream process geotrack convert \
     --input-source raw_data/${vessel}_gnss.txt \
     --campaign-id arctic_expedition_2024 \
-    --platform-id $vessel \
     --nmea-sampling-interval 10.0 \
     --verbose
 done

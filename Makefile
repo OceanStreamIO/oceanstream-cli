@@ -18,7 +18,7 @@ TEST_RAW_DIR := oceanstream/tests/data/raw_data
 DEFAULT_RAW_DIR := raw_data
 OUT_DIR := out/geoparquet
 
-.PHONY: help venv install run-cli-sample run-cli-sample-py dry-run schema list-columns test test-unit test-integration coverage coverage-html coverage-xml coverage-check coverage-clean clean docs-serve docs-build docs-clean docs-install docs-version-deploy docs-version-list docs-version-delete docs-version-serve
+.PHONY: help venv install run-cli-sample run-cli-sample-py dry-run schema list-columns test test-unit test-integration coverage coverage-html coverage-xml coverage-check coverage-clean clean docs-serve docs-build docs-clean docs-install docs-version-deploy docs-version-list docs-version-delete docs-version-serve build publish publish-test
 
 help:
 	@echo "Available targets:"
@@ -38,6 +38,11 @@ help:
 	@echo "  coverage-check      - Enforce fail-under threshold from .coveragerc"
 	@echo "  coverage-clean      - Remove coverage artifacts (.coverage, coverage_html/)"
 	@echo "  clean               - Remove generated dataset at $(OUT_DIR)"
+	@echo ""
+	@echo "PyPI packaging targets:"
+	@echo "  build               - Build sdist and wheel packages in dist/"
+	@echo "  publish             - Upload packages to PyPI (requires auth)"
+	@echo "  publish-test        - Upload packages to TestPyPI (requires auth)"
 	@echo ""
 	@echo "Documentation targets:"
 	@echo "  docs-install        - Install documentation build dependencies"
@@ -217,3 +222,22 @@ docs-version-serve: docs-install
 	@echo "[make] Serving versioned documentation at http://127.0.0.1:8765 ..."
 	@echo "[make] Press Ctrl+C to stop the server"
 	@cd .docs-website && ../$(PYTHON) -m mike serve --dev-addr=127.0.0.1:8765
+
+# PyPI packaging targets
+build:
+	@echo "[make] Building sdist and wheel packages..."
+	@rm -rf dist/
+	@$(PYTHON) -m build --sdist --wheel
+	@$(PYTHON) -m twine check dist/*
+	@echo "[make] Build complete. Packages in dist/"
+	@ls -la dist/
+
+publish: build
+	@echo "[make] Uploading to PyPI..."
+	@$(PYTHON) -m twine upload dist/*
+	@echo "[make] Published to PyPI."
+
+publish-test: build
+	@echo "[make] Uploading to TestPyPI..."
+	@$(PYTHON) -m twine upload --repository testpypi dist/*
+	@echo "[make] Published to TestPyPI."

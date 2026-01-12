@@ -72,14 +72,12 @@ oceanstream campaign create SD1030_2023
 
 # With platform and attribution
 oceanstream campaign create SD1030_2023 \
-  --platform-id "sd1030" \
+  --platform "sd1030" \
   --attribution "Saildrone Inc."
 
 # Full research cruise metadata
 oceanstream campaign create FK161229 \
-  --platform-id "R/V Falkor" \
-  --platform-name "Research Vessel Falkor" \
-  --platform-type "Research Vessel" \
+  --platform "falkor:Research Vessel Falkor:Research Vessel" \
   --description "Hydrothermal vent ecosystem study" \
   --start-date 2016-12-29 \
   --end-date 2017-01-20 \
@@ -244,9 +242,9 @@ All other fields are optional and can be added later with `campaign update`.
 ### Optional Fields
 
 #### Platform Metadata
-- `--platform-id`: Platform identifier (e.g., `sd1030`, `R/V Falkor`)
-- `--platform-name`: Full platform name (e.g., `Research Vessel Falkor`)
-- `--platform-type`: Platform type (e.g., `Saildrone`, `Research Vessel`, `Glider`)
+- `--platform`: Platform specification as `id:name:type` (e.g., `sd1030:Saildrone 1030:Saildrone Explorer`)
+  - Can be specified multiple times for multi-platform campaigns
+  - Name and type are optional: `sd1030` or `sd1030:Saildrone 1030` are valid
 
 #### Temporal Metadata
 - `--start-date`: Campaign start date (ISO 8601: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SSZ`)
@@ -311,7 +309,7 @@ Create campaign before data arrives:
 ```bash
 # 1. Register campaign with known metadata
 oceanstream campaign create ARCTIC_2024 \
-  --platform-id "R/V Sikuliaq" \
+  --platform "sikuliaq:R/V Sikuliaq:Research Vessel" \
   --start-date 2024-08-01 \
   --bbox "-180,60,180,90" \
   --attribution "University of Alaska" \
@@ -385,15 +383,15 @@ Process multiple campaigns in same output directory:
 
 ```bash
 # Campaign 1
-oceanstream campaign create SD1030_2023 --platform-id "sd1030"
+oceanstream campaign create SD1030_2023 --platform "sd1030"
 oceanstream process geotrack --campaign-id SD1030_2023 --input-source ./sd1030/
 
 # Campaign 2
-oceanstream campaign create SD1033_2023 --platform-id "sd1033"
+oceanstream campaign create SD1033_2023 --platform "sd1033"
 oceanstream process geotrack --campaign-id SD1033_2023 --input-source ./sd1033/
 
 # Campaign 3
-oceanstream campaign create SD1079_2023 --platform-id "sd1079"
+oceanstream campaign create SD1079_2023 --platform "sd1079"
 oceanstream process geotrack --campaign-id SD1079_2023 --input-source ./sd1079/
 ```
 
@@ -410,6 +408,87 @@ output/
     ├── lat_bin=X/lon_bin=Y/*.parquet
     └── stac/
 ```
+
+### Multi-Platform Campaigns
+
+OceanStream supports campaigns with multiple platforms in two ways:
+
+#### 1. CLI: Pre-Register Multiple Platforms
+
+Create a campaign with multiple platforms before processing:
+
+```bash
+# Multi-platform campaign with full platform specifications
+oceanstream campaign create TPOS_2023 \
+  --platform "sd1030:Saildrone 1030:Saildrone Explorer" \
+  --platform "sd1033:Saildrone 1033:Saildrone Explorer" \
+  --platform "sd1079:Saildrone 1079:Saildrone Explorer" \
+  --description "TPOS 2023 multi-platform deployment"
+```
+
+**Output**:
+```
+[campaign create] ✓ Campaign created successfully
+[campaign create]   Campaign ID: TPOS_2023
+[campaign create]   Platforms: 3
+[campaign create]     - sd1030
+[campaign create]     - sd1033
+[campaign create]     - sd1079
+```
+
+#### 2. Auto-Detection During Processing
+
+Alternatively, let OceanStream detect platforms from your data:
+
+```bash
+# Process multi-platform campaign data
+oceanstream process geotrack \
+  --campaign-id TPOS_2023 \
+  --input-source ./tpos_data/ \
+  --output-dir ./output
+```
+
+**Automatic detection**:
+- All unique platforms detected from `trajectory` or `platform_id` columns
+- Row counts tracked per platform
+- Platform specifications included (length, draft, endurance)
+
+**Campaign metadata** (`~/.oceanstream/campaigns/TPOS_2023/campaign.json`):
+```json
+{
+  "campaign_id": "TPOS_2023",
+  "platform_id": "sd1030",              // First platform (backward compat)
+  "platform_type": "Saildrone Explorer",
+  "platforms": [                        // ALL platforms with details
+    {
+      "id": "sd1030",
+      "type": "Saildrone Explorer",
+      "model": "Explorer",
+      "row_count": 9600
+    },
+    {
+      "id": "sd1033",
+      "type": "Saildrone Explorer",
+      "model": "Explorer",
+      "row_count": 192974
+    },
+    {
+      "id": "sd1079",
+      "type": "Saildrone Explorer",
+      "model": "Explorer",
+      "row_count": 154087
+    }
+  ],
+  "total_rows": 356661,
+  "total_files": 3,
+  "sensors": [...]
+}
+```
+
+**STAC collection** (`output/TPOS_2023/stac/collection.json`):
+- `summaries.platforms`: Array of all platform metadata
+- `summaries.instruments`: Aggregated sensors from all data
+- Individual STAC items have `platform_ids` array property
 
 ## Campaign Best Practices
 
@@ -438,7 +517,7 @@ Use consistent, descriptive campaign IDs:
 **Minimum recommended metadata**:
 ```bash
 oceanstream campaign create CAMPAIGN_ID \
-  --platform-id "platform" \
+  --platform "platform_id" \
   --attribution "Organization Name" \
   --start-date YYYY-MM-DD
 ```
@@ -446,9 +525,7 @@ oceanstream campaign create CAMPAIGN_ID \
 **Full metadata for publication**:
 ```bash
 oceanstream campaign create CAMPAIGN_ID \
-  --platform-id "platform" \
-  --platform-name "Full Platform Name" \
-  --platform-type "Platform Type" \
+  --platform "platform_id:Full Platform Name:Platform Type" \
   --attribution "Organization Name" \
   --license "CC-BY-4.0" \
   --doi "10.xxxx/xxxxx" \
@@ -482,17 +559,19 @@ oceanstream campaign create CAMPAIGN_ID \
 Campaign metadata automatically flows into STAC collections:
 
 **Campaign metadata → STAC collection**:
-- `platform_id` → `platform`
-- `platform_name` → `platform:name`
+- `platforms` → `summaries.platforms` (array of all platforms)
+- `platform_id` → `summaries.platforms[0].id` (first platform for backward compat)
 - `attribution` → `providers` (host/processor)
 - `license` → `license`
 - `doi` → `sci:doi`
 - `keywords` → `keywords`
 - `bbox` → `extent.spatial.bbox`
 - `start_date/end_date` → `extent.temporal.interval`
+- PMTiles (if generated) → `assets.pmtiles` (collection-level)
 
 **Benefits**:
 - Consistent metadata across data products
+- Multi-platform campaigns fully supported
 - STAC-compliant collections
 - Discoverable via STAC catalogs
 - Integration with STAC tools
@@ -521,7 +600,7 @@ oceanstream campaign update FK161229 --description "New description"
 **Option 3: Delete and recreate**:
 ```bash
 oceanstream campaign delete FK161229
-oceanstream campaign create FK161229 --platform-id "R/V Falkor"
+oceanstream campaign create FK161229 --platform "falkor:R/V Falkor:Research Vessel"
 ```
 
 ### No Processed Data Found

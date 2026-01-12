@@ -69,8 +69,7 @@ UTC,degrees_north,degrees_east,,m s-1,m s-1,...
 oceanstream process geotrack \
   --input-source ./sd1030_tpos_2023_*.csv \
   --output-dir ./processed \
-  --campaign-id tpos_2023 \
-  --platform-id 1030
+  --campaign-id tpos_2023
 ```
 
 **What happens**:
@@ -182,15 +181,16 @@ cat processed/tpos_2023/stac/collection.json | jq '.'
 ls processed/tpos_2023/stac/items/
 
 # View item metadata
-cat processed/tpos_2023/stac/items/sd1030_*.json | jq '.properties'
+cat processed/tpos_2023/stac/items/item-0.json | jq '.properties'
 ```
 
 **Key STAC Fields**:
 - `id`: Unique collection identifier
 - `extent`: Temporal and spatial bounds
-- `summaries`: Available sensors and platform info
-- `assets`: Links to GeoParquet files
-- `properties`: Campaign, platform, provenance metadata
+- `summaries.platforms`: Array of all platforms in the campaign
+- `summaries.instruments`: Detected sensors
+- `assets.pmtiles`: PMTiles vector tiles (collection-level)
+- `properties.platform_ids`: Platform identifiers (item-level)
 
 ## Step 7: Visualize in QGIS
 

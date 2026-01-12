@@ -334,7 +334,7 @@ Schema Preview:
 
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
-| `--platform-id` | String | No | Auto-detected | Platform identifier (overrides auto-detection) |
+| `--platform-id` | String | No | Auto-detected | Platform identifier (overrides auto-detection). Note: For campaign creation, use `--platform` instead. |
 
 **Priority Order:**
 1. User-supplied via `--platform-id`
@@ -646,7 +646,6 @@ oceanstream process geotrack convert \
   --input-source raw_data/saildrone/ \
   --output-dir out/geoparquet \
   --campaign-id tpos_2023 \
-  --platform-id 1030 \
   --attribution "NOAA PMEL Saildrone TPOS 2023 Mission" \
   --creation-date 2023-06-22T00:00:00Z \
   --source-dataset "10.5067/TPOS-2023" \

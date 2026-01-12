@@ -69,9 +69,7 @@ oceanstream process geotrack convert \
 ```bash
 # Create campaign first
 oceanstream campaign create sd1030_tpos_2023 \
-  --platform-id "sd1030" \
-  --platform-name "Saildrone Explorer 1030" \
-  --platform-type "Saildrone Explorer" \
+  --platform "sd1030:Saildrone Explorer 1030:Saildrone Explorer" \
   --attribution "Saildrone Inc." \
   --license "CC-BY-4.0"
 
@@ -227,7 +225,7 @@ Align with NOAA PMEL ERDDAP dataset IDs:
 ```bash
 # ERDDAP dataset: sd1030_tpos_2023
 oceanstream campaign create sd1030_tpos_2023 \
-  --platform-id "sd1030"
+  --platform "sd1030"
 ```
 
 ### 2. Process Complete Missions

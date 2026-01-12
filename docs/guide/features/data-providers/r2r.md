@@ -97,9 +97,7 @@ oceanstream process geotrack convert \
 ```bash
 # Create campaign
 oceanstream campaign create FK161229 \
-  --platform-id "R/V Falkor" \
-  --platform-name "Research Vessel Falkor" \
-  --platform-type "Research Vessel" \
+  --platform "falkor:Research Vessel Falkor:Research Vessel" \
   --start-date "2016-12-29" \
   --end-date "2017-01-20" \
   --attribution "Schmidt Ocean Institute" \
@@ -314,7 +312,7 @@ Align campaign IDs with R2R cruise identifiers:
 ```bash
 # R2R cruise: FK161229
 oceanstream campaign create FK161229 \
-  --platform-id "R/V Falkor"
+  --platform "falkor:R/V Falkor"
 ```
 
 ### 2. Process Complete Cruises

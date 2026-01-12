@@ -410,9 +410,12 @@ class TestR2RGeoCSVNavigation:
         
         # Verify STAC structure
         assert "summaries" in collection
-        assert "platform" in collection["summaries"]
+        assert "platforms" in collection["summaries"]
         
-        platform_metadata = collection["summaries"]["platform"]
+        # platforms is now an array
+        platforms = collection["summaries"]["platforms"]
+        assert len(platforms) > 0, "Should have at least one platform"
+        platform_metadata = platforms[0]
         
         # campaign_id should be in platform metadata
         assert "campaign_id" in platform_metadata, "campaign_id should be in STAC platform metadata"
@@ -437,7 +440,8 @@ class TestR2RGeoCSVNavigation:
         assert "campaign_id" in item["properties"], "campaign_id should be in STAC item properties"
         assert item["properties"]["campaign_id"] == "FK161229", \
             f"item campaign_id should be 'FK161229', got '{item['properties'].get('campaign_id')}'"
-        assert "platform_id" in item["properties"], "platform_id should be in STAC item properties"
+        # Multi-platform support: platform_ids is now an array
+        assert "platform_ids" in item["properties"], "platform_ids should be in STAC item properties"
 
     def test_r2r_provenance_metadata_in_stac(self, r2r_nav_file, r2r_provider, tmp_path, metadata_dir, monkeypatch):
         """Test that R2R provenance metadata (attribution, DOIs) appears in STAC."""
@@ -482,9 +486,12 @@ class TestR2RGeoCSVNavigation:
         
         # Verify provenance metadata is in platform summaries
         assert "summaries" in collection
-        assert "platform" in collection["summaries"]
+        assert "platforms" in collection["summaries"]
         
-        platform_metadata = collection["summaries"]["platform"]
+        # platforms is now an array
+        platforms = collection["summaries"]["platforms"]
+        assert len(platforms) > 0, "Should have at least one platform"
+        platform_metadata = platforms[0]
         
         # Check for R2R-specific metadata from GeoCSV headers
         assert "attribution" in platform_metadata, "attribution should be in STAC platform metadata"
@@ -550,7 +557,10 @@ class TestR2RGeoCSVNavigation:
         with open(stac_collection) as f:
             collection = json.load(f)
         
-        platform_metadata = collection["summaries"]["platform"]
+        # platforms is now an array
+        platforms = collection["summaries"]["platforms"]
+        assert len(platforms) > 0, "Should have at least one platform"
+        platform_metadata = platforms[0]
         
         # User-supplied values should override file metadata
         assert platform_metadata["attribution"] == user_attribution, \

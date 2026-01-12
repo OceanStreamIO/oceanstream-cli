@@ -10,7 +10,107 @@ document.addEventListener("DOMContentLoaded", () => {
     if ((a.textContent || "").trim() === "¶") a.remove();
   });
 
-  // Note: Copy buttons are handled by .mkdocs-shadcn-fork/shadcn/js/copy-button.js
+  // ========================================
+  // Copy buttons for Jupyter notebook code blocks
+  // (Regular code blocks handled by shadcn theme, but notebooks use .highlight-ipynb)
+  // ========================================
+  
+  // SVG clipboard icon
+  const clipboardIcon = () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", "9");
+    rect.setAttribute("y", "9");
+    rect.setAttribute("width", "13");
+    rect.setAttribute("height", "13");
+    rect.setAttribute("rx", "2");
+    rect.setAttribute("ry", "2");
+    
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
+    
+    svg.appendChild(rect);
+    svg.appendChild(path);
+    return svg;
+  };
+  
+  // Check icon for "copied" feedback
+  const checkIcon = () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", "20 6 9 17 4 12");
+    
+    svg.appendChild(polyline);
+    return svg;
+  };
+  
+  // Copy handler
+  const onCodeCopy = (event) => {
+    const button = event.currentTarget;
+    const codeBlock = button.closest(".highlight-ipynb");
+    const pre = codeBlock?.querySelector("pre");
+    if (!pre) return;
+    
+    const text = pre.textContent || "";
+    navigator.clipboard.writeText(text).then(() => {
+      // Show check icon
+      button.innerHTML = "";
+      button.appendChild(checkIcon());
+      button.classList.add("copied");
+      button.setAttribute("data-copied", "true");
+      
+      // Reset after 2 seconds
+      setTimeout(() => {
+        button.innerHTML = "";
+        const span = document.createElement("span");
+        span.className = "os-copy-label";
+        span.textContent = "Copy";
+        button.appendChild(span);
+        button.appendChild(clipboardIcon());
+        button.classList.remove("copied");
+        button.removeAttribute("data-copied");
+      }, 2000);
+    });
+  };
+  
+  // Add copy buttons to notebook code blocks
+  document.querySelectorAll("div.highlight-ipynb").forEach((codeBlock) => {
+    // Skip if already has a copy button
+    if (codeBlock.querySelector("button.os-code-copy-button")) return;
+    
+    const button = document.createElement("button");
+    button.className = "os-code-copy-button";
+    button.type = "button";
+    button.title = "Copy code";
+    
+    // Accessible label (visually hidden)
+    const span = document.createElement("span");
+    span.className = "os-copy-label";
+    span.textContent = "Copy";
+    button.appendChild(span);
+    
+    button.appendChild(clipboardIcon());
+    button.addEventListener("click", onCodeCopy);
+    codeBlock.appendChild(button);
+  });
 
   // Right sidebar TOC: update active section as the user scrolls.
   const toc = document.getElementById("toc-sidebar");

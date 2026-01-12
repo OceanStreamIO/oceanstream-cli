@@ -145,8 +145,7 @@ wget "https://data.pmel.noaa.gov/pmel/erddap/tabledap/sd1030_2023_tpos.csv" \
 oceanstream process geotrack \
   --input-source ./sd1030_tpos_2023.csv \
   --output-dir ./saildrone_output \
-  --campaign-id tpos_2023 \
-  --platform-id 1030
+  --campaign-id tpos_2023
 
 # View campaign info
 oceanstream campaign show tpos_2023

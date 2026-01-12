@@ -472,6 +472,167 @@ article div.highlight:hover .os-code-copy-button {
 }
 
 /* ========================================================================
+   JUPYTER NOTEBOOK CODE BLOCKS
+   Match the Catppuccin Mocha theme for notebook code cells
+   Override JP CSS variables at root level for all notebooks
+   ======================================================================== */
+
+/* 
+ * mkdocs-jupyter injects inline styles that use JP CSS variables.
+ * We override those variables AND add direct color overrides with high specificity.
+ */
+
+/* Force background color on notebook code blocks */
+.highlight-ipynb,
+div.highlight-ipynb,
+article .highlight-ipynb,
+.jupyter-wrapper .highlight-ipynb {
+  background: #1e1e2e !important;
+  background-color: #1e1e2e !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  position: relative;
+  margin: 1rem 0 !important;
+  overflow: hidden;
+}
+
+.highlight-ipynb pre,
+div.highlight-ipynb pre,
+article .highlight-ipynb pre,
+.jupyter-wrapper .highlight-ipynb pre {
+  background: #1e1e2e !important;
+  background-color: #1e1e2e !important;
+  color: #cdd6f4 !important;
+  padding: 1rem !important;
+  margin: 0 !important;
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+/* Syntax highlighting - direct overrides with maximum specificity */
+/* Comments */
+.highlight-ipynb .c,
+.highlight-ipynb .c1,
+.highlight-ipynb .cm,
+.highlight-ipynb .cs,
+.highlight-ipynb .ch,
+.highlight-ipynb .cp,
+.highlight-ipynb .cpf {
+  color: #6c7086 !important;
+  font-style: italic !important;
+}
+
+/* Keywords */
+.highlight-ipynb .k,
+.highlight-ipynb .kc,
+.highlight-ipynb .kd,
+.highlight-ipynb .kn,
+.highlight-ipynb .kp,
+.highlight-ipynb .kr,
+.highlight-ipynb .kt {
+  color: #cba6f7 !important;
+  font-weight: bold !important;
+}
+
+/* Strings */
+.highlight-ipynb .s,
+.highlight-ipynb .s1,
+.highlight-ipynb .s2,
+.highlight-ipynb .sb,
+.highlight-ipynb .sc,
+.highlight-ipynb .sd,
+.highlight-ipynb .se,
+.highlight-ipynb .sh,
+.highlight-ipynb .si,
+.highlight-ipynb .sx,
+.highlight-ipynb .sr,
+.highlight-ipynb .ss,
+.highlight-ipynb .sa {
+  color: #a6e3a1 !important;
+}
+
+/* Numbers */
+.highlight-ipynb .m,
+.highlight-ipynb .mi,
+.highlight-ipynb .mf,
+.highlight-ipynb .mh,
+.highlight-ipynb .mo,
+.highlight-ipynb .mb,
+.highlight-ipynb .il {
+  color: #fab387 !important;
+}
+
+/* Functions and builtins */
+.highlight-ipynb .nf,
+.highlight-ipynb .fm,
+.highlight-ipynb .nb,
+.highlight-ipynb .bp {
+  color: #89b4fa !important;
+}
+
+/* Classes and exceptions */
+.highlight-ipynb .nc,
+.highlight-ipynb .ne,
+.highlight-ipynb .nn {
+  color: #f9e2af !important;
+}
+
+/* Operators and punctuation */
+.highlight-ipynb .o,
+.highlight-ipynb .ow,
+.highlight-ipynb .p {
+  color: #89dceb !important;
+  font-weight: bold !important;
+}
+
+/* Variables and names */
+.highlight-ipynb .n,
+.highlight-ipynb .na,
+.highlight-ipynb .nd,
+.highlight-ipynb .ni,
+.highlight-ipynb .nl,
+.highlight-ipynb .no,
+.highlight-ipynb .nt,
+.highlight-ipynb .nv,
+.highlight-ipynb .vc,
+.highlight-ipynb .vg,
+.highlight-ipynb .vi,
+.highlight-ipynb .vm {
+  color: #cdd6f4 !important;
+}
+
+/* Whitespace */
+.highlight-ipynb .w {
+  color: #cdd6f4 !important;
+}
+
+/* Error */
+.highlight-ipynb .err {
+  color: #f38ba8 !important;
+}
+
+/* Generic */
+.highlight-ipynb .g,
+.highlight-ipynb .gd,
+.highlight-ipynb .ge,
+.highlight-ipynb .gr,
+.highlight-ipynb .gh,
+.highlight-ipynb .gi,
+.highlight-ipynb .go,
+.highlight-ipynb .gp,
+.highlight-ipynb .gs,
+.highlight-ipynb .gu,
+.highlight-ipynb .gt {
+  color: #cdd6f4 !important;
+}
+
+/* Copy button hover for notebook cells */
+.highlight-ipynb:hover .os-code-copy-button {
+  opacity: 1;
+}
+
+/* ========================================================================
    CONTENT AREA - Typography & spacing
    ======================================================================== */
 

@@ -139,11 +139,13 @@ class TestSTACEmissionWithSensors:
         with open(collection_path, 'r') as f:
             collection = json.load(f)
         
-        # Check that platform is in summaries
+        # Check that platforms array is in summaries (multi-platform support)
         assert 'summaries' in collection
-        assert 'platform' in collection['summaries']
+        assert 'platforms' in collection['summaries']
         
-        platform = collection['summaries']['platform']
+        platforms = collection['summaries']['platforms']
+        assert len(platforms) == 1
+        platform = platforms[0]
         assert platform['id'] == 'test-platform-1'
         assert platform['type'] == 'Test Platform'
         assert platform['model'] == 'TestModel'
@@ -167,11 +169,11 @@ class TestSTACEmissionWithSensors:
         
         assert 'summaries' in collection
         assert 'instruments' in collection['summaries']
-        assert 'platform' in collection['summaries']
+        assert 'platforms' in collection['summaries']
         
         # Both should be present
         assert len(collection['summaries']['instruments']) == 2
-        assert collection['summaries']['platform']['id'] == 'test-platform-1'
+        assert collection['summaries']['platforms'][0]['id'] == 'test-platform-1'
 
     def test_stac_emission_without_instruments_and_platform(self, temp_output_dir, sample_dataframe):
         """Test STAC collection works without instruments and platform (backward compatibility)."""
@@ -356,7 +358,9 @@ class TestSTACWithSaildroneSensors:
         with open(collection_path, 'r') as f:
             collection = json.load(f)
         
-        platform = collection['summaries']['platform']
+        platforms = collection['summaries']['platforms']
+        assert len(platforms) == 1
+        platform = platforms[0]
         assert platform['type'] == 'Saildrone Explorer'
         assert platform['specifications']['length'] == '7m'
 
@@ -473,9 +477,9 @@ class TestSTACPriority1Enhancements:
     def test_pmtiles_asset_in_item(
         self, temp_output_dir_with_data, sample_dataframe_with_measurements, tmp_path
     ):
-        """Test that PMTiles asset is included in STAC item."""
-        # Create a fake PMTiles file
-        tiles_dir = tmp_path / "tiles"
+        """Test that PMTiles asset is included in STAC collection."""
+        # Create a fake PMTiles file in the geoparquet directory
+        tiles_dir = temp_output_dir_with_data / "tiles"
         tiles_dir.mkdir(exist_ok=True)
         pmtiles_path = tiles_dir / "track.pmtiles"
         pmtiles_path.write_bytes(b"fake pmtiles binary data")
@@ -488,16 +492,15 @@ class TestSTACPriority1Enhancements:
             pmtiles_path=pmtiles_path,
         )
         
-        # Check first item has PMTiles asset
-        assert len(item_paths) > 0
-        with open(item_paths[0], 'r') as f:
-            item = json.load(f)
+        # PMTiles is now a collection-level asset
+        with open(collection_path, 'r') as f:
+            collection = json.load(f)
         
-        # Verify PMTiles asset
-        assert 'assets' in item
-        assert 'pmtiles' in item['assets']
+        # Verify PMTiles asset is in collection
+        assert 'assets' in collection
+        assert 'pmtiles' in collection['assets']
         
-        pmtiles_asset = item['assets']['pmtiles']
+        pmtiles_asset = collection['assets']['pmtiles']
         assert pmtiles_asset['type'] == 'application/vnd.pmtiles'
         assert 'visual' in pmtiles_asset['roles']
         assert 'tiles' in pmtiles_asset['roles']
@@ -514,12 +517,6 @@ class TestSTACPriority1Enhancements:
             sample_dataframe_with_measurements,
             measurement_columns
         )
-        
-        # Setup PMTiles
-        tiles_dir = tmp_path / "tiles"
-        tiles_dir.mkdir(exist_ok=True)
-        pmtiles_path = tiles_dir / "track.pmtiles"
-        pmtiles_path.write_text("fake data")
         
         # Setup sensors and platform
         sensors = [
@@ -539,6 +536,12 @@ class TestSTACPriority1Enhancements:
             'type': 'Test Platform',
             'model': 'V1',
         }
+        
+        # Create PMTiles in the geoparquet directory
+        tiles_dir = temp_output_dir_with_data / "tiles"
+        tiles_dir.mkdir(exist_ok=True)
+        pmtiles_path = tiles_dir / "track.pmtiles"
+        pmtiles_path.write_text("fake data")
         
         # Generate STAC with all enhancements
         collection_path, item_paths = emit_stac_collection_and_item(
@@ -563,7 +566,7 @@ class TestSTACPriority1Enhancements:
         assert 'processing' in summaries, "Missing processing provenance"
         assert 'measurements' in summaries, "Missing measurement statistics"
         assert 'instruments' in summaries, "Missing instruments"
-        assert 'platform' in summaries, "Missing platform"
+        assert 'platforms' in summaries, "Missing platforms"
         
         # Verify processing
         assert summaries['processing']['software'] == 'oceanstream'
@@ -577,12 +580,10 @@ class TestSTACPriority1Enhancements:
         assert len(summaries['instruments']) == 1
         assert summaries['instruments'][0]['id'] == 'test-ctd'
         
-        # Verify platform
-        assert summaries['platform']['id'] == 'test-platform'
+        # Verify platforms (now an array)
+        assert len(summaries['platforms']) == 1
+        assert summaries['platforms'][0]['id'] == 'test-platform'
         
-        # Load and verify item
-        with open(item_paths[0], 'r') as f:
-            item = json.load(f)
-        
-        # Verify PMTiles asset
-        assert 'pmtiles' in item['assets']
+        # Verify PMTiles asset in collection (not item)
+        assert 'assets' in collection
+        assert 'pmtiles' in collection['assets']

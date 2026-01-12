@@ -582,8 +582,7 @@ oceanstream --config-file oceanstream.toml process geotrack convert ...
 oceanstream process geotrack convert \
   --input-source raw_data/sd1030_tpos_2023.csv \
   --output-dir out/geoparquet \
-  --campaign-id tpos_2023 \
-  --platform-id 1030
+  --campaign-id tpos_2023
 ```
 
 ### Directory Processing

@@ -43,8 +43,8 @@ Each **Item** represents a subset of the data (typically by spatial partition):
 
 - Geographic footprint (bounding box + geometry)
 - Temporal properties (start/end datetime)
-- Platform and instrument identifiers
-- Assets: Links to GeoParquet files and PMTiles (if generated)
+- Platform identifiers (array for multi-platform campaigns)
+- Assets: Links to GeoParquet files
 - Item-level metadata and measurements
 
 ## STAC Generation
@@ -107,6 +107,14 @@ export SEMANTIC_GENERATE_STAC=true
       "roles": ["producer"]
     }
   ],
+  "assets": {
+    "pmtiles": {
+      "href": "../tiles/track.pmtiles",
+      "type": "application/vnd.pmtiles",
+      "roles": ["visual", "tiles"],
+      "title": "PMTiles vector tiles with track segments and measurements"
+    }
+  },
   "summaries": {
     "instruments": [
       {
@@ -120,10 +128,26 @@ export SEMANTIC_GENERATE_STAC=true
         "description": "Sea surface temperature measurements"
       }
     ],
-    "platform": {
-      "platform_id": "sd1030",
-      "campaign_id": "tpos_2023"
-    },
+    "platforms": [
+      {
+        "id": "sd1030",
+        "type": "Saildrone Explorer",
+        "model": "Explorer",
+        "row_count": 9600
+      },
+      {
+        "id": "sd1033",
+        "type": "Saildrone Explorer",
+        "model": "Explorer",
+        "row_count": 192974
+      },
+      {
+        "id": "sd1079",
+        "type": "Saildrone Explorer",
+        "model": "Explorer",
+        "row_count": 154087
+      }
+    ],
     "measurements": {
       "sea_surface_temperature": {
         "min": 24.5,
@@ -159,8 +183,9 @@ export SEMANTIC_GENERATE_STAC=true
 | `extent.spatial.bbox` | array | Bounding box `[[lon_min, lat_min, lon_max, lat_max]]` |
 | `extent.temporal.interval` | array | Time range `[["start_iso", "end_iso"]]` |
 | `providers` | array | Data provider information |
+| `assets.pmtiles` | object | PMTiles vector tiles (collection-level) |
 | `summaries.instruments` | array | Detected sensors/instruments |
-| `summaries.platform` | object | Platform and campaign identifiers |
+| `summaries.platforms` | array | Platform metadata for all platforms in campaign |
 | `summaries.measurements` | object | Statistical summaries (min/max/mean/count) |
 | `summaries.processing` | object | Processing provenance (software, version, date) |
 
@@ -186,7 +211,7 @@ export SEMANTIC_GENERATE_STAC=true
     ]]
   },
   "properties": {
-    "platform_id": "sd1030",
+    "platform_ids": ["sd1030", "sd1033", "sd1079"],
     "campaign_id": "tpos_2023",
     "start_datetime": "2023-01-01T00:00:00Z",
     "end_datetime": "2023-01-31T23:59:59Z"
@@ -196,12 +221,6 @@ export SEMANTIC_GENERATE_STAC=true
       "href": "../lat_bin=-10/lon_bin=-140/data.parquet",
       "type": "application/x-parquet",
       "roles": ["data"]
-    },
-    "pmtiles": {
-      "href": "../../tpos_2023.pmtiles",
-      "type": "application/vnd.pmtiles",
-      "roles": ["visual", "tiles"],
-      "title": "PMTiles vector tiles with track segments and measurements"
     }
   },
   "links": [
@@ -218,11 +237,11 @@ export SEMANTIC_GENERATE_STAC=true
 | `collection` | string | Parent collection ID |
 | `bbox` | array | Item bounding box `[lon_min, lat_min, lon_max, lat_max]` |
 | `geometry` | object | GeoJSON polygon of item footprint |
-| `properties.platform_id` | string | Platform identifier |
+| `properties.platform_ids` | array | Platform identifiers (for multi-platform campaigns) |
 | `properties.campaign_id` | string | Campaign identifier |
 | `properties.start_datetime` | string | Start time (ISO 8601) |
 | `properties.end_datetime` | string | End time (ISO 8601) |
-| `assets` | object | Links to data files (GeoParquet, PMTiles) |
+| `assets` | object | Links to data files (GeoParquet) |
 
 ## Asset Types
 
@@ -259,15 +278,17 @@ For items with multiple partition files:
 
 ### PMTiles Assets
 
-If PMTiles are generated (using `--generate-pmtiles`), the first STAC Item includes a PMTiles asset:
+If PMTiles are generated (using `--generate-pmtiles`), they are stored as a **collection-level asset** in `collection.json` since PMTiles cover the entire dataset:
 
 ```json
 {
-  "pmtiles": {
-    "href": "../../campaign_id.pmtiles",
-    "type": "application/vnd.pmtiles",
-    "roles": ["visual", "tiles"],
-    "title": "PMTiles vector tiles with track segments and measurements"
+  "assets": {
+    "pmtiles": {
+      "href": "../tiles/track.pmtiles",
+      "type": "application/vnd.pmtiles",
+      "roles": ["visual", "tiles"],
+      "title": "PMTiles vector tiles with track segments and measurements"
+    }
   }
 }
 ```
@@ -432,7 +453,7 @@ Platform and campaign identifiers flow through to STAC metadata:
 
 These identifiers are determined by priority:
 
-1. User-supplied via CLI (`--platform-id`, `--campaign-id`)
+1. User-supplied via CLI (`--platform` for campaigns, `--campaign-id`)
 2. File metadata headers (GeoCSV)
 3. Derived from filename patterns
 
@@ -499,7 +520,6 @@ oceanstream process geotrack convert \
   --input-source ./data \
   --output-dir ./out \
   --campaign-id arctic_2024 \
-  --platform-id rv_polarstern \
   --generate-pmtiles \
   --pmtiles-include-measurements
 ```
@@ -551,7 +571,6 @@ oceanstream process geotrack convert \
   --input-source ./raw_data/sd1030_tpos_2023.csv \
   --output-dir ./output \
   --campaign-id tpos_2023 \
-  --platform-id sd1030 \
   --generate-pmtiles \
   --pmtiles-include-measurements
 ```

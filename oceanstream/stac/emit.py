@@ -115,6 +115,7 @@ def emit_stac_collection_and_item(
     collection_id: Optional[str] = None,
     instruments: Optional[list[Sensor]] = None,
     platform: Optional[dict[str, Any]] = None,
+    platforms: Optional[list[dict[str, Any]]] = None,
     pmtiles_path: Optional[Path] = None,
     measurement_stats: Optional[dict[str, dict[str, float]]] = None,
     software_version: str = "0.1.0",
@@ -128,7 +129,8 @@ def emit_stac_collection_and_item(
         provider_name: Name of the data provider
         collection_id: Optional collection ID
         instruments: List of sensors/instruments
-        platform: Platform metadata
+        platform: Platform metadata (deprecated, use platforms)
+        platforms: List of platform metadata dicts for multi-platform campaigns
         pmtiles_path: Optional path to PMTiles file
         measurement_stats: Optional statistics for measurements (min/max/mean)
         software_version: Version of oceanstream software
@@ -182,10 +184,16 @@ def emit_stac_collection_and_item(
         collection["summaries"] = collection.get("summaries", {})
         collection["summaries"]["instruments"] = [sensor.to_stac_instrument() for sensor in instruments]
     
-    # Add platform metadata if provided
-    if platform:
+    # Add platforms array (hardware platforms: id, name, type, row_count)
+    # For multi-platform campaigns, use 'platforms' (array)
+    # For single-platform (backward compat), still use 'platforms' as a single-item array
+    if platforms:
         collection["summaries"] = collection.get("summaries", {})
-        collection["summaries"]["platform"] = platform
+        collection["summaries"]["platforms"] = platforms
+    elif platform:
+        # Backward compatibility: wrap single platform in array
+        collection["summaries"] = collection.get("summaries", {})
+        collection["summaries"]["platforms"] = [platform]
     
     # Add measurement statistics if provided
     if measurement_stats:
@@ -200,6 +208,25 @@ def emit_stac_collection_and_item(
         "processing_date": processing_datetime,
         "processing_level": "L2",
     }
+    
+    # Add PMTiles as a collection-level asset (covers all data, not per-item)
+    if pmtiles_path and pmtiles_path.exists():
+        collection["assets"] = collection.get("assets", {})
+        try:
+            # Calculate relative path from stac directory to PMTiles file
+            rel_pmtiles = Path("..") / pmtiles_path.relative_to(geoparquet_root)
+            pmtiles_href = str(rel_pmtiles)
+        except ValueError:
+            # If pmtiles_path is not relative to geoparquet_root (e.g., cloud staging),
+            # use a standard relative path assuming tiles/ sibling to stac/
+            pmtiles_href = f"../tiles/{pmtiles_path.name}"
+        
+        collection["assets"]["pmtiles"] = {
+            "href": pmtiles_href,
+            "type": "application/vnd.pmtiles",
+            "roles": ["visual", "tiles"],
+            "title": "PMTiles vector tiles with track segments and measurements",
+        }
 
     items_dir = stac_dir / "items"
     items_dir.mkdir(exist_ok=True)
@@ -244,11 +271,16 @@ def emit_stac_collection_and_item(
         }
 
         # Add platform identifiers to item properties if available
-        if platform:
-            if "platform_id" in platform:
-                item["properties"]["platform_id"] = platform["platform_id"]
-            if "campaign_id" in platform:
-                item["properties"]["campaign_id"] = platform["campaign_id"]
+        # For multi-platform: store all platform IDs; for single platform: backward compat
+        all_platforms = platforms if platforms else ([platform] if platform else [])
+        if all_platforms:
+            platform_ids = [p.get("platform_id") or p.get("id") for p in all_platforms if p.get("platform_id") or p.get("id")]
+            if platform_ids:
+                item["properties"]["platform_ids"] = platform_ids
+            # Also include campaign_id from first platform (should be same for all)
+            first_platform = all_platforms[0]
+            if "campaign_id" in first_platform:
+                item["properties"]["campaign_id"] = first_platform["campaign_id"]
 
         # Optional temporal properties
         if item_interval and item_interval[0] != [None, None]:
@@ -267,26 +299,6 @@ def emit_stac_collection_and_item(
                 "type": "application/x-parquet",
                 "roles": ["data"],
             }
-        
-        # Add PMTiles asset if provided (only for the first item since PMTiles covers all data)
-        if pmtiles_path and pmtiles_path.exists() and idx == 0:
-            # Calculate relative path from items directory to PMTiles file
-            try:
-                rel_pmtiles = Path("..") / ".." / pmtiles_path.relative_to(geoparquet_root.parent)
-                item["assets"]["pmtiles"] = {
-                    "href": str(rel_pmtiles),
-                    "type": "application/vnd.pmtiles",
-                    "roles": ["visual", "tiles"],
-                    "title": "PMTiles vector tiles with track segments and measurements",
-                }
-            except ValueError:
-                # If pmtiles_path is not relative to geoparquet_root.parent, use absolute path
-                item["assets"]["pmtiles"] = {
-                    "href": str(pmtiles_path),
-                    "type": "application/vnd.pmtiles",
-                    "roles": ["visual", "tiles"],
-                    "title": "PMTiles vector tiles with track segments and measurements",
-                }
 
         item_path = items_dir / f"item-{idx}.json"
         with open(item_path, "w", encoding="utf-8") as f:
