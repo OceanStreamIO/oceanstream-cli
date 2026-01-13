@@ -15,6 +15,8 @@ from oceanstream.echodata.denoise.denoise import (
     build_full_mask,
     apply_noise_mask,
     create_multichannel_mask,
+    drop_noisy_pings,
+    extract_channel,
 )
 from oceanstream.echodata.denoise.background_noise import background_noise_mask
 from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
@@ -27,6 +29,8 @@ __all__ = [
     "build_full_mask",
     "apply_noise_mask",
     "create_multichannel_mask",
+    "drop_noisy_pings",
+    "extract_channel",
     "background_noise_mask",
     "transient_noise_mask",
     "impulse_noise_mask",

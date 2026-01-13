@@ -38,6 +38,7 @@ def impulse_noise_mask(
         Boolean DataArray mask (True = noise to remove)
     """
     import xarray as xr
+    import numpy as np
     
     # Parse parameters
     vertical_bin = params.get("vertical_bin_size", 2.0)
@@ -49,18 +50,40 @@ def impulse_noise_mask(
     
     Sv = sv_dataset["Sv"]
     
-    # Determine range coordinate
+    # Determine range coordinate - try depth, echo_range, range_sample in order
     if "depth" in sv_dataset.dims or "depth" in sv_dataset.coords:
         range_coord = "depth"
+    elif "echo_range" in sv_dataset.dims or "echo_range" in sv_dataset.coords:
+        range_coord = "echo_range"
+    elif "range_sample" in sv_dataset.dims:
+        range_coord = "range_sample"
     else:
         range_coord = "echo_range"
     
-    # Bin vertically to reduce noise sensitivity
-    range_values = sv_dataset[range_coord]
-    dz = float(range_values.diff(range_coord).median())
-    bin_size = max(1, int(vertical_bin / dz))
+    # Get range values for computing bin size
+    if range_coord in sv_dataset.coords:
+        range_values = sv_dataset[range_coord]
+    elif "echo_range" in sv_dataset.coords:
+        range_values = sv_dataset["echo_range"]
+        range_coord = "echo_range"
+    else:
+        # Fall back to sample indices
+        n_samples = sv_dataset.dims.get(range_coord, sv_dataset.dims.get("range_sample", 1000))
+        range_values = xr.DataArray(
+            np.arange(n_samples) * 0.1,
+            dims=[range_coord if range_coord in sv_dataset.dims else "range_sample"]
+        )
+        range_coord = range_values.dims[0]
     
-    if bin_size > 1:
+    # Compute bin size based on vertical_bin in meters
+    if range_coord in sv_dataset.dims:
+        dz_arr = range_values.diff(range_coord)
+        dz = float(dz_arr.median()) if len(dz_arr) > 0 else 0.1
+        bin_size = max(1, int(vertical_bin / abs(dz)))
+    else:
+        bin_size = 1
+    
+    if bin_size > 1 and range_coord in Sv.dims:
         Sv_binned = Sv.coarsen(
             **{range_coord: bin_size},
             boundary="trim",
@@ -96,21 +119,40 @@ def impulse_noise_mask(
     
     # Interpolate back to original resolution if binned
     if bin_size > 1:
-        combined = combined.interp(
+        # Convert to float for interpolation, then back to bool
+        combined_float = combined.astype(float)
+        combined_float = combined_float.interp(
             **{range_coord: range_values},
             method="nearest",
-            kwargs={"fill_value": False},
+            kwargs={"fill_value": 0.0},
         )
+        combined = combined_float > 0.5
     
-    # Align ping_time
-    combined = combined.reindex(
-        ping_time=sv_dataset.ping_time,
-        method="nearest",
-        fill_value=False,
+    # Pad back to original ping_time dimension (diff reduces it by lag)
+    # Create a full-size mask initialized to False
+    original_n_pings = sv_dataset.sizes["ping_time"]
+    full_mask = xr.DataArray(
+        np.zeros((original_n_pings, combined.sizes[range_coord]), dtype=bool),
+        dims=["ping_time", range_coord],
+        coords={
+            "ping_time": sv_dataset.ping_time,
+            range_coord: combined.coords[range_coord],
+        },
     )
+    
+    # Copy the computed mask values into the correct positions
+    # diff removes the first `lag` values, so we start from position max_lag
+    mask_n_pings = combined.sizes["ping_time"]
+    max_lag = max(ping_lags)
+    start_idx = max_lag
+    end_idx = start_idx + mask_n_pings
+    
+    if end_idx <= original_n_pings:
+        # Assign values - need to handle coordinate alignment
+        full_mask.values[start_idx:end_idx, :] = combined.values
     
     logger.info(
-        f"Impulse noise mask: {float(combined.mean().values) * 100:.1f}% flagged"
+        f"Impulse noise mask: {float(full_mask.mean().values) * 100:.1f}% flagged"
     )
     
-    return combined
+    return full_mask

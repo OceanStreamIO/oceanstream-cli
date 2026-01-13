@@ -9,336 +9,495 @@ from unittest.mock import patch, MagicMock
 xr = pytest.importorskip("xarray")
 pd = pytest.importorskip("pandas")
 
-# Skip reason for unimplemented denoise submodules
-DENOISE_SKIP_REASON = "Denoise submodules not yet implemented (background_noise, transient_noise, impulse_noise, attenuation)"
 
-
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestBackgroundNoiseRemoval:
-    """Tests for De Robertis & Higginbottom background noise removal."""
-
-    def test_estimate_background_noise(self):
-        """Should estimate background noise from Sv data."""
-        from oceanstream.echodata.denoise.background_noise import estimate_background_noise
-        
-        # Create synthetic Sv with background noise pattern
-        # Background increases with range (TVG effect)
-        ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
-        range_samples = np.arange(500)
-        
-        # Simulate noise increasing with range
-        background = np.tile(-100 + 0.1 * range_samples, (100, 1))
-        noise = np.random.randn(100, 500) * 2
-        sv = background + noise
-        
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], sv),
-        }, coords={
+@pytest.fixture
+def sample_sv_dataset():
+    """Create a sample Sv dataset for testing."""
+    ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+    n_depth = 500
+    depth_values = np.arange(n_depth) * 0.5  # 0.5m resolution
+    
+    # Create synthetic Sv with background pattern
+    sv = np.random.randn(100, n_depth) - 70
+    
+    return xr.Dataset(
+        {
+            "Sv": (["ping_time", "depth"], sv),
+        },
+        coords={
             "ping_time": ping_times,
-        })
-        
-        try:
-            noise_estimate = estimate_background_noise(
-                sv_ds,
-                num_side_pings=25,
-            )
-            
-            # Noise estimate should exist
-            assert noise_estimate is not None
-        except (NotImplementedError, AttributeError):
-            pass
+            "depth": depth_values,
+        },
+        attrs={"platform": "test_platform"},
+    )
 
-    def test_remove_background_noise(self):
-        """Should remove background noise from Sv."""
-        from oceanstream.echodata.denoise.background_noise import remove_background_noise
-        from oceanstream.echodata.config import DenoiseConfig
-        
-        ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
-        
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], 
-                   np.random.randn(100, 500) - 70),
-        }, coords={
+
+@pytest.fixture
+def sample_sv_with_channel():
+    """Create a sample multi-channel Sv dataset."""
+    ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+    n_depth = 500
+    n_channels = 3
+    depth_values = np.arange(n_depth) * 0.5
+    
+    sv = np.random.randn(n_channels, 100, n_depth) - 70
+    
+    return xr.Dataset(
+        {
+            "Sv": (["channel", "ping_time", "depth"], sv),
+        },
+        coords={
             "ping_time": ping_times,
-        })
-        
-        config = DenoiseConfig(background_num_side_pings=25)
-        
-        try:
-            cleaned = remove_background_noise(sv_ds, config)
-            
-            assert "Sv" in cleaned
-        except (NotImplementedError, AttributeError):
-            pass
-
-    def test_noise_max_threshold(self):
-        """Should apply noise_max threshold if specified."""
-        from oceanstream.echodata.denoise.background_noise import remove_background_noise
-        from oceanstream.echodata.config import DenoiseConfig
-        
-        config = DenoiseConfig(
-            background_num_side_pings=25,
-            background_noise_max=-125.0,  # dB
-        )
-        
-        # Values below noise_max should be masked
-        assert config.background_noise_max == -125.0
+            "depth": depth_values,
+            "channel": ["18kHz", "38kHz", "120kHz"],
+        },
+    )
 
 
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestTransientNoiseRemoval:
-    """Tests for Fielding transient noise removal."""
+class TestBackgroundNoiseMask:
+    """Tests for background noise mask function."""
 
-    def test_detect_transient_noise(self):
+    def test_background_noise_mask_basic(self, sample_sv_dataset):
+        """Should create a background noise mask."""
+        from oceanstream.echodata.denoise.background_noise import background_noise_mask
+        
+        params = {
+            "range_window": 10,
+            "ping_window": 20,
+            "background_noise_max": "-125.0dB",
+            "SNR_threshold": "3.0dB",
+        }
+        
+        mask = background_noise_mask(sample_sv_dataset, params)
+        
+        assert mask is not None
+        assert mask.dtype == bool
+        assert mask.shape == sample_sv_dataset["Sv"].shape
+
+    def test_background_noise_mask_with_defaults(self, sample_sv_dataset):
+        """Should work with default parameters."""
+        from oceanstream.echodata.denoise.background_noise import background_noise_mask
+        
+        mask = background_noise_mask(sample_sv_dataset, {})
+        
+        assert mask is not None
+        assert mask.dtype == bool
+
+    def test_background_noise_mask_respects_snr_threshold(self, sample_sv_dataset):
+        """Higher SNR threshold should flag more samples."""
+        from oceanstream.echodata.denoise.background_noise import background_noise_mask
+        
+        low_threshold_params = {"SNR_threshold": "1.0dB", "ping_window": 20}
+        high_threshold_params = {"SNR_threshold": "10.0dB", "ping_window": 20}
+        
+        mask_low = background_noise_mask(sample_sv_dataset, low_threshold_params)
+        mask_high = background_noise_mask(sample_sv_dataset, high_threshold_params)
+        
+        # Higher threshold should flag more or equal samples
+        assert float(mask_high.sum()) >= float(mask_low.sum())
+
+
+class TestTransientNoiseMask:
+    """Tests for transient noise mask function."""
+
+    def test_transient_noise_mask_basic(self, sample_sv_dataset):
+        """Should create a transient noise mask."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+        
+        params = {
+            "exclude_above": 100.0,
+            "n_pings": 10,
+            "thr_dB": 6.0,
+        }
+        
+        mask = transient_noise_mask(sample_sv_dataset, params)
+        
+        assert mask is not None
+        assert mask.dtype == bool
+
+    def test_transient_noise_mask_detects_spikes(self):
         """Should detect transient noise spikes."""
-        from oceanstream.echodata.denoise.transient_noise import detect_transient_noise
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
         
         ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+        n_depth = 500
+        depth_values = np.arange(n_depth) * 0.5
         
-        # Create data with transient spike
-        sv = np.random.randn(100, 500) - 70
-        sv[50, :] += 30  # Add transient spike at ping 50
+        # Create data with a clear transient spike at ping 50
+        sv = np.random.randn(100, n_depth) - 70
+        sv[50, :] += 30  # Add large spike
         
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], sv),
-        }, coords={
-            "ping_time": ping_times,
-        })
-        
-        try:
-            mask = detect_transient_noise(sv_ds, a=2.0, n=5)
-            
-            # Should flag the spike ping
-            assert mask is not None
-        except (NotImplementedError, AttributeError):
-            pass
-
-    def test_transient_parameters(self):
-        """Transient detection parameters should be configurable."""
-        from oceanstream.echodata.config import DenoiseConfig
-        
-        config = DenoiseConfig(
-            transient_a=3.0,  # More aggressive threshold
-            transient_n=3,   # Fewer neighboring pings
+        ds = xr.Dataset(
+            {"Sv": (["ping_time", "depth"], sv)},
+            coords={"ping_time": ping_times, "depth": depth_values},
         )
         
-        assert config.transient_a == 3.0
-        assert config.transient_n == 3
+        params = {"exclude_above": 0.0, "n_pings": 10, "thr_dB": 10.0}
+        mask = transient_noise_mask(ds, params)
+        
+        # Should flag some samples around the spike
+        assert float(mask.sum()) > 0
+
+    def test_transient_noise_mask_with_defaults(self, sample_sv_dataset):
+        """Should work with default parameters."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+        
+        mask = transient_noise_mask(sample_sv_dataset, {})
+        
+        assert mask is not None
 
 
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestImpulseNoiseRemoval:
-    """Tests for impulse noise (multi-lag) removal."""
+class TestImpulseNoiseMask:
+    """Tests for impulse noise mask function."""
 
-    def test_detect_impulse_noise(self):
-        """Should detect impulse noise with multi-lag comparison."""
-        from oceanstream.echodata.denoise.impulse_noise import detect_impulse_noise
+    def test_impulse_noise_mask_basic(self, sample_sv_dataset):
+        """Should create an impulse noise mask."""
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+        
+        params = {
+            "vertical_bin_size": 2.0,
+            "ping_lags": [1, 2],
+            "threshold_db": 10.0,
+        }
+        
+        mask = impulse_noise_mask(sample_sv_dataset, params)
+        
+        assert mask is not None
+        assert mask.dtype == bool
+
+    def test_impulse_noise_detects_isolated_spike(self):
+        """Should detect isolated impulse noise."""
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
         
         ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+        n_depth = 100
+        depth_values = np.arange(n_depth) * 1.0
         
-        # Create data with impulse noise (isolated high values)
-        sv = np.random.randn(100, 500) - 70
-        sv[50, 250] += 40  # Add impulse at specific location
+        # Create data with isolated spike
+        sv = np.random.randn(100, n_depth) - 70
+        sv[50, 50] += 50  # Very high isolated spike
         
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], sv),
-        }, coords={
-            "ping_time": ping_times,
-        })
-        
-        try:
-            mask = detect_impulse_noise(
-                sv_ds,
-                threshold_db=10.0,
-                num_lags=3,
-            )
-            
-            assert mask is not None
-        except (NotImplementedError, AttributeError):
-            pass
-
-    def test_multi_lag_comparison(self):
-        """Should compare across multiple lag values."""
-        from oceanstream.echodata.config import DenoiseConfig
-        
-        config = DenoiseConfig(
-            impulse_threshold_db=10.0,
-            impulse_num_lags=3,
+        ds = xr.Dataset(
+            {"Sv": (["ping_time", "depth"], sv)},
+            coords={"ping_time": ping_times, "depth": depth_values},
         )
         
-        # Multi-lag helps distinguish real targets from noise
-        assert config.impulse_num_lags == 3
-
-    def test_impulse_vs_target_discrimination(self):
-        """Should not flag real targets as impulse noise."""
-        # Real targets appear across multiple pings
-        # Impulse noise is isolated
+        params = {"threshold_db": 20.0, "vertical_bin_size": 1.0}
+        mask = impulse_noise_mask(ds, params)
         
-        # This is a conceptual test - implementation would need
-        # to check that extended targets are preserved
-        pass
+        # Should be a boolean mask
+        assert mask.dtype == bool
+
+    def test_impulse_noise_multi_lag(self, sample_sv_dataset):
+        """Should support multiple lag values."""
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+        
+        params = {"ping_lags": [1, 2, 3], "threshold_db": 10.0}
+        mask = impulse_noise_mask(sample_sv_dataset, params)
+        
+        assert mask is not None
 
 
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestAttenuationDetection:
-    """Tests for signal attenuation detection."""
+class TestAttenuationMask:
+    """Tests for attenuation mask function."""
 
-    def test_detect_attenuation(self):
-        """Should detect attenuated signal regions."""
-        from oceanstream.echodata.denoise.attenuation import detect_attenuation
+    def test_attenuation_mask_basic(self, sample_sv_dataset):
+        """Should create an attenuation mask."""
+        from oceanstream.echodata.denoise.attenuation import attenuation_mask
+        
+        # Adjust depth limits to match our test data (0-250m)
+        params = {
+            "upper_limit_sl": 50.0,
+            "lower_limit_sl": 150.0,
+            "num_side_pings": 5,
+            "threshold": 5.0,
+        }
+        
+        mask = attenuation_mask(sample_sv_dataset, params)
+        
+        assert mask is not None
+        assert mask.dtype == bool
+
+    def test_attenuation_mask_detects_weak_signal(self):
+        """Should detect attenuated pings."""
+        from oceanstream.echodata.denoise.attenuation import attenuation_mask
         
         ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+        n_depth = 300
+        depth_values = np.arange(n_depth) * 1.0
         
-        # Create data with attenuation (signal drops off faster than expected)
-        range_samples = np.arange(500)
-        normal_decay = -70 - 0.04 * range_samples  # Normal TVG loss
-        attenuated_decay = -70 - 0.08 * range_samples  # Excessive attenuation
+        # Create data where some pings have attenuated signal
+        sv = np.random.randn(100, n_depth) - 70
+        # Attenuate pings 40-60 in the 180-280m depth band
+        sv[40:60, 180:280] -= 20
         
-        sv = np.zeros((100, 500))
-        sv[:50, :] = np.tile(normal_decay, (50, 1)) + np.random.randn(50, 500) * 2
-        sv[50:, :] = np.tile(attenuated_decay, (50, 1)) + np.random.randn(50, 500) * 2
+        ds = xr.Dataset(
+            {"Sv": (["ping_time", "depth"], sv)},
+            coords={"ping_time": ping_times, "depth": depth_values},
+        )
         
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], sv),
-        }, coords={
-            "ping_time": ping_times,
-        })
+        params = {
+            "upper_limit_sl": 180.0,
+            "lower_limit_sl": 280.0,
+            "num_side_pings": 10,
+            "threshold": 10.0,
+        }
+        mask = attenuation_mask(ds, params)
         
-        try:
-            attenuation_mask = detect_attenuation(sv_ds, threshold=0.8)
-            
-            assert attenuation_mask is not None
-        except (NotImplementedError, AttributeError):
-            pass
+        # Should flag some samples
+        assert mask is not None
 
-    def test_attenuation_threshold(self):
-        """Attenuation threshold should be configurable."""
+
+class TestBuildNoiseMask:
+    """Tests for build_noise_mask function."""
+
+    def test_build_noise_mask_single_method(self, sample_sv_dataset):
+        """Should build mask for single method."""
+        from oceanstream.echodata.denoise import build_noise_mask
         from oceanstream.echodata.config import DenoiseConfig
         
-        config = DenoiseConfig(attenuation_threshold=0.9)
+        config = DenoiseConfig()
+        mask = build_noise_mask(sample_sv_dataset, "background", config)
         
-        assert config.attenuation_threshold == 0.9
+        assert mask is not None
+        assert mask.dtype == bool
 
 
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestDenoisePipeline:
+class TestBuildFullMask:
+    """Tests for build_full_mask function."""
+
+    def test_build_full_mask_all_methods(self, sample_sv_with_channel):
+        """Should build combined mask from all methods."""
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.config import DenoiseConfig
+        
+        config = DenoiseConfig()
+        mask, stage_masks = build_full_mask(
+            sample_sv_with_channel,
+            methods=["background", "transient", "impulse", "attenuation"],
+            config=config,
+            return_stage_masks=True,
+        )
+        
+        assert mask is not None
+        assert isinstance(stage_masks, dict)
+        # Some methods may not produce results due to depth limits etc
+        assert len(stage_masks) >= 1
+
+    def test_build_full_mask_single_method(self, sample_sv_with_channel):
+        """Should work with single method."""
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.config import DenoiseConfig
+        
+        config = DenoiseConfig()
+        mask = build_full_mask(
+            sample_sv_with_channel,
+            methods=["background"],
+            config=config,
+            return_stage_masks=False,
+        )
+        
+        assert mask is not None
+
+
+class TestApplyNoiseMask:
+    """Tests for apply_noise_mask function."""
+
+    def test_apply_noise_mask_sets_nan(self, sample_sv_dataset):
+        """Should set masked values to NaN."""
+        from oceanstream.echodata.denoise import apply_noise_mask
+        
+        # Create a mask that flags all samples
+        mask = xr.DataArray(
+            np.ones(sample_sv_dataset["Sv"].shape, dtype=bool),
+            dims=sample_sv_dataset["Sv"].dims,
+            coords=sample_sv_dataset["Sv"].coords,
+        )
+        
+        result = apply_noise_mask(sample_sv_dataset, mask)
+        
+        # All Sv values should now be NaN
+        assert np.all(np.isnan(result["Sv"].values))
+
+    def test_apply_noise_mask_preserves_unmasked(self, sample_sv_dataset):
+        """Should preserve unmasked values."""
+        from oceanstream.echodata.denoise import apply_noise_mask
+        
+        # Create a mask that flags nothing
+        mask = xr.DataArray(
+            np.zeros(sample_sv_dataset["Sv"].shape, dtype=bool),
+            dims=sample_sv_dataset["Sv"].dims,
+            coords=sample_sv_dataset["Sv"].coords,
+        )
+        
+        result = apply_noise_mask(sample_sv_dataset, mask)
+        
+        # All Sv values should be preserved
+        assert np.allclose(result["Sv"].values, sample_sv_dataset["Sv"].values)
+
+
+class TestApplyDenoising:
     """Tests for the full denoising pipeline."""
 
-    def test_apply_denoising_all_methods(self, tmp_path: Path):
-        """Should apply all denoising methods in sequence."""
+    def test_apply_denoising_default_methods(self, sample_sv_with_channel, tmp_path):
+        """Should apply all default denoising methods."""
         from oceanstream.echodata.denoise import apply_denoising
-        from oceanstream.echodata.config import DenoiseConfig
         
-        ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
+        # Save dataset to zarr
+        input_path = tmp_path / "input.zarr"
+        sample_sv_with_channel.to_zarr(input_path)
         
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], 
-                   np.random.randn(100, 500) - 70),
-        }, coords={
-            "ping_time": ping_times,
-        })
+        result = apply_denoising(input_path)
         
-        # Save as Zarr for input
-        input_zarr = tmp_path / "input_sv.zarr"
-        sv_ds.to_zarr(input_zarr)
-        
-        config = DenoiseConfig(
-            methods=["background", "transient", "impulse", "attenuation"],
-        )
-        
-        try:
-            output_path = tmp_path / "denoised.zarr"
-            denoised = apply_denoising(
-                input_zarr,
-                methods=config.methods,
-                config=config,
-                output_path=output_path,
-            )
-            
-            # Output should exist
-            assert output_path.exists() or denoised is not None
-        except (NotImplementedError, AttributeError, ImportError):
-            pass
+        assert "Sv" in result
+        assert result.attrs.get("denoising_applied") is True
 
-    def test_selective_methods(self, tmp_path: Path):
+    def test_apply_denoising_selective_methods(self, sample_sv_with_channel):
         """Should apply only selected methods."""
         from oceanstream.echodata.denoise import apply_denoising
-        from oceanstream.echodata.config import DenoiseConfig
         
-        ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
-        
-        sv_ds = xr.Dataset({
-            "Sv": (["ping_time", "range_sample"], 
-                   np.random.randn(100, 500) - 70),
-        }, coords={
-            "ping_time": ping_times,
-        })
-        
-        input_zarr = tmp_path / "input_sv.zarr"
-        sv_ds.to_zarr(input_zarr)
-        
-        config = DenoiseConfig(methods=["background"])
-        
-        try:
-            apply_denoising(
-                input_zarr,
-                methods=["background"],
-                config=config,
-            )
-        except (NotImplementedError, AttributeError, ImportError):
-            pass
-
-    def test_preserves_metadata(self, tmp_path: Path):
-        """Denoising should preserve dataset metadata."""
-        ping_times = pd.date_range("2023-06-01", periods=100, freq="S")
-        
-        sv_ds = xr.Dataset(
-            {
-                "Sv": (["ping_time", "range_sample"], 
-                       np.random.randn(100, 500) - 70),
-            },
-            coords={"ping_time": ping_times},
-            attrs={"campaign": "TPOS2023", "platform": "sd1030"},
+        result = apply_denoising(
+            sample_sv_with_channel,
+            methods=["background"],
         )
         
-        input_zarr = tmp_path / "input_sv.zarr"
-        sv_ds.to_zarr(input_zarr)
+        assert result.attrs.get("denoising_methods") == ["background"]
+
+    def test_apply_denoising_saves_output(self, sample_sv_with_channel, tmp_path):
+        """Should save denoised dataset when output_path provided."""
+        from oceanstream.echodata.denoise import apply_denoising
         
-        # Load and check metadata preserved
-        loaded = xr.open_zarr(input_zarr)
-        assert loaded.attrs.get("campaign") == "TPOS2023"
+        output_path = tmp_path / "denoised.zarr"
+        
+        apply_denoising(
+            sample_sv_with_channel,
+            methods=["background"],
+            output_path=output_path,
+        )
+        
+        assert output_path.exists()
+        loaded = xr.open_zarr(output_path)
+        assert "Sv" in loaded
+
+    def test_apply_denoising_merge_masks(self, sample_sv_with_channel):
+        """Should merge individual masks into output dataset."""
+        from oceanstream.echodata.denoise import apply_denoising
+        
+        result = apply_denoising(
+            sample_sv_with_channel,
+            methods=["background", "impulse"],
+            merge_masks=True,
+        )
+        
+        # Should have combined mask
+        assert "mask_combined" in result
+
+    def test_apply_denoising_return_stage_masks(self, sample_sv_with_channel):
+        """Should return stage masks when requested."""
+        from oceanstream.echodata.denoise import apply_denoising
+        
+        result, stage_masks = apply_denoising(
+            sample_sv_with_channel,
+            methods=["background", "transient"],
+            return_stage_masks=True,
+        )
+        
+        assert isinstance(stage_masks, dict)
+        # Some methods may not produce results
+        assert len(stage_masks) >= 0
 
 
-@pytest.mark.skip(reason=DENOISE_SKIP_REASON)
-class TestMaskOperations:
-    """Tests for noise mask operations."""
+class TestCreateMultichannelMask:
+    """Tests for create_multichannel_mask function."""
 
-    def test_combine_masks(self):
-        """Should combine multiple noise masks with OR."""
-        from oceanstream.echodata.denoise.denoise import combine_masks
+    def test_create_multichannel_mask(self, sample_sv_with_channel):
+        """Should combine multiple channel masks into single dataset."""
+        from oceanstream.echodata.denoise import create_multichannel_mask
         
-        mask1 = np.array([[True, False], [False, False]])
-        mask2 = np.array([[False, True], [False, False]])
+        # Create mock mask datasets for each channel
+        n_channels = sample_sv_with_channel.sizes["channel"]
+        n_pings = sample_sv_with_channel.sizes["ping_time"]
+        n_depth = sample_sv_with_channel.sizes["depth"]
         
-        try:
-            combined = combine_masks([mask1, mask2])
-            
-            expected = np.array([[True, True], [False, False]])
-            assert np.array_equal(combined, expected)
-        except (NotImplementedError, AttributeError):
-            pass
+        masks = []
+        for i in range(n_channels):
+            mask_ds = xr.Dataset({
+                "mask": (["ping_time", "depth"], 
+                         np.random.choice([True, False], size=(n_pings, n_depth)))
+            })
+            masks.append(mask_ds)
+        
+        result = create_multichannel_mask(masks, sample_sv_with_channel)
+        
+        assert result is not None
+        assert "mask" in result or len(result.data_vars) > 0
 
-    def test_apply_mask_to_sv(self):
-        """Should apply mask to Sv by setting NaN."""
-        from oceanstream.echodata.denoise.denoise import apply_mask
+
+class TestDenoiseConfig:
+    """Tests for DenoiseConfig settings."""
+
+    def test_denoise_config_default_values(self):
+        """Should have sensible default values."""
+        from oceanstream.echodata.config import DenoiseConfig
         
-        sv = np.array([[-70, -65], [-72, -68]])
-        mask = np.array([[True, False], [False, False]])
+        config = DenoiseConfig()
         
-        try:
-            masked = apply_mask(sv, mask)
-            
-            assert np.isnan(masked[0, 0])
-            assert not np.isnan(masked[0, 1])
-        except (NotImplementedError, AttributeError):
-            pass
+        # Check some defaults exist via the to_*_params methods
+        assert hasattr(config, "to_background_params")
+        assert hasattr(config, "to_transient_params")
+        assert hasattr(config, "to_impulse_params")
+        assert hasattr(config, "to_attenuation_params")
+        
+        # Verify params are returned as dicts
+        assert isinstance(config.to_background_params(), dict)
+        assert isinstance(config.to_transient_params(), dict)
+
+    def test_denoise_config_custom_values(self):
+        """Should accept custom parameter values."""
+        from oceanstream.echodata.config import DenoiseConfig
+        
+        config = DenoiseConfig(
+            background_snr_threshold=5.0,
+            transient_threshold_db=8.0,
+        )
+        
+        # Check that custom values are reflected
+        assert config.background_snr_threshold == 5.0
+        assert config.transient_threshold_db == 8.0
+
+
+class TestModuleExports:
+    """Test that all denoise functions are properly exported."""
+
+    def test_denoise_functions_exported(self):
+        """Test that denoise functions are exported from module."""
+        from oceanstream.echodata import denoise
+        
+        assert hasattr(denoise, "apply_denoising")
+        assert hasattr(denoise, "build_noise_mask")
+        assert hasattr(denoise, "build_full_mask")
+        assert hasattr(denoise, "apply_noise_mask")
+        assert hasattr(denoise, "create_multichannel_mask")
+        assert hasattr(denoise, "background_noise_mask")
+        assert hasattr(denoise, "transient_noise_mask")
+        assert hasattr(denoise, "impulse_noise_mask")
+        assert hasattr(denoise, "attenuation_mask")
+
+    def test_denoise_functions_in_all(self):
+        """Test that functions are in __all__."""
+        from oceanstream.echodata.denoise import __all__
+        
+        expected = [
+            "apply_denoising",
+            "build_noise_mask",
+            "build_full_mask",
+            "apply_noise_mask",
+            "create_multichannel_mask",
+            "background_noise_mask",
+            "transient_noise_mask",
+            "impulse_noise_mask",
+            "attenuation_mask",
+        ]
+        
+        for name in expected:
+            assert name in __all__

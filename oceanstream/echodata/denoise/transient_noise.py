@@ -46,21 +46,38 @@ def transient_noise_mask(
     n_pings = params.get("n_pings", 20)
     threshold_db = params.get("thr_dB", 6.0)
     
-    # Determine range coordinate
+    # Determine range coordinate - try depth, echo_range, range_sample in order
     if "depth" in sv_dataset.dims or "depth" in sv_dataset.coords:
         range_coord = "depth"
+    elif "echo_range" in sv_dataset.dims or "echo_range" in sv_dataset.coords:
+        range_coord = "echo_range"
+    elif "range_sample" in sv_dataset.dims:
+        range_coord = "range_sample"
     else:
         range_coord = "echo_range"
     
     Sv = sv_dataset["Sv"]
-    range_values = sv_dataset[range_coord]
+    
+    # Get range values
+    if range_coord in sv_dataset.coords:
+        range_values = sv_dataset[range_coord]
+    elif "echo_range" in sv_dataset.coords:
+        range_values = sv_dataset["echo_range"]
+    else:
+        # Fall back to sample indices - assume 0.1m per sample
+        import xarray as xr
+        n_samples = sv_dataset.dims.get(range_coord, sv_dataset.dims.get("range_sample", 1000))
+        range_values = xr.DataArray(
+            np.arange(n_samples) * 0.1,
+            dims=[range_coord if range_coord in sv_dataset.dims else "range_sample"]
+        )
     
     # Exclude shallow water
     mask_depth = range_values > exclude_above
     Sv_deep = Sv.where(mask_depth)
     
     # Bin by depth
-    n_depth_bins = int(np.ceil((range_values.max() - exclude_above) / depth_bin))
+    n_depth_bins = int(np.ceil((float(range_values.max()) - exclude_above) / depth_bin))
     
     if n_depth_bins <= 0:
         logger.warning("No valid depth range for transient noise detection")

@@ -8,20 +8,219 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Mapping
 import os
+
+
+# ============================================================================
+# Frequency-specific parameter presets for Saildrone EK80
+# ============================================================================
+
+# Default parameters optimized for each frequency (in Hz)
+# Based on legacy code from _echodata-legacy-code/saildrone-echodata-processing
+FREQUENCY_PRESETS: dict[int, dict[str, dict]] = {
+    # 38 kHz - deeper penetration, lower resolution
+    38000: {
+        "background": {
+            "range_window": 30,
+            "ping_window": 50,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-125.0dB",
+            "depth_stat": "quantile",
+            "depth_quantile": 0.15,
+        },
+        "transient": {
+            "exclude_above": 250.0,
+            "depth_bin": 10.0,
+            "n_pings": 20,
+            "thr_dB": 8.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "5m",
+            "ping_lags": [1, 2],
+            "threshold_db": 10.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 200.0,
+            "lower_limit_sl": 400.0,
+            "num_side_pings": 15,
+            "threshold": 6.0,
+        },
+    },
+    # 70 kHz - medium depth
+    70000: {
+        "background": {
+            "range_window": 25,
+            "ping_window": 50,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-120.0dB",
+        },
+        "transient": {
+            "exclude_above": 200.0,
+            "depth_bin": 8.0,
+            "n_pings": 20,
+            "thr_dB": 7.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "4m",
+            "ping_lags": [1, 2],
+            "threshold_db": 10.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 150.0,
+            "lower_limit_sl": 300.0,
+            "num_side_pings": 15,
+            "threshold": 5.0,
+        },
+    },
+    # 120 kHz - medium resolution
+    120000: {
+        "background": {
+            "range_window": 20,
+            "ping_window": 50,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-115.0dB",
+        },
+        "transient": {
+            "exclude_above": 150.0,
+            "depth_bin": 5.0,
+            "n_pings": 15,
+            "thr_dB": 6.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "3m",
+            "ping_lags": [1],
+            "threshold_db": 10.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 100.0,
+            "lower_limit_sl": 200.0,
+            "num_side_pings": 15,
+            "threshold": 5.0,
+        },
+    },
+    # 200 kHz - higher resolution, shallower
+    200000: {
+        "background": {
+            "range_window": 15,
+            "ping_window": 40,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-110.0dB",
+        },
+        "transient": {
+            "exclude_above": 100.0,
+            "depth_bin": 3.0,
+            "n_pings": 10,
+            "thr_dB": 5.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "2m",
+            "ping_lags": [1],
+            "threshold_db": 8.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 50.0,
+            "lower_limit_sl": 150.0,
+            "num_side_pings": 10,
+            "threshold": 4.0,
+        },
+    },
+    # 333 kHz - highest resolution, shallowest
+    333000: {
+        "background": {
+            "range_window": 10,
+            "ping_window": 30,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-105.0dB",
+        },
+        "transient": {
+            "exclude_above": 50.0,
+            "depth_bin": 2.0,
+            "n_pings": 8,
+            "thr_dB": 5.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "1m",
+            "ping_lags": [1],
+            "threshold_db": 8.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 30.0,
+            "lower_limit_sl": 100.0,
+            "num_side_pings": 8,
+            "threshold": 4.0,
+        },
+    },
+}
+
+
+def get_frequency_params(
+    frequency_hz: float,
+    method: str,
+    pulse_length: Optional[str] = None,
+) -> dict:
+    """
+    Get denoising parameters optimized for a specific frequency.
+    
+    Args:
+        frequency_hz: Nominal frequency in Hz (e.g., 38000, 200000)
+        method: Denoising method ("background", "transient", "impulse", "attenuation")
+        pulse_length: Optional pulse length ("short_pulse" or "long_pulse")
+        
+    Returns:
+        Dictionary of parameters for the specified method and frequency.
+        
+    Example:
+        params = get_frequency_params(38000, "background")
+        params = get_frequency_params(200000, "impulse", pulse_length="short_pulse")
+    """
+    freq_int = int(round(frequency_hz))
+    
+    # Find closest matching frequency preset
+    if freq_int in FREQUENCY_PRESETS:
+        preset = FREQUENCY_PRESETS[freq_int]
+    else:
+        # Find nearest frequency
+        available = list(FREQUENCY_PRESETS.keys())
+        nearest = min(available, key=lambda x: abs(x - freq_int))
+        preset = FREQUENCY_PRESETS[nearest]
+    
+    if method not in preset:
+        raise ValueError(f"Unknown method '{method}'. Available: {list(preset.keys())}")
+    
+    return preset[method].copy()
 
 
 @dataclass
 class DenoiseConfig:
     """Configuration for denoising pipeline.
     
+    Supports both global parameters and frequency-specific parameters.
     Based on De Robertis & Higginbottom (2007) and Fielding et al. algorithms.
+    
+    Example with frequency-specific params:
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            frequency_params={
+                38000: {"background": {...}, "impulse": {...}},
+                200000: {"background": {...}, "impulse": {...}},
+            }
+        )
     """
     
     methods: list[str] = field(
         default_factory=lambda: ["background", "transient", "impulse", "attenuation"]
     )
+    
+    # Enable frequency-specific parameters
+    use_frequency_specific: bool = False
+    
+    # Per-frequency parameter overrides: {freq_hz: {method: {params}}}
+    # If use_frequency_specific=True, these override FREQUENCY_PRESETS
+    frequency_params: Optional[dict[int, dict[str, dict]]] = None
+    
+    # Pulse length for parameter selection ("short_pulse" or "long_pulse")
+    pulse_length: Optional[str] = None
     
     # Background noise (De Robertis & Higginbottom 2007)
     background_num_side_pings: int = 25  # Number of pings on each side
@@ -50,14 +249,62 @@ class DenoiseConfig:
     attenuation_lower_limit: float = 280.0  # m
     attenuation_side_pings: int = 15
     
+    def get_params_for_frequency(
+        self,
+        frequency_hz: float,
+        method: str,
+    ) -> dict:
+        """
+        Get parameters for a specific frequency and method.
+        
+        If use_frequency_specific is True, returns frequency-optimized params.
+        Otherwise returns global params from this config.
+        
+        Args:
+            frequency_hz: Nominal frequency in Hz
+            method: Denoising method name
+            
+        Returns:
+            Parameter dictionary for the method.
+        """
+        if not self.use_frequency_specific:
+            # Return global parameters
+            return self._get_global_params(method)
+        
+        freq_int = int(round(frequency_hz))
+        
+        # Check for user-provided overrides first
+        if self.frequency_params and freq_int in self.frequency_params:
+            if method in self.frequency_params[freq_int]:
+                return self.frequency_params[freq_int][method].copy()
+        
+        # Fall back to presets
+        return get_frequency_params(freq_int, method, self.pulse_length)
+    
+    def _get_global_params(self, method: str) -> dict:
+        """Get global (non-frequency-specific) parameters."""
+        if method == "background":
+            return self.to_background_params()
+        elif method == "transient":
+            return self.to_transient_params()
+        elif method == "impulse":
+            return self.to_impulse_params()
+        elif method == "attenuation":
+            return self.to_attenuation_params()
+        else:
+            raise ValueError(f"Unknown method: {method}")
+    
     def to_background_params(self) -> dict:
         """Return parameters dict for background_noise_mask function."""
-        return {
+        params = {
             "range_window": self.background_range_window,
             "ping_window": self.background_ping_window,
             "SNR_threshold": f"{self.background_snr_threshold}dB",
-            "background_noise_max": f"{self.background_noise_max}dB",
         }
+        # Only add background_noise_max if it's not None
+        if self.background_noise_max is not None:
+            params["background_noise_max"] = f"{self.background_noise_max}dB"
+        return params
     
     def to_transient_params(self) -> dict:
         """Return parameters dict for transient_noise_mask function."""

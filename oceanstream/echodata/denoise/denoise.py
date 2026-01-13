@@ -128,6 +128,8 @@ def build_full_mask(
     Processes each channel independently, building masks for each
     denoising method and combining them with OR logic.
     
+    Supports frequency-specific parameters when config.use_frequency_specific=True.
+    
     Args:
         ds: Sv xarray Dataset
         methods: List of method names
@@ -151,24 +153,12 @@ def build_full_mask(
     stage_masks = {method: [] for method in methods}
     ch_masks = []
     
-    # Map method names to functions and param extractors
-    method_specs = {
-        "background": {
-            "fn": background_noise_mask,
-            "params": config.to_background_params(),
-        },
-        "transient": {
-            "fn": transient_noise_mask,
-            "params": config.to_transient_params(),
-        },
-        "impulse": {
-            "fn": impulse_noise_mask,
-            "params": config.to_impulse_params(),
-        },
-        "attenuation": {
-            "fn": attenuation_mask,
-            "params": config.to_attenuation_params(),
-        },
+    # Map method names to functions
+    method_fns = {
+        "background": background_noise_mask,
+        "transient": transient_noise_mask,
+        "impulse": impulse_noise_mask,
+        "attenuation": attenuation_mask,
     }
     
     # Process each channel
@@ -177,14 +167,32 @@ def build_full_mask(
         reference = ds[var_name].isel(channel=ch)
         stage_or = None
         
+        # Get frequency for this channel (for frequency-specific params)
+        frequency_hz = None
+        if "frequency_nominal" in ch_ds.coords:
+            frequency_hz = float(ch_ds["frequency_nominal"].values)
+        
         for method in methods:
-            if method not in method_specs:
+            if method not in method_fns:
                 logger.warning(f"Unknown method {method}, skipping")
                 continue
             
-            spec = method_specs[method]
-            fn = spec["fn"]
-            params = spec["params"]
+            fn = method_fns[method]
+            
+            # Get parameters - frequency-specific if enabled
+            if config.use_frequency_specific and frequency_hz is not None:
+                params = config.get_params_for_frequency(frequency_hz, method)
+                logger.debug(f"Using frequency-specific params for {frequency_hz} Hz, {method}")
+            else:
+                # Use global params
+                if method == "background":
+                    params = config.to_background_params()
+                elif method == "transient":
+                    params = config.to_transient_params()
+                elif method == "impulse":
+                    params = config.to_impulse_params()
+                elif method == "attenuation":
+                    params = config.to_attenuation_params()
             
             try:
                 result = fn(ch_ds, params)
@@ -345,6 +353,112 @@ def apply_noise_mask(
     result["noise_mask"] = mask
     
     return result
+
+
+def drop_noisy_pings(
+    sv_dataset: "xr.Dataset",
+    channel: int | float | None = None,
+    var_name: str = "Sv",
+    drop_threshold: float = 1.0,
+    freq_coord: str = "frequency_nominal",
+) -> "xr.Dataset":
+    """
+    Drop ping_time slices where the fraction of NaNs exceeds a threshold.
+    
+    This is useful for cleaning up data after applying noise masks,
+    removing pings that are mostly or entirely noise.
+    
+    Ported from _echodata-legacy-code/saildrone-echodata-processing/denoise/mask.py
+    
+    Args:
+        sv_dataset: Dataset with noise mask already applied (bad samples are NaN)
+        channel: Optional channel to extract (by frequency value or index).
+                 If None, applies to all channels.
+        var_name: Variable to inspect for NaNs (default: "Sv")
+        drop_threshold: Fraction (0-1) of NaNs above which a ping is removed.
+                       - 1.0 = remove only fully-NaN pings
+                       - 0.5 = remove pings with ≥50% NaN
+                       - 0.0 = remove any ping with any NaN
+        freq_coord: Name of the frequency coordinate (default: "frequency_nominal")
+        
+    Returns:
+        Dataset with noisy pings removed along the ping_time axis.
+        
+    Example:
+        # Remove pings that are >80% NaN
+        clean = drop_noisy_pings(denoised_ds, drop_threshold=0.8)
+        
+        # Extract just 38 kHz channel and remove fully-NaN pings  
+        clean_38 = drop_noisy_pings(denoised_ds, channel=38000, drop_threshold=1.0)
+    """
+    import xarray as xr
+    
+    ds = sv_dataset
+    
+    # Optionally select a single channel
+    if channel is not None:
+        if freq_coord in ds.coords:
+            freqs = ds[freq_coord].values
+            if hasattr(freqs, '__iter__') and (freqs == channel).any():
+                ds = ds.sel(channel=ds[freq_coord] == channel)
+            else:
+                ds = ds.isel(channel=int(channel), drop=False)
+        else:
+            ds = ds.isel(channel=int(channel), drop=False)
+    
+    # Find the range dimension (last dim that's not channel/ping_time)
+    range_dim = [d for d in ds[var_name].dims if d not in ["channel", "ping_time"]]
+    if not range_dim:
+        logger.warning("No range dimension found, returning unchanged")
+        return ds
+    range_dim = range_dim[0]
+    
+    # Compute fraction NaN per ping_time
+    n_nan = ds[var_name].isnull().sum(dim=range_dim)
+    total = ds[var_name].sizes[range_dim]
+    frac_nan = n_nan / total
+    
+    # If there's a channel dim, take max across channels (most conservative)
+    if "channel" in frac_nan.dims:
+        frac_nan = frac_nan.max(dim="channel")
+    
+    # Compute which pings to keep
+    if hasattr(frac_nan, 'compute'):
+        keep_mask = (frac_nan < drop_threshold).compute().values
+    else:
+        keep_mask = (frac_nan < drop_threshold).values
+    
+    n_dropped = (~keep_mask).sum()
+    n_total = len(keep_mask)
+    pct_dropped = n_dropped / n_total * 100 if n_total > 0 else 0
+    
+    logger.info(f"Dropping {n_dropped}/{n_total} pings ({pct_dropped:.1f}%) with ≥{drop_threshold*100:.0f}% NaN")
+    
+    return ds.isel(ping_time=keep_mask)
+
+
+def extract_channel(
+    sv_dataset: "xr.Dataset",
+    channel: int | float,
+    freq_coord: str = "frequency_nominal",
+) -> "xr.Dataset":
+    """
+    Extract a single channel from a multichannel dataset.
+    
+    Args:
+        sv_dataset: Dataset with channel dimension
+        channel: Channel to extract (by frequency value in Hz or by index)
+        freq_coord: Name of the frequency coordinate
+        
+    Returns:
+        Dataset with the specified channel (singleton channel dim preserved)
+    """
+    if freq_coord in sv_dataset.coords:
+        freqs = sv_dataset[freq_coord].values
+        if hasattr(freqs, '__iter__') and (freqs == channel).any():
+            return sv_dataset.sel(channel=sv_dataset[freq_coord] == channel)
+    
+    return sv_dataset.isel(channel=int(channel), drop=False)
 
 
 def create_multichannel_mask(

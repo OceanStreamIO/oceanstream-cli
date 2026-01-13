@@ -49,20 +49,42 @@ def attenuation_mask(
     
     Sv = sv_dataset["Sv"]
     
-    # Determine range coordinate
-    if "depth" in sv_dataset.dims or "depth" in sv_dataset.coords:
-        range_coord = "depth"
+    # Determine range dimension (what we iterate over)
+    if "range_sample" in sv_dataset.dims:
+        range_dim = "range_sample"
+    elif "depth" in sv_dataset.dims:
+        range_dim = "depth"
+    elif "echo_range" in sv_dataset.dims:
+        range_dim = "echo_range"
     else:
-        range_coord = "echo_range"
+        range_dim = [d for d in Sv.dims if d not in ["channel", "ping_time"]][0]
     
-    range_values = sv_dataset[range_coord]
+    # Get range values in METERS (check data_vars first, then coords)
+    if "echo_range" in sv_dataset.data_vars:
+        range_values = sv_dataset["echo_range"]
+        logger.debug("Using echo_range from data_vars (meters)")
+    elif "echo_range" in sv_dataset.coords:
+        range_values = sv_dataset["echo_range"]
+    elif "depth" in sv_dataset.data_vars:
+        range_values = sv_dataset["depth"]
+    elif "depth" in sv_dataset.coords:
+        range_values = sv_dataset["depth"]
+    else:
+        # Fall back to estimated range from sample indices
+        n_samples = sv_dataset.sizes.get(range_dim, 1000)
+        sample_spacing = 0.18  # meters per sample (typical EK80 CW)
+        range_values = xr.DataArray(
+            np.arange(n_samples) * sample_spacing,
+            dims=[range_dim]
+        )
+        logger.warning(f"No echo_range found, estimating from {range_dim}")
     
     # Select depth band for attenuation check
     depth_mask = (range_values >= upper_limit) & (range_values <= lower_limit)
     Sv_band = Sv.where(depth_mask)
     
     # Compute mean Sv in the depth band for each ping
-    Sv_band_mean = Sv_band.mean(dim=range_coord, skipna=True)
+    Sv_band_mean = Sv_band.mean(dim=range_dim, skipna=True)
     
     # Compute running median of band means
     window_size = 2 * num_side_pings + 1

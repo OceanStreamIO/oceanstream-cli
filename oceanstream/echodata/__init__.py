@@ -99,6 +99,14 @@ __all__ = [
     # Consolidate (depth computation)
     "add_depth_to_sv",
     "choose_depth_flags",
+    # Seabed detection
+    "detect_seabed",
+    "detect_seabed_maxSv",
+    "detect_seabed_deltaSv",
+    "detect_seabed_ariza",
+    "mask_seabed",
+    "compute_seabed_stats",
+    "SeabedDetectionResult",
     # Cloud Storage
     "get_azure_zarr_store",
     "save_echodata_to_azure",
@@ -186,6 +194,27 @@ def __getattr__(name: str):
     # Consolidate functions (depth computation)
     if name in ("add_depth_to_sv", "choose_depth_flags"):
         from oceanstream.echodata.consolidate import add_depth_to_sv, choose_depth_flags
+        return locals()[name]
+    
+    # Seabed detection functions
+    if name in (
+        "detect_seabed",
+        "detect_seabed_maxSv",
+        "detect_seabed_deltaSv",
+        "detect_seabed_ariza",
+        "mask_seabed",
+        "compute_seabed_stats",
+        "SeabedDetectionResult",
+    ):
+        from oceanstream.echodata.seabed import (
+            detect_seabed,
+            detect_seabed_maxSv,
+            detect_seabed_deltaSv,
+            detect_seabed_ariza,
+            mask_seabed,
+            compute_seabed_stats,
+            SeabedDetectionResult,
+        )
         return locals()[name]
     
     # Denoise functions
