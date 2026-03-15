@@ -249,6 +249,10 @@ def save_sv_to_azure(
     store = get_azure_zarr_store(path, container=container, mode="w")
     
     logger.info(f"Saving Sv dataset to Azure: {path}")
+    import xarray as xr_mod
+    if isinstance(sv_dataset, xr_mod.Dataset):
+        from oceanstream.echodata.utils.encoding import fix_chunking
+        sv_dataset = fix_chunking(sv_dataset)
     sv_dataset.to_zarr(store, mode="w")
     
     return get_zarr_store_uri(path, container)
@@ -277,6 +281,10 @@ def save_product_to_azure(
     store = get_azure_zarr_store(path, container=container, mode="w")
     
     logger.info(f"Saving {product_type.upper()} to Azure: {path}")
+    import xarray as xr_mod
+    if isinstance(dataset, xr_mod.Dataset):
+        from oceanstream.echodata.utils.encoding import fix_chunking
+        dataset = fix_chunking(dataset)
     dataset.to_zarr(store, mode="w")
     
     return get_zarr_store_uri(path, container)

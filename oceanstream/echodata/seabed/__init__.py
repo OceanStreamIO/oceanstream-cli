@@ -21,9 +21,15 @@ from .detection import (
     detect_seabed_deltaSv,
     detect_seabed_ariza,
     detect_seabed_composite,
+    detect_seabed_blackwell,
     mask_seabed,
     compute_seabed_stats,
+    find_optimal_seabed_channel,
     SeabedDetectionResult,
+)
+from .bathymetry import (
+    get_bathymetry,
+    estimate_seabed_depth,
 )
 
 __all__ = [
@@ -32,7 +38,11 @@ __all__ = [
     "detect_seabed_deltaSv",
     "detect_seabed_ariza",
     "detect_seabed_composite",
+    "detect_seabed_blackwell",
     "mask_seabed",
     "compute_seabed_stats",
+    "find_optimal_seabed_channel",
     "SeabedDetectionResult",
+    "get_bathymetry",
+    "estimate_seabed_depth",
 ]

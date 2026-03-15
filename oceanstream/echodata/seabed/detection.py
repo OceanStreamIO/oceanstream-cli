@@ -15,6 +15,11 @@ References:
     - De Robertis & Higginbottom (2007), ICES Journal of Marine Science
 """
 
+from __future__ import annotations
+
+import logging
+import re
+import warnings
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -22,6 +27,8 @@ import numpy as np
 import xarray as xr
 from scipy.ndimage import median_filter, binary_erosion, binary_dilation
 from scipy.signal import savgol_filter
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -844,10 +851,18 @@ def detect_seabed(
         "deltaSv": detect_seabed_deltaSv,
         "ariza": detect_seabed_ariza,
         "composite": detect_seabed_composite,
+        "blackwell": detect_seabed_blackwell,
     }
     
     if method not in methods:
         raise ValueError(f"Unknown method '{method}'. Choose from: {list(methods.keys())}")
+    
+    # Auto-select 38 kHz channel for seabed if no channel specified
+    if channel is None:
+        try:
+            channel = find_optimal_seabed_channel(ds)
+        except KeyError:
+            pass  # fall through to per-method default (first channel)
     
     return methods[method](ds, channel=channel, r0=r0, r1=r1, **kwargs)
 
@@ -953,3 +968,235 @@ def compute_seabed_stats(ds: xr.Dataset, result: SeabedDetectionResult) -> dict:
         "method": result.method,
         "channel": result.channel,
     }
+
+
+# =========================================================================
+# Blackwell method — aliased seabed detection via split-beam angles
+# =========================================================================
+
+
+def detect_seabed_blackwell(
+    ds: xr.Dataset,
+    channel: Optional[str] = None,
+    r0: float = 10,
+    r1: float = 1000,
+    tSv: float = -35.0,
+    ttheta: float = 5.0,
+    tphi: float = 5.0,
+    wtheta: int = 3,
+    wphi: int = 3,
+) -> SeabedDetectionResult:
+    """Detect aliased seabed using split-beam angle analysis.
+
+    Based on Blackwell et al. (2019), "Aliased seabed detection in fisheries
+    acoustic data" (https://arxiv.org/abs/1904.10736).
+
+    This method uses the along-ship and athwart-ship angle fields from
+    split-beam echosounders.  High angle variability indicates impedance
+    discontinuities (seabed reflections, including aliased bottom echoes).
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset with ``Sv``, ``angle_alongship``, and ``angle_athwartship``.
+    channel : str, optional
+        Channel to use.  If None, first channel is used.
+    r0 : float
+        Minimum depth (m) for seabed search.
+    r1 : float
+        Maximum depth (m) for seabed search.
+    tSv : float
+        Sv threshold (dB) above which a sample is a seabed candidate.
+    ttheta : float
+        Along-ship angle threshold for seabed classification.
+    tphi : float
+        Athwart-ship angle threshold for seabed classification.
+    wtheta : int
+        Window size for the along-ship mean-square convolution.
+    wphi : int
+        Window size for the athwart-ship mean-square convolution.
+
+    Returns
+    -------
+    SeabedDetectionResult
+
+    Notes
+    -----
+    Requires ``angle_alongship`` and ``angle_athwartship`` variables in the
+    dataset — these come from split-beam echosounder data with echopype's
+    ``add_splitbeam_angle`` consolidation step.
+    """
+    try:
+        import dask.array as da
+        from scipy.ndimage import convolve
+    except ImportError as e:
+        raise ImportError(
+            "dask and scipy are required for Blackwell seabed detection"
+        ) from e
+
+    range_arr, range_dim = _get_range_array(ds)
+    ds_ch, channel_name = _select_channel(ds, channel)
+
+    # Validate required angle variables
+    if "angle_alongship" not in ds_ch.data_vars:
+        raise ValueError(
+            "Blackwell method requires 'angle_alongship' variable. "
+            "Use echopype add_splitbeam_angle() first."
+        )
+    if "angle_athwartship" not in ds_ch.data_vars:
+        raise ValueError(
+            "Blackwell method requires 'angle_athwartship' variable. "
+            "Use echopype add_splitbeam_angle() first."
+        )
+
+    sv_data = ds_ch["Sv"]
+    theta = ds_ch["angle_alongship"].copy()
+    phi = ds_ch["angle_athwartship"].copy()
+
+    # Scale angles per raw EK convention
+    scaling_factor = (22.0 * 128.0) / 180.0
+    theta = theta * scaling_factor
+    phi = phi * scaling_factor
+
+    # Convolve to compute local mean-square in along-ship direction
+    theta_np = theta.values if not isinstance(theta.data, da.Array) else theta.values
+    phi_np = phi.values if not isinstance(phi.data, da.Array) else phi.values
+
+    kernel_theta = np.ones((wtheta, wtheta), dtype=float) / wtheta**2
+    kernel_phi = np.ones((wphi, wphi), dtype=float) / wphi**2
+
+    theta_conv = convolve(theta_np, kernel_theta, mode="nearest")
+    phi_conv = convolve(phi_np, kernel_phi, mode="nearest")
+
+    # Seabed candidate: angle exceeds threshold
+    angle_mask = (theta_conv > ttheta) | (phi_conv > tphi)
+
+    # Apply depth gate
+    if "channel" in range_arr.dims:
+        range_1d = range_arr.isel(channel=0).values
+    elif range_arr.ndim > 1:
+        range_1d = range_arr.isel(ping_time=0).values
+    else:
+        range_1d = range_arr.values
+
+    depth_gate = (range_1d >= r0) & (range_1d <= r1)
+    angle_mask[:, ~depth_gate] = False
+
+    # Find first seabed sample per ping (first True in depth axis)
+    n_pings, n_range = angle_mask.shape
+    seabed_idx = np.full(n_pings, np.nan)
+    seabed_depth_vals = np.full(n_pings, np.nan)
+
+    for i in range(n_pings):
+        candidates = np.where(angle_mask[i])[0]
+        if len(candidates) > 0:
+            idx = candidates[0]
+            seabed_idx[i] = idx
+            seabed_depth_vals[i] = range_1d[idx]
+
+    n_detected = int(np.sum(~np.isnan(seabed_depth_vals)))
+    ping_time = ds_ch["ping_time"] if "ping_time" in ds_ch.coords else ds_ch.coords[list(ds_ch.dims)[0]]
+
+    seabed_depth_da = xr.DataArray(
+        seabed_depth_vals,
+        dims=("ping_time",),
+        coords={"ping_time": ping_time},
+        attrs={"long_name": "Seabed depth (Blackwell)", "units": "m"},
+    )
+    seabed_index_da = xr.DataArray(
+        seabed_idx,
+        dims=("ping_time",),
+        coords={"ping_time": ping_time},
+        attrs={"long_name": "Seabed range sample index (Blackwell)"},
+    )
+
+    return SeabedDetectionResult(
+        seabed_depth=seabed_depth_da,
+        seabed_index=seabed_index_da,
+        method="blackwell",
+        channel=channel_name,
+        pings_detected=n_detected,
+        pings_total=n_pings,
+        detection_rate=n_detected / n_pings if n_pings > 0 else 0.0,
+        params={
+            "r0": r0, "r1": r1,
+            "tSv": tSv, "ttheta": ttheta, "tphi": tphi,
+            "wtheta": wtheta, "wphi": wphi,
+        },
+    )
+
+
+# =========================================================================
+# Channel auto-selection for seabed detection
+# =========================================================================
+
+
+def _is_38khz(value, tol_hz: float = 500.0) -> bool:
+    """Return True if *value* represents 38 kHz within ±tol_hz."""
+    if np.issubdtype(type(value), np.number):
+        hz = float(value) * 1e3 if value < 1e3 else float(value)
+        return abs(hz - 38_000.0) <= tol_hz
+
+    if isinstance(value, (bytes, str)):
+        txt = value.decode() if isinstance(value, bytes) else value
+        m = re.search(r"(\d+(?:\.\d+)?)", txt)
+        if m:
+            return _is_38khz(float(m.group(1)), tol_hz=tol_hz)
+
+    return False
+
+
+def find_optimal_seabed_channel(
+    ds: xr.Dataset,
+    tol_hz: float = 500.0,
+) -> str:
+    """Find the best channel for seabed detection (prefer 38 kHz).
+
+    38 kHz penetrates deepest and is the standard choice for seabed
+    detection in fisheries acoustics.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Multi-channel dataset with ``Sv``.
+    tol_hz : float
+        Allowed deviation from 38 000 Hz (default ±500 Hz).
+
+    Returns
+    -------
+    str
+        Channel label for the 38 kHz channel.
+
+    Raises
+    ------
+    KeyError
+        If no 38 kHz channel is found.
+    """
+    if {"channel", "frequency"}.isdisjoint(ds.dims):
+        # Single-channel dataset — return its channel label
+        if "channel" in ds.coords:
+            return str(ds.coords["channel"].values)
+        return None
+
+    chan_dim = "channel" if "channel" in ds.dims else "frequency"
+
+    # Strategy 1: look for frequency_nominal
+    if "frequency_nominal" in ds.data_vars or "frequency_nominal" in ds.coords:
+        fn = ds["frequency_nominal"]
+        if chan_dim in fn.dims:
+            fn_vals = fn.values
+            if hasattr(fn_vals, "compute"):
+                fn_vals = fn_vals.compute()
+            for idx, val in enumerate(fn_vals):
+                if _is_38khz(val, tol_hz):
+                    return str(ds.coords[chan_dim].values[idx])
+
+    # Strategy 2: textual/numeric channel labels
+    for idx, val in enumerate(ds.coords[chan_dim].values):
+        if _is_38khz(val, tol_hz):
+            return str(val)
+
+    raise KeyError(
+        f"Could not locate a 38 kHz channel. "
+        f"Available channels: {list(ds.coords.get(chan_dim, []).values)}"
+    )

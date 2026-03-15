@@ -14,6 +14,10 @@ from oceanstream.echodata.compute.sv import (
 )
 from oceanstream.echodata.compute.mvbs import compute_mvbs
 from oceanstream.echodata.compute.nasc import compute_nasc
+from oceanstream.echodata.compute.nasc_export import (
+    export_nasc_to_geoparquet,
+    load_nasc_geoparquet,
+)
 
 __all__ = [
     "compute_sv",
@@ -24,4 +28,6 @@ __all__ = [
     "apply_corrections_ds",
     "compute_mvbs",
     "compute_nasc",
+    "export_nasc_to_geoparquet",
+    "load_nasc_geoparquet",
 ]

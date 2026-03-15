@@ -640,19 +640,28 @@ class EchodataProcessor:
         output_dir: Path,
         input_paths: Optional[list[Path]] = None,
         method: str = "composite",
+        max_range: Optional[float] = None,
     ) -> ProcessingResult:
         """
         Detect and mask the seabed in Sv datasets.
+
+        Uses bathymetric lookup to skip datasets where the seabed is deeper
+        than the instrument range (avoids pointless computation on open-ocean
+        files).
 
         Args:
             output_dir: Output directory for seabed-masked Zarr stores
             input_paths: Sv paths to process (default: denoised or Sv paths)
             method: Seabed detection method (default: "composite")
+            max_range: Maximum sonar range in metres.  Datasets whose
+                bathymetric depth exceeds this are skipped.  If None, the
+                range is estimated from the dataset's depth coordinate.
 
         Returns:
             ProcessingResult with seabed masking status
         """
         from oceanstream.echodata.seabed import detect_seabed, mask_seabed
+        from oceanstream.echodata.seabed.bathymetry import estimate_seabed_depth
         import xarray as xr
 
         start = perf_counter()
@@ -678,21 +687,41 @@ class EchodataProcessor:
 
         try:
             self._seabed_masked_paths: list[Path] = []
+            skipped = 0
             for sv_path in paths_to_process:
                 ds = xr.open_zarr(sv_path)
+
+                # Bathymetry feasibility gate
+                bathy_depth = estimate_seabed_depth(ds)
+                sonar_range = max_range
+                if sonar_range is None and "depth" in ds.data_vars:
+                    sonar_range = float(ds["depth"].max())
+                if bathy_depth is not None and sonar_range is not None:
+                    if bathy_depth > sonar_range:
+                        self.log(
+                            f"  Skipping {sv_path.name}: bathymetry ({bathy_depth:.0f} m) "
+                            f"exceeds sonar range ({sonar_range:.0f} m)"
+                        )
+                        skipped += 1
+                        continue
+
                 result = detect_seabed(ds, method=method)
-                masked = mask_seabed(ds, result.seabed_depth)
+                masked = mask_seabed(ds, result)
                 out_path = seabed_output / f"{sv_path.stem}_seabed.zarr"
                 masked.to_zarr(out_path, mode="w")
                 self._seabed_masked_paths.append(out_path)
+
+            msg = f"Seabed-masked {len(self._seabed_masked_paths)} datasets"
+            if skipped:
+                msg += f" ({skipped} skipped — seabed too deep)"
 
             return ProcessingResult(
                 step="seabed_mask",
                 success=True,
                 output_path=seabed_output,
-                message=f"Seabed-masked {len(self._seabed_masked_paths)} datasets",
+                message=msg,
                 duration_seconds=perf_counter() - start,
-                metadata={"method": method},
+                metadata={"method": method, "skipped_deep": skipped},
             )
         except Exception as e:
             logger.exception(f"Seabed detection failed: {e}")

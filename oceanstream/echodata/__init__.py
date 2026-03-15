@@ -114,9 +114,13 @@ __all__ = [
     "detect_seabed_deltaSv",
     "detect_seabed_ariza",
     "detect_seabed_composite",
+    "detect_seabed_blackwell",
     "mask_seabed",
     "compute_seabed_stats",
+    "find_optimal_seabed_channel",
     "SeabedDetectionResult",
+    "get_bathymetry",
+    "estimate_seabed_depth",
     # Cloud Storage
     "get_azure_zarr_store",
     "save_echodata_to_azure",
@@ -125,6 +129,24 @@ __all__ = [
     "open_sv_from_azure",
     "is_azure_configured",
     "list_campaign_data",
+    # NetCDF export
+    "save_to_netcdf",
+    "save_to_netcdf_azure",
+    "zip_netcdf_files",
+    # NASC GeoParquet
+    "export_nasc_to_geoparquet",
+    "load_nasc_geoparquet",
+    # Encoding utilities
+    "fix_chunking",
+    "get_variable_encoding",
+    # Mask transform utilities
+    "downsample",
+    "upsample",
+    "log",
+    "lin",
+    "line_to_square",
+    "dask_nanmedian",
+    "dask_nanmean",
 ]
 
 
@@ -215,8 +237,10 @@ def __getattr__(name: str):
         "detect_seabed_deltaSv",
         "detect_seabed_ariza",
         "detect_seabed_composite",
+        "detect_seabed_blackwell",
         "mask_seabed",
         "compute_seabed_stats",
+        "find_optimal_seabed_channel",
         "SeabedDetectionResult",
     ):
         from oceanstream.echodata.seabed import (
@@ -225,9 +249,19 @@ def __getattr__(name: str):
             detect_seabed_deltaSv,
             detect_seabed_ariza,
             detect_seabed_composite,
+            detect_seabed_blackwell,
             mask_seabed,
             compute_seabed_stats,
+            find_optimal_seabed_channel,
             SeabedDetectionResult,
+        )
+        return locals()[name]
+    
+    # Bathymetry functions
+    if name in ("get_bathymetry", "estimate_seabed_depth"):
+        from oceanstream.echodata.seabed.bathymetry import (
+            get_bathymetry,
+            estimate_seabed_depth,
         )
         return locals()[name]
     
@@ -326,6 +360,44 @@ def __getattr__(name: str):
             open_sv_from_azure,
             is_azure_configured,
             list_campaign_data,
+        )
+        return locals()[name]
+    
+    # NetCDF export functions
+    if name in ("save_to_netcdf", "save_to_netcdf_azure", "zip_netcdf_files"):
+        from oceanstream.echodata.export import (
+            save_to_netcdf,
+            save_to_netcdf_azure,
+            zip_netcdf_files,
+        )
+        return locals()[name]
+    
+    # NASC GeoParquet export
+    if name in ("export_nasc_to_geoparquet", "load_nasc_geoparquet"):
+        from oceanstream.echodata.compute.nasc_export import (
+            export_nasc_to_geoparquet,
+            load_nasc_geoparquet,
+        )
+        return locals()[name]
+    
+    # Encoding utilities
+    if name in ("fix_chunking", "get_variable_encoding"):
+        from oceanstream.echodata.utils.encoding import (
+            fix_chunking,
+            get_variable_encoding,
+        )
+        return locals()[name]
+    
+    # Mask transform utilities
+    if name in ("downsample", "upsample", "log", "lin", "line_to_square", "dask_nanmedian", "dask_nanmean"):
+        from oceanstream.echodata.utils.mask_transforms import (
+            downsample,
+            upsample,
+            log,
+            lin,
+            line_to_square,
+            dask_nanmedian,
+            dask_nanmean,
         )
         return locals()[name]
     
