@@ -563,9 +563,227 @@ def detect_seabed_ariza(
     )
 
 
+def detect_seabed_composite(
+    ds: xr.Dataset,
+    channel: Optional[str] = None,
+    r0: float = 10,
+    r1: float = 1000,
+    thr_dB: float = -40.0,
+    fixed_percentile: float = 75.0,
+    delta_db: float = 3.0,
+    erosion_kernel: tuple[int, int] = (1, 3),
+    dilation_kernel: tuple[int, int] = (3, 5),
+    use_adaptive_thresholding: bool = False,
+    adaptive_window_pings: int = 10,
+    adaptive_std_multiplier: float = 1.0,
+    continuity_window: int = 5,
+    continuity_min_pings: int = 2,
+    savgol_window: int = 31,
+    savgol_polyorder: int = 1,
+    max_index_jump: int = 5,
+) -> SeabedDetectionResult:
+    """Detect seabed using a robust 11-step composite algorithm.
+
+    Ported from legacy ``compute_seabed_line`` in
+    ``_echodata-legacy-code/saildrone-echodata-processing/process/seabed.py``.
+
+    The algorithm:
+        1. Select channel (default: first / 38 kHz).
+        2. 3×3 median filter to remove isolated spikes.
+        3. Define vertical depth gate [r0, r1].
+        4. Compute per-ping threshold – either fixed-percentile dynamic
+           threshold or adaptive rolling-median threshold.
+        5. Enforce a static floor (``thr_dB``).
+        6. Build candidate mask (Sv > threshold AND inside gate).
+        7. Morphological erosion → dilation with empty-ping revert.
+        8. Continuity check (≥ ``continuity_min_pings`` in a rolling window).
+        9. Pick the deepest candidate per ping.
+        10. Fallback for pings with no surviving candidates.
+        11. Savitzky-Golay smoothing with jump removal & NaN interpolation.
+
+    This method is the most robust for automated seabed detection on
+    Saildrone EK80 data.
+
+    Args:
+        ds: Dataset with ``Sv`` variable and ``echo_range`` / depth coordinates.
+        channel: Channel to use (default: first channel, typically 38 kHz).
+        r0: Minimum search range in metres.
+        r1: Maximum search range in metres.
+        thr_dB: Static Sv floor threshold (dB).
+        fixed_percentile: Percentile for dynamic threshold (0-100).
+        delta_db: Offset subtracted from percentile threshold.
+        erosion_kernel: (range, ping) kernel for binary erosion.
+        dilation_kernel: (range, ping) kernel for binary dilation.
+        use_adaptive_thresholding: Use rolling median/std instead of percentile.
+        adaptive_window_pings: Window for rolling adaptive threshold.
+        adaptive_std_multiplier: Multiplier for adaptive std threshold.
+        continuity_window: Rolling window length for continuity check.
+        continuity_min_pings: Minimum pings with candidates in window.
+        savgol_window: Savitzky-Golay smoothing window (will be clamped to N).
+        savgol_polyorder: Polynomial order for Savitzky-Golay.
+        max_index_jump: Maximum allowed single-ping jump in smoothed indices.
+
+    Returns:
+        SeabedDetectionResult with seabed depth line and diagnostics.
+    """
+    # ── 1. Extract 2D data for the requested channel ────────────────────
+    Sv_2d, range_1d, ch_label = _get_sv_2d(ds, channel)
+    n_pings, n_samples = Sv_2d.shape
+
+    # ── 2. Median filter to remove isolated spikes ──────────────────────
+    Sv_filt = median_filter(Sv_2d, size=(3, 3))
+
+    # ── 3. Depth gate indices ───────────────────────────────────────────
+    i0 = int(np.nanargmin(np.abs(range_1d - r0)))
+    i1 = min(int(np.nanargmin(np.abs(range_1d - r1))) + 1, n_samples)
+
+    gate = np.zeros((n_pings, n_samples), dtype=bool)
+    gate[:, i0:i1] = True
+
+    # ── 4. Compute per-ping threshold ───────────────────────────────────
+    Sv_gate = np.where(gate, Sv_filt, np.nan)
+
+    if use_adaptive_thresholding:
+        # Rolling median/std over pings on full array
+        from scipy.ndimage import uniform_filter1d
+        half = adaptive_window_pings // 2
+        # Compute per-ping median of gated region
+        with np.errstate(invalid="ignore"):
+            ping_medians = np.nanmedian(Sv_gate, axis=1)
+            ping_stds = np.nanstd(Sv_gate, axis=1)
+        # Smooth with running mean as proxy for rolling
+        ping_medians = uniform_filter1d(
+            np.nan_to_num(ping_medians, nan=-999), size=adaptive_window_pings
+        )
+        ping_stds = uniform_filter1d(
+            np.nan_to_num(ping_stds, nan=0), size=adaptive_window_pings
+        )
+        thr_per_ping = ping_medians - adaptive_std_multiplier * ping_stds
+    else:
+        # Fixed-percentile dynamic threshold
+        with np.errstate(invalid="ignore"):
+            perc = np.nanpercentile(Sv_gate, fixed_percentile, axis=1)
+        thr_per_ping = perc - delta_db
+
+    # ── 5. Enforce static floor ─────────────────────────────────────────
+    thr_per_ping = np.clip(thr_per_ping, a_min=thr_dB, a_max=None)
+    thr_2d = thr_per_ping[:, np.newaxis]  # broadcast to (n_pings, 1)
+
+    # ── 6. Candidate mask ───────────────────────────────────────────────
+    cand = (Sv_filt > thr_2d) & gate
+
+    # ── 7. Morphological erosion → dilation, revert empty pings ─────────
+    cand_pre_morph = cand.copy()
+
+    erosion_struct = np.ones(erosion_kernel, dtype=bool)
+    dilation_struct = np.ones(dilation_kernel, dtype=bool)
+
+    cand = binary_erosion(cand, structure=erosion_struct).astype(bool)
+    cand = binary_dilation(cand, structure=dilation_struct).astype(bool)
+
+    # Revert pings wiped by morphology back to pre-morph
+    empty_after = ~cand.any(axis=1)
+    cand[empty_after] = cand_pre_morph[empty_after]
+    # Re-clip to gate
+    cand = cand & gate
+
+    # ── 8. Continuity check ─────────────────────────────────────────────
+    has_cand_per_ping = cand.any(axis=1).astype(float)  # (n_pings,)
+    from scipy.ndimage import uniform_filter1d as uf1d
+    rolling_sum = uf1d(has_cand_per_ping, size=continuity_window, mode="nearest")
+    continuity_ok = rolling_sum >= (continuity_min_pings / continuity_window)
+    # Broadcast back: only keep candidates in pings passing continuity
+    cand[~continuity_ok] = False
+
+    # ── 9. Pick deepest candidate per ping ──────────────────────────────
+    vdim_indices = np.arange(n_samples)
+    idx_primary = np.full(n_pings, -1, dtype=np.int64)
+    for p in range(n_pings):
+        where = np.where(cand[p])[0]
+        if len(where):
+            idx_primary[p] = where[-1]  # deepest
+
+    # ── 10. Fallback: first Sv > thr2 in gate, or bottom ───────────────
+    fallback_mask = (Sv_filt > thr_2d) & gate
+    idx_fallback = np.full(n_pings, n_samples - 1, dtype=np.int64)
+    for p in range(n_pings):
+        where = np.where(fallback_mask[p])[0]
+        if len(where):
+            idx_fallback[p] = where[-1]
+
+    has_primary = idx_primary >= 0
+    idx = np.where(has_primary, idx_primary, idx_fallback)
+
+    # ── 11. Savitzky-Golay smoothing with jump removal ──────────────────
+    N = len(idx)
+    win = max(3, min(savgol_window, N if N % 2 else N - 1))
+    if N >= 3 and win >= 3:
+        idx_float = idx.astype(float)
+        idx_sm = savgol_filter(idx_float, win, polyorder=savgol_polyorder, mode="interp")
+
+        # Remove large jumps
+        jumps = np.abs(np.diff(idx_sm, prepend=idx_sm[0])) > max_index_jump
+        idx_sm[jumps] = np.nan
+
+        # Interpolate NaNs
+        nan_mask = np.isnan(idx_sm)
+        valid_mask = ~nan_mask
+        if nan_mask.any() and valid_mask.any():
+            idx_sm[nan_mask] = np.interp(
+                np.flatnonzero(nan_mask),
+                np.flatnonzero(valid_mask),
+                idx_sm[valid_mask],
+            )
+
+        idx_clean = np.clip(idx_sm.astype(int), 0, n_samples - 1)
+    else:
+        idx_clean = np.clip(idx, 0, n_samples - 1)
+
+    # Convert to depth
+    seabed_depth = range_1d[idx_clean]
+
+    # Build DataArrays
+    ping_times = ds.ping_time.values if "ping_time" in ds.coords else np.arange(n_pings)
+
+    depth_da = xr.DataArray(
+        seabed_depth,
+        dims=["ping_time"],
+        coords={"ping_time": ping_times},
+        name="seabed_depth",
+        attrs={"units": "m", "long_name": "Seabed depth"},
+    )
+    idx_da = xr.DataArray(
+        idx_clean,
+        dims=["ping_time"],
+        coords={"ping_time": ping_times},
+        name="seabed_index",
+    )
+
+    # All pings get a detection in this method (fallback guarantees it)
+    n_detected = int(has_primary.sum())
+
+    return SeabedDetectionResult(
+        seabed_depth=depth_da,
+        seabed_index=idx_da,
+        method="composite",
+        channel=ch_label,
+        pings_detected=n_detected,
+        pings_total=n_pings,
+        detection_rate=n_detected / n_pings if n_pings > 0 else 0.0,
+        params={
+            "r0": r0, "r1": r1, "thr_dB": thr_dB,
+            "fixed_percentile": fixed_percentile, "delta_db": delta_db,
+            "erosion_kernel": erosion_kernel, "dilation_kernel": dilation_kernel,
+            "use_adaptive_thresholding": use_adaptive_thresholding,
+            "continuity_window": continuity_window,
+            "savgol_window": savgol_window,
+        },
+    )
+
+
 def detect_seabed(
     ds: xr.Dataset,
-    method: Literal["maxSv", "deltaSv", "ariza"] = "ariza",
+    method: Literal["maxSv", "deltaSv", "ariza", "composite"] = "ariza",
     channel: Optional[str] = None,
     r0: float = 10,
     r1: float = 1000,
@@ -582,6 +800,9 @@ def detect_seabed(
             - "maxSv": Best for strong, consistent seabed echoes
             - "deltaSv": Best for sharp seabed transitions
             - "ariza": Best for automation, handles noise/gaps well
+            - "composite": Most robust – 11-step pipeline with morphology,
+              continuity checks, and Savitzky-Golay smoothing (recommended
+              for Saildrone EK80 data)
         channel: Channel to use. If None, uses first channel (often 38 kHz).
             Lower frequencies (38 kHz) penetrate deeper, good for seabed.
         r0: Minimum search range in meters (default: 10).
@@ -606,6 +827,9 @@ def detect_seabed(
         >>> # Using specific method and parameters
         >>> result = detect_seabed(sv_dataset, method="maxSv", r1=500, thr=(-35, -55))
         
+        >>> # Composite method (most robust for Saildrone)
+        >>> result = detect_seabed(sv_dataset, method="composite", thr_dB=-45)
+        
         >>> # Handle no seabed case
         >>> if result.pings_detected == 0:
         ...     print("No seabed detected - likely open ocean")
@@ -619,6 +843,7 @@ def detect_seabed(
         "maxSv": detect_seabed_maxSv,
         "deltaSv": detect_seabed_deltaSv,
         "ariza": detect_seabed_ariza,
+        "composite": detect_seabed_composite,
     }
     
     if method not in methods:

@@ -42,6 +42,102 @@ SYSTEM_COLUMNS = {
 }
 
 
+def calculate_bearing(point_a: tuple[float, float], point_b: tuple[float, float]) -> float:
+    """
+    Calculate compass bearing from point A to point B.
+    
+    Args:
+        point_a: (longitude, latitude) of starting point
+        point_b: (longitude, latitude) of ending point
+        
+    Returns:
+        Bearing in degrees (0-360, clockwise from north)
+    """
+    import math
+    
+    lon1, lat1 = math.radians(point_a[0]), math.radians(point_a[1])
+    lon2, lat2 = math.radians(point_b[0]), math.radians(point_b[1])
+    
+    d_lon = lon2 - lon1
+    
+    y = math.sin(d_lon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(d_lon)
+    
+    bearing = math.atan2(y, x)
+    bearing = math.degrees(bearing)
+    bearing = (bearing + 360) % 360
+    
+    return bearing
+
+
+def _generate_arrow_features(
+    segment_coords: list[tuple[float, float]],
+    segment_timestamps: list[dt.datetime],
+    platform_id: str | None,
+    day_str: str,
+    arrows_per_segment: int = 3,
+) -> list[dict]:
+    """
+    Generate arrow point features for a track segment.
+    
+    Args:
+        segment_coords: List of (lon, lat) tuples forming the segment
+        segment_timestamps: Corresponding timestamps for each coordinate
+        platform_id: Platform identifier
+        day_str: Date string for filtering (YYYY-MM-DD)
+        arrows_per_segment: How many arrows to place per segment
+        
+    Returns:
+        List of GeoJSON Point features with bearing properties
+    """
+    if len(segment_coords) < 2:
+        return []
+    
+    arrows = []
+    # Calculate step to distribute arrows evenly
+    step = max(1, len(segment_coords) // (arrows_per_segment + 1))
+    
+    for i in range(step, len(segment_coords) - 1, step):
+        if i >= len(segment_coords) - 1:
+            break
+            
+        prev_idx = max(0, i - 1)
+        next_idx = min(len(segment_coords) - 1, i + 1)
+        
+        prev_coord = segment_coords[prev_idx]
+        curr_coord = segment_coords[i]
+        next_coord = segment_coords[next_idx]
+        
+        # Calculate bearing from prev to next for smoother direction
+        bearing = calculate_bearing(prev_coord, next_coord)
+        
+        # Build properties
+        props: dict = {
+            "type": "arrow",
+            "bearing": round(bearing, 1),
+            "day": day_str,
+        }
+        
+        if platform_id:
+            props["platform_id"] = str(platform_id)
+        
+        # Add timestamp if available
+        if segment_timestamps and i < len(segment_timestamps):
+            props["t"] = segment_timestamps[i].isoformat() if segment_timestamps[i] else None
+        
+        feature = {
+            "type": "Feature",
+            "properties": props,
+            "geometry": {
+                "type": "Point",
+                "coordinates": [curr_coord[0], curr_coord[1]]
+            }
+        }
+        arrows.append(feature)
+    
+    return arrows
+
+
 def _discover_measurement_columns(
     parquet_file: Path,
     exclude_patterns: list[str] | None = None,
@@ -174,6 +270,7 @@ def _iter_partition_points(
 def _segments_from_points(
     points: list[tuple[float, float, dt.datetime, dict | None, str | None]],
     time_gap_minutes: int = 60,
+    preserve_timestamps: bool = False,
 ) -> list[dict]:
     """
     Split points into segments based on time gaps and platform_id.
@@ -181,9 +278,11 @@ def _segments_from_points(
     Args:
         points: List of (lon, lat, timestamp, measurements, platform_id) tuples
         time_gap_minutes: Minutes of gap to split segments
+        preserve_timestamps: If True, include all timestamps in segment (for arrow generation)
         
     Returns:
-        List of segment dicts with coords, t_start, t_end, measurements_avg, platform_id
+        List of segment dicts with coords, t_start, t_end, measurements_avg, platform_id,
+        and optionally 'timestamps' list if preserve_timestamps=True
     """
     segments = []
     current = []
@@ -221,13 +320,16 @@ def _segments_from_points(
                 # Use the platform_id from the segment
                 seg_platform_id = current[0][4] if current else None
                 
-                segments.append({
+                seg_dict = {
                     "coords": coords,
                     "t_start": current[0][2],
                     "t_end": current[-1][2],
                     "measurements": avg_measurements,
                     "platform_id": seg_platform_id,
-                })
+                }
+                if preserve_timestamps:
+                    seg_dict["timestamps"] = [t for _, _, t, _, _ in current]
+                segments.append(seg_dict)
             current = []
         
         current.append((float(lon), float(lat), t, measurements, platform_id))
@@ -255,13 +357,16 @@ def _segments_from_points(
         # Use the platform_id from the segment
         seg_platform_id = current[0][4] if current else None
         
-        segments.append({
+        seg_dict = {
             "coords": coords,
             "t_start": current[0][2],
             "t_end": current[-1][2],
             "measurements": avg_measurements,
             "platform_id": seg_platform_id,
-        })
+        }
+        if preserve_timestamps:
+            seg_dict["timestamps"] = [t for _, _, t, _, _ in current]
+        segments.append(seg_dict)
     
     return segments
 
@@ -276,9 +381,12 @@ def _build_ndjson_from_geoparquet(
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
+    include_arrows: bool = True,
+    arrows_per_segment: int = 3,
+    arrow_min_segment_points: int = 5,
 ) -> int:
     """
-    Build NDJSON file from GeoParquet partitions with segments and day markers.
+    Build NDJSON file from GeoParquet partitions with segments, day markers, and arrows.
     
     Args:
         geoparquet_root: Root directory of partitioned GeoParquet
@@ -289,6 +397,9 @@ def _build_ndjson_from_geoparquet(
         include_measurements: Whether to include oceanographic measurements
         measurement_columns: Specific columns to include (None = auto-discover from data)
         exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults)
+        include_arrows: Whether to generate direction arrow point features
+        arrows_per_segment: Number of arrows to place per segment
+        arrow_min_segment_points: Minimum points in segment to generate arrows
         
     Returns:
         Number of features written
@@ -375,8 +486,12 @@ def _build_ndjson_from_geoparquet(
                         st["t_end"] = t_ts
                         st["end_coord"] = (float(lon), float(lat))
             
-            # Create segments
-            segments = _segments_from_points(points, time_gap_minutes=time_gap_minutes)
+            # Create segments (preserve timestamps if arrows are enabled)
+            segments = _segments_from_points(
+                points, 
+                time_gap_minutes=time_gap_minutes,
+                preserve_timestamps=include_arrows,
+            )
             
             for seg in segments:
                 coords = seg["coords"]
@@ -437,6 +552,20 @@ def _build_ndjson_from_geoparquet(
                 out.write(json.dumps(feat) + "\n")
                 count_feats += 1
                 seg_id += 1
+                
+                # Generate direction arrow features for this segment
+                if include_arrows and len(coords) >= arrow_min_segment_points:
+                    segment_timestamps = seg.get("timestamps", [])
+                    arrow_features = _generate_arrow_features(
+                        segment_coords=coords,
+                        segment_timestamps=segment_timestamps,
+                        platform_id=seg_platform_id,
+                        day_str=day_str,
+                        arrows_per_segment=arrows_per_segment,
+                    )
+                    for arrow_feat in arrow_features:
+                        out.write(json.dumps(arrow_feat) + "\n")
+                        count_feats += 1
         
         # Add day markers: start and end point per UTC day (per platform)
         for combined_key, st in sorted(day_stats.items()):
@@ -483,12 +612,15 @@ def generate_pmtiles_from_geoparquet(
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
+    include_arrows: bool = True,
+    arrows_per_segment: int = 3,
+    arrow_min_segment_points: int = 5,
 ) -> Path:
     """
     Generate a PMTiles file from a partitioned GeoParquet dataset.
     
-    This function creates track segments with time-based splitting and day markers
-    for efficient web map visualization.
+    This function creates track segments with time-based splitting, day markers,
+    and direction arrows for efficient web map visualization.
     
     Args:
         geoparquet_root: Root directory of partitioned GeoParquet dataset
@@ -508,12 +640,25 @@ def generate_pmtiles_from_geoparquet(
         exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults).
             Default excludes: _STDDEV, _STD, _MIN, _MAX, _PEAK suffixes and wind components.
             Pass empty list [] to include all columns.
+        include_arrows: Generate direction arrow point features (default: True)
+        arrows_per_segment: Number of arrows to place per segment (default: 3)
+        arrow_min_segment_points: Minimum points in segment to generate arrows (default: 5)
         
     Returns:
         Path to generated PMTiles file
         
     Raises:
         MissingDependencyError: If required CLI tools not found
+        
+    Feature Types:
+        The generated tiles contain three feature types, identifiable by properties:
+        
+        - **Segments** (LineString): Track segments with `segment_id`, `t_start`, `t_end`, 
+          `day`, `platform_id`, and averaged measurement values
+        - **Day markers** (Point): Start/end points per UTC day with `kind` ("start"/"end"),
+          `day`, `t`, and `platform_id`
+        - **Arrows** (Point): Direction indicators with `type`="arrow", `bearing` (0-360°),
+          `day`, `t`, and `platform_id`
     """
     _require_cli("pmtiles")
     
@@ -537,9 +682,12 @@ def generate_pmtiles_from_geoparquet(
             include_measurements=include_measurements,
             measurement_columns=measurement_columns,
             exclude_patterns=exclude_patterns,
+            include_arrows=include_arrows,
+            arrows_per_segment=arrows_per_segment,
+            arrow_min_segment_points=arrow_min_segment_points,
         )
     else:
-        # Fallback to ogr2ogr (basic conversion, no segments)
+        # Fallback to ogr2ogr (basic conversion, no segments or arrows)
         _require_cli("ogr2ogr")
         return _generate_with_ogr2ogr(
             geoparquet_root=geoparquet_root,
@@ -566,13 +714,16 @@ def _generate_with_tippecanoe(
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
+    include_arrows: bool = True,
+    arrows_per_segment: int = 3,
+    arrow_min_segment_points: int = 5,
 ) -> Path:
-    """Generate PMTiles using tippecanoe for better control over segments."""
+    """Generate PMTiles using tippecanoe for better control over segments and arrows."""
     
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
         
-        # Step 1: Build NDJSON with segments and day markers
+        # Step 1: Build NDJSON with segments, day markers, and arrows
         ndjson_path = tmpdir_path / "track.ndjson"
         print(f"Building NDJSON with segments from {geoparquet_root}...")
         feat_count = _build_ndjson_from_geoparquet(
@@ -584,8 +735,12 @@ def _generate_with_tippecanoe(
             include_measurements=include_measurements,
             measurement_columns=measurement_columns,
             exclude_patterns=exclude_patterns,
+            include_arrows=include_arrows,
+            arrows_per_segment=arrows_per_segment,
+            arrow_min_segment_points=arrow_min_segment_points,
         )
-        print(f"Created {feat_count} features (segments + day markers)")
+        arrow_status = "with arrows" if include_arrows else "without arrows"
+        print(f"Created {feat_count} features (segments + day markers + arrows) [{arrow_status}]")
         
         # Step 2: Run tippecanoe to build MBTiles
         mbtiles_path = tmpdir_path / "track.mbtiles"

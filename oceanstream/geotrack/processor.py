@@ -1256,8 +1256,11 @@ class GeotrackProcessor:
         include_measurements: bool = True,
         measurement_columns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
+        include_arrows: bool = True,
+        arrows_per_segment: int = 3,
+        arrow_min_segment_points: int = 5,
     ) -> Path | None:
-        """Generate PMTiles from GeoParquet dataset with segments and day markers.
+        """Generate PMTiles from GeoParquet dataset with segments, day markers, and direction arrows.
         
         Args:
             geoparquet_root: Root directory of partitioned GeoParquet dataset
@@ -1270,13 +1273,16 @@ class GeotrackProcessor:
             include_measurements: Include oceanographic measurements
             measurement_columns: Specific columns to include (None = auto-discover)
             exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults)
+            include_arrows: Generate direction arrow point features (default: True)
+            arrows_per_segment: Number of arrows per track segment (default: 3)
+            arrow_min_segment_points: Minimum points in segment to generate arrows (default: 5)
             
         Returns:
             Path to generated PMTiles file, or None if generation failed
         """
         from .tiling import generate_pmtiles_from_geoparquet, MissingDependencyError
         
-        t0 = self.step("generating PMTiles with segments and day markers")
+        t0 = self.step("generating PMTiles with segments, day markers, and arrows")
         
         try:
             # PMTiles file goes in tiles/ subdirectory parallel to geoparquet output
@@ -1297,6 +1303,9 @@ class GeotrackProcessor:
                 include_measurements=include_measurements,
                 measurement_columns=measurement_columns,
                 exclude_patterns=exclude_patterns,
+                include_arrows=include_arrows,
+                arrows_per_segment=arrows_per_segment,
+                arrow_min_segment_points=arrow_min_segment_points,
             )
             
             self.done(f"PMTiles generated: {pmtiles_path.name}", t0)
@@ -1329,6 +1338,9 @@ def generate_tiles(
     time_gap_minutes: int = 60,
     include_measurements: bool = True,
     measurement_columns: list[str] | None = None,
+    include_arrows: bool = True,
+    arrows_per_segment: int = 3,
+    arrow_min_points: int = 5,
 ) -> Path | None:
     """
     Generate PMTiles from an existing GeoParquet dataset.
@@ -1345,6 +1357,9 @@ def generate_tiles(
         time_gap_minutes: Minutes of gap to split track segments
         include_measurements: Include oceanographic measurements in tiles
         measurement_columns: Specific columns to include (None = auto-select important ones)
+        include_arrows: Generate direction arrow point features (default: True)
+        arrows_per_segment: Number of arrows per track segment (default: 3)
+        arrow_min_points: Minimum points in segment to generate arrows (default: 5)
         
     Returns:
         Path to generated PMTiles file, or None if generation failed
@@ -1396,6 +1411,7 @@ def generate_tiles(
         print(f"[tiles] • Time gap: {time_gap_minutes} minutes")
         if include_measurements:
             print(f"[tiles] • Measurements: {'auto-selected' if measurement_columns is None else f'{len(measurement_columns)} columns'}")
+        print(f"[tiles] • Direction arrows: {'enabled' if include_arrows else 'disabled'}")
     
     result = processor.generate_pmtiles_dataset(
         geoparquet_root=geoparquet_dir,
@@ -1407,6 +1423,9 @@ def generate_tiles(
         platform_id=platform_id,
         include_measurements=include_measurements,
         measurement_columns=measurement_columns,
+        include_arrows=include_arrows,
+        arrows_per_segment=arrows_per_segment,
+        arrow_min_segment_points=arrow_min_points,
     )
     
     if result and result.exists():
@@ -1500,6 +1519,15 @@ def convert(
     pmtiles_include_measurements: bool = True,
     pmtiles_measurement_columns: list[str] | None = None,
     pmtiles_exclude_patterns: list[str] | None = None,
+    pmtiles_include_arrows: bool = True,
+    pmtiles_arrows_per_segment: int = 3,
+    pmtiles_arrow_min_points: int = 5,
+    generate_heatmaps: bool = False,
+    heatmap_resolution: float = 0.05,
+    heatmap_method: str = "linear",
+    heatmap_search_radius: float = 0.5,
+    heatmap_variables: list[str] | None = None,
+    heatmap_max_variables: int = 10,
     campaign_id: str | None = None,
     platform_id: str | None = None,
     attribution: str | None = None,
@@ -1512,7 +1540,7 @@ def convert(
     use_cloud_storage: bool = False,
 ) -> None:
     """
-    Convert geotrack CSV data into GeoParquet format, and optionally PMTiles.
+    Convert geotrack CSV data into GeoParquet format, and optionally PMTiles and heatmaps.
     
     Args:
         provider: Data provider instance
@@ -1527,7 +1555,7 @@ def convert(
         dry_run: Analyze inputs without writing files
         upload: (Deprecated) Use use_cloud_storage instead
         yes: Skip confirmation prompts
-        generate_pmtiles: Generate PMTiles vector tiles with segments and day markers
+        generate_pmtiles: Generate PMTiles vector tiles with segments, day markers, and arrows
         pmtiles_minzoom: Minimum zoom level for PMTiles (0-15)
         pmtiles_maxzoom: Maximum zoom level for PMTiles (0-15)
         pmtiles_layer: Layer name for PMTiles
@@ -1536,6 +1564,15 @@ def convert(
         pmtiles_include_measurements: Include oceanographic measurements in tiles
         pmtiles_measurement_columns: Specific columns to include (None = auto-discover)
         pmtiles_exclude_patterns: Regex patterns to exclude when auto-discovering (None = use defaults)
+        pmtiles_include_arrows: Generate direction arrow point features (default: True)
+        pmtiles_arrows_per_segment: Number of arrows per track segment (default: 3)
+        pmtiles_arrow_min_points: Minimum points in segment to generate arrows (default: 5)
+        generate_heatmaps: Generate COG heatmap rasters from interpolated measurements
+        heatmap_resolution: Grid resolution in degrees for heatmaps (default: 0.05)
+        heatmap_method: Interpolation method: 'linear', 'nearest', 'cubic' (default: linear)
+        heatmap_search_radius: Maximum interpolation distance in degrees (default: 0.5)
+        heatmap_variables: Specific variables to generate heatmaps for (None = auto-detect)
+        heatmap_max_variables: Maximum number of heatmap variables when auto-detecting
         campaign_id: Campaign/cruise identifier (overrides provider detection)
         platform_id: Platform identifier (overrides provider detection)
         attribution: Data attribution/citation (overrides provider/file metadata)
@@ -2039,6 +2076,9 @@ def convert(
             include_measurements=pmtiles_include_measurements,
             measurement_columns=pmtiles_measurement_columns,
             exclude_patterns=pmtiles_exclude_patterns,
+            include_arrows=pmtiles_include_arrows,
+            arrows_per_segment=pmtiles_arrows_per_segment,
+            arrow_min_segment_points=pmtiles_arrow_min_points,
         )
         if pmtiles_path and pmtiles_path.exists():
             pmtiles_generated = True
@@ -2059,6 +2099,57 @@ def convert(
                 except Exception as e:
                     if verbose:
                         print(f"[geotrack]   ! Failed to upload PMTiles to cloud: {e}")
+    
+    # Generate heatmaps if requested
+    heatmaps_generated = False
+    heatmaps_manifest = None
+    heatmaps_dir = None
+    
+    if generate_heatmaps and not dry_run:
+        if verbose:
+            print("[geotrack] Generating COG heatmaps...")
+        
+        try:
+            from .raster import generate_all_heatmaps
+            
+            # Use local GeoParquet for heatmap generation
+            heatmap_geoparquet_root = campaign_output_dir
+            heatmaps_dir = campaign_output_dir / "heatmaps"
+            
+            heatmaps_manifest = generate_all_heatmaps(
+                geoparquet_root=heatmap_geoparquet_root,
+                output_dir=heatmaps_dir,
+                variables=heatmap_variables,
+                resolution_deg=heatmap_resolution,
+                method=heatmap_method,
+                search_radius_deg=heatmap_search_radius,
+                max_variables=heatmap_max_variables,
+            )
+            
+            if heatmaps_manifest and heatmaps_manifest.get('variables'):
+                heatmaps_generated = True
+                if verbose:
+                    print(f"[geotrack]   ✓ Generated {len(heatmaps_manifest['variables'])} heatmaps")
+                
+                # Upload heatmaps to cloud if using cloud storage
+                if is_cloud and filesystem is not None and heatmaps_dir.exists():
+                    try:
+                        cloud_heatmaps_dir = f"{cloud_campaign_path}/heatmaps"
+                        for hm_file in heatmaps_dir.glob("*"):
+                            with hm_file.open('rb') as f:
+                                with filesystem.open_output_stream(f"{cloud_heatmaps_dir}/{hm_file.name}") as out:
+                                    out.write(f.read())
+                        if verbose:
+                            print(f"[geotrack]   ✓ Heatmaps uploaded to cloud: {cloud_heatmaps_dir}")
+                    except Exception as e:
+                        if verbose:
+                            print(f"[geotrack]   ! Failed to upload heatmaps to cloud: {e}")
+        except ImportError as e:
+            if verbose:
+                print(f"[geotrack]   ! Heatmap generation skipped (missing dependencies): {e}")
+        except Exception as e:
+            if verbose:
+                print(f"[geotrack]   ! Heatmap generation failed: {e}")
     
     # Check if STAC was generated
     stac_generated = False
@@ -2288,6 +2379,19 @@ def convert(
         print(f"  File size             : {_format_file_size(pmtiles_size)}")
         print(f"  Zoom levels           : {pmtiles_minzoom} - {pmtiles_maxzoom}")
         print(f"  Layer name            : {pmtiles_layer}")
+    
+    if heatmaps_generated and heatmaps_manifest:
+        print(f"\n▸ COG Heatmaps")
+        display_heatmaps_dir = f"{storage_path.provider}://{cloud_campaign_path}/heatmaps" if is_cloud else heatmaps_dir
+        print(f"  Heatmaps directory    : {display_heatmaps_dir}")
+        print(f"  Variables generated   : {len(heatmaps_manifest['variables'])}")
+        for var_info in heatmaps_manifest['variables'][:5]:
+            var_range = f"({var_info['min']:.2f} - {var_info['max']:.2f} {var_info['unit']})" if var_info.get('min') is not None else ""
+            print(f"    • {var_info['name']}: {var_info['file']} {var_range}")
+        if len(heatmaps_manifest['variables']) > 5:
+            print(f"    • ... and {len(heatmaps_manifest['variables']) - 5} more")
+        print(f"  Resolution            : {heatmap_resolution}° ({heatmap_resolution * 111:.1f} km)")
+        print(f"  Interpolation method  : {heatmap_method}")
     
     if stac_generated:
         print(f"\n▸ STAC Metadata")

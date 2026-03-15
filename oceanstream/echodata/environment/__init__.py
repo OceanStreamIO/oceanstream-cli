@@ -15,6 +15,7 @@ from oceanstream.echodata.environment.enrich import (
     interpolate_environment_to_ping_time,
     update_echodata_environment,
     update_echodata_platform,
+    smooth_gps_track,
 )
 from oceanstream.echodata.environment.sound_speed import (
     compute_sound_speed,
@@ -61,6 +62,8 @@ __all__ = [
     "interpolate_environment_to_ping_time",
     "update_echodata_environment",
     "update_echodata_platform",
+    # GPS track smoothing & thinning
+    "smooth_gps_track",
     # Sound speed
     "compute_sound_speed",
     "chen_millero_sound_speed",

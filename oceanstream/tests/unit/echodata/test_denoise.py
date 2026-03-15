@@ -68,8 +68,10 @@ class TestBackgroundNoiseMask:
             "SNR_threshold": "3.0dB",
         }
         
-        mask = background_noise_mask(sample_sv_dataset, params)
-        
+        result = background_noise_mask(sample_sv_dataset, params)
+
+        assert isinstance(result, tuple)
+        mask, unfeasible = result
         assert mask is not None
         assert mask.dtype == bool
         assert mask.shape == sample_sv_dataset["Sv"].shape
@@ -78,8 +80,9 @@ class TestBackgroundNoiseMask:
         """Should work with default parameters."""
         from oceanstream.echodata.denoise.background_noise import background_noise_mask
         
-        mask = background_noise_mask(sample_sv_dataset, {})
-        
+        result = background_noise_mask(sample_sv_dataset, {})
+
+        mask, unfeasible = result
         assert mask is not None
         assert mask.dtype == bool
 
@@ -90,9 +93,9 @@ class TestBackgroundNoiseMask:
         low_threshold_params = {"SNR_threshold": "1.0dB", "ping_window": 20}
         high_threshold_params = {"SNR_threshold": "10.0dB", "ping_window": 20}
         
-        mask_low = background_noise_mask(sample_sv_dataset, low_threshold_params)
-        mask_high = background_noise_mask(sample_sv_dataset, high_threshold_params)
-        
+        mask_low, _ = background_noise_mask(sample_sv_dataset, low_threshold_params)
+        mask_high, _ = background_noise_mask(sample_sv_dataset, high_threshold_params)
+
         # Higher threshold should flag more or equal samples
         assert float(mask_high.sum()) >= float(mask_low.sum())
 
@@ -106,12 +109,14 @@ class TestTransientNoiseMask:
         
         params = {
             "exclude_above": 100.0,
-            "n_pings": 10,
-            "thr_dB": 6.0,
+            "ping_window": 5,
+            "threshold": (10.0, 7.0),
         }
         
-        mask = transient_noise_mask(sample_sv_dataset, params)
-        
+        result = transient_noise_mask(sample_sv_dataset, params)
+
+        assert isinstance(result, tuple)
+        mask, unfeasible = result
         assert mask is not None
         assert mask.dtype == bool
 
@@ -132,9 +137,9 @@ class TestTransientNoiseMask:
             coords={"ping_time": ping_times, "depth": depth_values},
         )
         
-        params = {"exclude_above": 0.0, "n_pings": 10, "thr_dB": 10.0}
-        mask = transient_noise_mask(ds, params)
-        
+        params = {"exclude_above": 0.0, "ping_window": 5, "threshold": (10.0, 7.0)}
+        mask, unfeasible = transient_noise_mask(ds, params)
+
         # Should flag some samples around the spike
         assert float(mask.sum()) > 0
 
@@ -142,8 +147,8 @@ class TestTransientNoiseMask:
         """Should work with default parameters."""
         from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
         
-        mask = transient_noise_mask(sample_sv_dataset, {})
-        
+        mask, unfeasible = transient_noise_mask(sample_sv_dataset, {})
+
         assert mask is not None
 
 
@@ -160,8 +165,10 @@ class TestImpulseNoiseMask:
             "threshold_db": 10.0,
         }
         
-        mask = impulse_noise_mask(sample_sv_dataset, params)
-        
+        result = impulse_noise_mask(sample_sv_dataset, params)
+
+        assert isinstance(result, tuple)
+        mask, unfeasible = result
         assert mask is not None
         assert mask.dtype == bool
 
@@ -183,8 +190,8 @@ class TestImpulseNoiseMask:
         )
         
         params = {"threshold_db": 20.0, "vertical_bin_size": 1.0}
-        mask = impulse_noise_mask(ds, params)
-        
+        mask, unfeasible = impulse_noise_mask(ds, params)
+
         # Should be a boolean mask
         assert mask.dtype == bool
 
@@ -193,8 +200,8 @@ class TestImpulseNoiseMask:
         from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
         
         params = {"ping_lags": [1, 2, 3], "threshold_db": 10.0}
-        mask = impulse_noise_mask(sample_sv_dataset, params)
-        
+        mask, unfeasible = impulse_noise_mask(sample_sv_dataset, params)
+
         assert mask is not None
 
 
@@ -213,8 +220,10 @@ class TestAttenuationMask:
             "threshold": 5.0,
         }
         
-        mask = attenuation_mask(sample_sv_dataset, params)
-        
+        result = attenuation_mask(sample_sv_dataset, params)
+
+        assert isinstance(result, tuple)
+        mask, unfeasible = result
         assert mask is not None
         assert mask.dtype == bool
 
@@ -242,8 +251,8 @@ class TestAttenuationMask:
             "num_side_pings": 10,
             "threshold": 10.0,
         }
-        mask = attenuation_mask(ds, params)
-        
+        mask, unfeasible = attenuation_mask(ds, params)
+
         # Should flag some samples
         assert mask is not None
 
@@ -257,8 +266,8 @@ class TestBuildNoiseMask:
         from oceanstream.echodata.config import DenoiseConfig
         
         config = DenoiseConfig()
-        mask = build_noise_mask(sample_sv_dataset, "background", config)
-        
+        mask = build_noise_mask(sample_sv_dataset, ["background"], config)
+
         assert mask is not None
         assert mask.dtype == bool
 
@@ -480,6 +489,7 @@ class TestModuleExports:
         assert hasattr(denoise, "create_multichannel_mask")
         assert hasattr(denoise, "background_noise_mask")
         assert hasattr(denoise, "transient_noise_mask")
+        assert hasattr(denoise, "transient_noise_mask_ryan")
         assert hasattr(denoise, "impulse_noise_mask")
         assert hasattr(denoise, "attenuation_mask")
 
@@ -495,6 +505,7 @@ class TestModuleExports:
             "create_multichannel_mask",
             "background_noise_mask",
             "transient_noise_mask",
+            "transient_noise_mask_ryan",
             "impulse_noise_mask",
             "attenuation_mask",
         ]

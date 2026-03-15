@@ -632,6 +632,78 @@ class EchodataProcessor:
             )
     
     # =========================================================================
+    # Step 6b: Seabed Detection & Masking
+    # =========================================================================
+
+    def detect_and_mask_seabed(
+        self,
+        output_dir: Path,
+        input_paths: Optional[list[Path]] = None,
+        method: str = "composite",
+    ) -> ProcessingResult:
+        """
+        Detect and mask the seabed in Sv datasets.
+
+        Args:
+            output_dir: Output directory for seabed-masked Zarr stores
+            input_paths: Sv paths to process (default: denoised or Sv paths)
+            method: Seabed detection method (default: "composite")
+
+        Returns:
+            ProcessingResult with seabed masking status
+        """
+        from oceanstream.echodata.seabed import detect_seabed, mask_seabed
+        import xarray as xr
+
+        start = perf_counter()
+
+        if input_paths:
+            paths_to_process = input_paths
+        elif self._denoised_paths:
+            paths_to_process = self._denoised_paths
+        elif self._sv_paths:
+            paths_to_process = self._sv_paths
+        else:
+            return ProcessingResult(
+                step="seabed_mask",
+                success=False,
+                message="No Sv paths available. Run compute_sv() or denoise() first.",
+                duration_seconds=perf_counter() - start,
+            )
+
+        seabed_output = output_dir / "seabed_masked"
+        seabed_output.mkdir(parents=True, exist_ok=True)
+
+        self.log(f"Detecting seabed ({method}) for {len(paths_to_process)} datasets")
+
+        try:
+            self._seabed_masked_paths: list[Path] = []
+            for sv_path in paths_to_process:
+                ds = xr.open_zarr(sv_path)
+                result = detect_seabed(ds, method=method)
+                masked = mask_seabed(ds, result.seabed_depth)
+                out_path = seabed_output / f"{sv_path.stem}_seabed.zarr"
+                masked.to_zarr(out_path, mode="w")
+                self._seabed_masked_paths.append(out_path)
+
+            return ProcessingResult(
+                step="seabed_mask",
+                success=True,
+                output_path=seabed_output,
+                message=f"Seabed-masked {len(self._seabed_masked_paths)} datasets",
+                duration_seconds=perf_counter() - start,
+                metadata={"method": method},
+            )
+        except Exception as e:
+            logger.exception(f"Seabed detection failed: {e}")
+            return ProcessingResult(
+                step="seabed_mask",
+                success=False,
+                message=str(e),
+                duration_seconds=perf_counter() - start,
+            )
+
+    # =========================================================================
     # Step 7: Compute MVBS and NASC
     # =========================================================================
     
@@ -903,9 +975,11 @@ class EchodataProcessor:
         calibration_file: Optional[Path] = None,
         skip_concatenation: bool = False,
         skip_denoising: bool = False,
+        skip_seabed: bool = False,
         skip_mvbs: bool = False,
         skip_nasc: bool = False,
         skip_echograms: bool = False,
+        save_intermediate: bool = False,
     ) -> PipelineResult:
         """
         Run the full echodata processing pipeline.
@@ -917,6 +991,7 @@ class EchodataProcessor:
             4. Concatenate by day (unless skipped)
             5. Compute Sv
             6. Apply denoising (unless skipped)
+            6b. Detect and mask seabed (unless skipped)
             7. Compute MVBS and NASC (unless skipped)
             8. Generate echograms (unless skipped)
         
@@ -927,9 +1002,12 @@ class EchodataProcessor:
             calibration_file: Path to calibration file
             skip_concatenation: Skip daily concatenation step
             skip_denoising: Skip denoising step
+            skip_seabed: Skip seabed detection & masking step
             skip_mvbs: Skip MVBS computation
             skip_nasc: Skip NASC computation
             skip_echograms: Skip echogram generation
+            save_intermediate: Persist raw Sv, denoised Sv, and seabed-masked Sv
+                as separate Zarr stores under ``output_dir/intermediate/``
             
         Returns:
             PipelineResult with status and output paths
@@ -980,11 +1058,25 @@ class EchodataProcessor:
             result.end_time = datetime.now()
             return result
         
+        # Persist raw Sv if requested
+        if save_intermediate and self._sv_paths:
+            self._save_intermediate(output_dir, self._sv_paths, "raw_sv")
+        
         # Step 6: Denoise
         if not skip_denoising:
             step_result = self.denoise(output_dir)
             result.steps.append(step_result)
-            # Non-fatal
+            # Persist denoised Sv if requested
+            if save_intermediate and self._denoised_paths:
+                self._save_intermediate(output_dir, self._denoised_paths, "denoised_sv")
+        
+        # Step 6b: Seabed detection & masking
+        if not skip_seabed:
+            step_result = self.detect_and_mask_seabed(output_dir)
+            result.steps.append(step_result)
+            # Persist seabed-masked Sv if requested
+            if save_intermediate and hasattr(self, "_seabed_masked_paths") and self._seabed_masked_paths:
+                self._save_intermediate(output_dir, self._seabed_masked_paths, "seabed_masked_sv")
         
         # Step 7a: MVBS
         if not skip_mvbs:

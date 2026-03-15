@@ -17,6 +17,9 @@ from oceanstream.echodata.plot.echogram import (
     plot_mask_channel,
     plot_all_masks,
     plot_masks_vertical,
+    # Interactive & seabed overlay
+    create_interactive_echogram,
+    plot_sv_with_seabed,
 )
 
 __all__ = [
@@ -30,4 +33,7 @@ __all__ = [
     "plot_mask_channel",
     "plot_all_masks",
     "plot_masks_vertical",
+    # Interactive & seabed overlay
+    "create_interactive_echogram",
+    "plot_sv_with_seabed",
 ]

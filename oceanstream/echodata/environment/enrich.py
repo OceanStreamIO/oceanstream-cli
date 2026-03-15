@@ -31,6 +31,146 @@ CTD_COLUMNS = {
 LOCATION_COLUMNS = ["time", "latitude", "longitude"]
 
 
+def smooth_gps_track(
+    latitudes: np.ndarray,
+    longitudes: np.ndarray,
+    times: np.ndarray,
+    *,
+    savgol_window: int = 11,
+    savgol_poly: int = 2,
+    max_speed_kts: float = 100.0,
+    rdp_epsilon: float = 0.00001,
+    min_distance_nmi: float = 0.01,
+) -> dict[str, np.ndarray]:
+    """
+    Smooth and thin a GPS track using Savitzky-Golay filtering and RDP simplification.
+
+    Ported from legacy ``_echodata-legacy-code/.../process/location.py`` (``extract_location_data``).
+
+    Pipeline:
+        1. Drop NaN / out-of-range coordinates
+        2. Savitzky-Golay smoothing on lat/lon
+        3. Haversine speed calculation → remove unrealistic speeds (> *max_speed_kts*)
+        4. Ramer-Douglas-Peucker line simplification
+        5. Minimum-distance thinning
+
+    Args:
+        latitudes: 1-D array of latitudes (degrees north).
+        longitudes: 1-D array of longitudes (degrees east).
+        times: 1-D array of datetime64 timestamps (same length as latitudes).
+        savgol_window: Window size for Savitzky-Golay filter (must be odd, ≤ len).
+        savgol_poly: Polynomial order for Savitzky-Golay filter.
+        max_speed_kts: Maximum plausible speed in knots; points above are dropped.
+        rdp_epsilon: Epsilon tolerance for Ramer-Douglas-Peucker algorithm.
+        min_distance_nmi: Minimum distance (nautical miles) between retained points.
+
+    Returns:
+        Dictionary with ``latitude``, ``longitude``, ``time`` arrays (thinned).
+    """
+    from scipy.signal import savgol_filter
+
+    lat = np.asarray(latitudes, dtype=float).copy()
+    lon = np.asarray(longitudes, dtype=float).copy()
+    t = np.asarray(times)
+
+    # --- 1. Drop NaN / out-of-range ---
+    valid = (
+        np.isfinite(lat) & np.isfinite(lon)
+        & (lat >= -90) & (lat <= 90)
+        & (lon >= -180) & (lon <= 180)
+    )
+    lat, lon, t = lat[valid], lon[valid], t[valid]
+
+    if len(lat) < 3:
+        return {"latitude": lat, "longitude": lon, "time": t}
+
+    # --- 2. Savitzky-Golay smoothing ---
+    win = min(savgol_window, len(lat))
+    if win % 2 == 0:
+        win -= 1  # must be odd
+    if win > savgol_poly and len(lat) > win:
+        lat = savgol_filter(lat, win, savgol_poly)
+        lon = savgol_filter(lon, win, savgol_poly)
+
+    # --- 3. Speed filter ---
+    t_ns = t.astype("datetime64[ns]").astype("int64").astype(float)
+    dt_sec = np.diff(t_ns) / 1e9
+    dt_sec[dt_sec == 0] = np.inf  # avoid divide-by-zero
+
+    # Haversine approximation (flat-earth reasonable for short steps)
+    dlat = np.diff(lat)
+    dlon = np.diff(lon)
+    dist_deg = np.sqrt(dlat ** 2 + dlon ** 2)
+    dist_nmi = dist_deg * 60.0  # 1 degree ≈ 60 nmi
+    speed_kts = (dist_nmi / dt_sec) * 3600.0
+
+    keep_speed = np.ones(len(lat), dtype=bool)
+    keep_speed[1:] = speed_kts < max_speed_kts
+    lat, lon, t = lat[keep_speed], lon[keep_speed], t[keep_speed]
+
+    if len(lat) < 3:
+        return {"latitude": lat, "longitude": lon, "time": t}
+
+    # --- 4. Ramer-Douglas-Peucker ---
+    points = np.column_stack([lat, lon])
+    thinned = _ramer_douglas_peucker(points, rdp_epsilon)
+
+    # Map back to original indices to recover timestamps
+    idx = _match_points(points, thinned)
+    lat, lon, t = lat[idx], lon[idx], t[idx]
+
+    # --- 5. Minimum-distance thinning ---
+    if min_distance_nmi > 0 and len(lat) > 1:
+        keep = [0]
+        for i in range(1, len(lat)):
+            d = np.sqrt((lat[i] - lat[keep[-1]]) ** 2 + (lon[i] - lon[keep[-1]]) ** 2) * 60.0
+            if d >= min_distance_nmi:
+                keep.append(i)
+        keep = np.array(keep)
+        lat, lon, t = lat[keep], lon[keep], t[keep]
+
+    return {"latitude": lat, "longitude": lon, "time": t}
+
+
+def _ramer_douglas_peucker(points: np.ndarray, epsilon: float) -> np.ndarray:
+    """Ramer-Douglas-Peucker line simplification (recursive)."""
+    if len(points) < 3:
+        return points
+
+    # Find the point with the maximum distance from the line (first → last)
+    start, end = points[0], points[-1]
+    line_vec = end - start
+    line_len = np.linalg.norm(line_vec)
+
+    if line_len == 0:
+        dists = np.linalg.norm(points[1:-1] - start, axis=1)
+    else:
+        line_unit = line_vec / line_len
+        projections = np.dot(points[1:-1] - start, line_unit)
+        projections = np.clip(projections, 0, line_len)
+        nearest = start + np.outer(projections, line_unit)
+        dists = np.linalg.norm(points[1:-1] - nearest, axis=1)
+
+    max_idx = np.argmax(dists) + 1  # offset by 1 (we skipped index 0)
+    max_dist = dists[max_idx - 1]
+
+    if max_dist > epsilon:
+        left = _ramer_douglas_peucker(points[: max_idx + 1], epsilon)
+        right = _ramer_douglas_peucker(points[max_idx:], epsilon)
+        return np.vstack([left[:-1], right])
+
+    return np.vstack([points[0], points[-1]])
+
+
+def _match_points(full: np.ndarray, subset: np.ndarray) -> np.ndarray:
+    """Return indices in *full* that best match rows of *subset* (nearest-neighbour)."""
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(full)
+    _, idx = tree.query(subset)
+    return np.sort(np.unique(idx))
+
+
 def _resolve_campaign_dir(campaign_id: str) -> Path:
     """
     Resolve a campaign ID to its directory path.

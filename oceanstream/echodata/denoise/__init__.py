@@ -19,7 +19,7 @@ from oceanstream.echodata.denoise.denoise import (
     extract_channel,
 )
 from oceanstream.echodata.denoise.background_noise import background_noise_mask
-from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+from oceanstream.echodata.denoise.transient_noise import transient_noise_mask, transient_noise_mask_ryan
 from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
 from oceanstream.echodata.denoise.attenuation import attenuation_mask
 
@@ -33,6 +33,7 @@ __all__ = [
     "extract_channel",
     "background_noise_mask",
     "transient_noise_mask",
+    "transient_noise_mask_ryan",
     "impulse_noise_mask",
     "attenuation_mask",
 ]

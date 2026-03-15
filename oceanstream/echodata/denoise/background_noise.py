@@ -1,9 +1,10 @@
 """Background noise detection using De Robertis & Higginbottom (2007).
 
 Estimates background noise level and flags samples with insufficient
-signal-to-noise ratio.
+signal-to-noise ratio.  Supports quantile-based depth statistics and
+guard-mode DSL exclusion.
 
-Ported from _echodata-legacy-code/saildrone-echodata-processing/denoise/background_noise.py
+Ported from saildrone-data/saildrone/denoise/background_noise.py
 """
 
 from __future__ import annotations
@@ -19,39 +20,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _extract_db(value) -> float:
+    """Extract dB value from string like ``'3.0dB'`` or numeric."""
+    if isinstance(value, str):
+        return float(value.replace("dB", "").strip())
+    return float(value)
+
+
 def background_noise_mask(
     sv_dataset: "xr.Dataset",
     params: dict,
-) -> "xr.DataArray":
-    """
-    De Robertis & Higginbottom (2007) background noise filter.
-    
+) -> Tuple["xr.DataArray", "xr.DataArray"]:
+    """De Robertis & Higginbottom (2007) background noise filter.
+
     Estimates background noise from TVG-removed signal using block
     statistics, then flags samples with insufficient SNR.
-    
+
     Args:
-        sv_dataset: Sv xarray Dataset with "Sv" variable and range coordinate
+        sv_dataset: Single-channel Sv xarray Dataset with ``"Sv"`` variable
+            and range coordinate.
         params: Dictionary of parameters:
-            - range_coord (str): Vertical coord name, default "depth" or "echo_range"
-            - sound_absorption (float): Sound absorption α (dB/m), default 0.001
-            - range_window (int): Range samples in blocking window, default 20
-            - ping_window (int): Pings in blocking window, default 50
-            - background_noise_max (str): Lowest allowed background Sv, default "-125.0dB"
-            - SNR_threshold (str): Minimum SNR, default "3.0dB"
-            
+            - range_coord (str): Vertical coord name (auto-detected)
+            - sound_absorption (float): α in dB/m, default 0.001
+            - range_window (int|"auto"): range samples in block, default 20
+            - ping_window (int): pings in block, default 50
+            - background_noise_max (str|float): lowest allowed background
+              Sv, default ``"-125.0dB"``
+            - SNR_threshold (str|float): minimum SNR (dB), default ``"3.0dB"``
+            - minimal_linear (float): floor for linear power, default 1e-30
+            - depth_stat (str): ``"min"`` or ``"quantile"``, default ``"quantile"``
+            - depth_quantile (float): quantile when depth_stat="quantile",
+              default 0.15
+            - guard_mode (str|None): ``None``, ``"above"``, or
+              ``"outside_band"`` — excludes DSL from the depth statistic
+            - guard_depth (float): required when guard_mode="above"
+            - guard_band (list[float]): ``[z0, z1]`` when
+              guard_mode="outside_band"
+
     Returns:
-        Boolean DataArray mask (True = noise to remove)
-        
+        Tuple of ``(mask_low_snr, mask_non_positive)`` boolean DataArrays.
+
     Reference:
-        De Robertis, A., & Higginbottom, I. (2007). A post-processing 
-        technique to estimate the signal-to-noise ratio and remove 
-        echosounder background noise. ICES Journal of Marine Science, 
-        64(6), 1282-1291.
+        De Robertis, A., & Higginbottom, I. (2007). ICES J. Marine Sci.
     """
     import xarray as xr
-    
-    # Parse parameters with defaults
-    # Detect the dimension for range (always range_sample for echopype output)
+
+    # ------------------------------------------------------------------
+    # 1. Detect range dimension
+    # ------------------------------------------------------------------
     if "range_sample" in sv_dataset.dims:
         range_dim = "range_sample"
     elif "depth" in sv_dataset.dims:
@@ -59,160 +75,165 @@ def background_noise_mask(
     elif "echo_range" in sv_dataset.dims:
         range_dim = "echo_range"
     else:
-        # Fallback - take last non-time, non-channel dim
-        range_dim = [d for d in sv_dataset["Sv"].dims if d not in ["channel", "ping_time"]][0]
-    
+        range_dim = [
+            d for d in sv_dataset["Sv"].dims if d not in ("channel", "ping_time")
+        ][0]
+
+    # ------------------------------------------------------------------
+    # 2. Unpack parameters
+    # ------------------------------------------------------------------
     range_coord = params.get("range_coord", range_dim)
-    
     sound_absorption = params.get("sound_absorption", 0.001)
-    range_window = params.get("range_window", 20)
-    ping_window = params.get("ping_window", 50)
+    rng_win = params.get("range_window", 20)
+    ping_win = params.get("ping_window", 50)
     background_noise_max = _extract_db(params.get("background_noise_max", "-125.0dB"))
     snr_threshold = _extract_db(params.get("SNR_threshold", "3.0dB"))
-    
-    # Get Sv and range values
+    depth_stat = params.get("depth_stat", "quantile")
+    depth_quantile = float(params.get("depth_quantile", 0.15))
+
+    guard_mode = params.get("guard_mode", None)
+    guard_depth = params.get("guard_depth", None)
+    guard_band = params.get("guard_band", None)
+
+    # ------------------------------------------------------------------
+    # 3. Resolve range values (metres)
+    # ------------------------------------------------------------------
     Sv = sv_dataset["Sv"]
-    
-    # Get range values in METERS (critical for TVG computation!)
-    # echo_range is the actual range in meters - check data_vars first, then coords
+
+    range_values: xr.DataArray
     if "echo_range" in sv_dataset.data_vars:
-        # echopype stores echo_range as a 3D data_var (channel, ping_time, range_sample)
         range_values = sv_dataset["echo_range"]
-        logger.debug("Using echo_range from data_vars (meters)")
     elif "echo_range" in sv_dataset.coords:
         range_values = sv_dataset["echo_range"]
-        logger.debug("Using echo_range from coords (meters)")
     elif "depth" in sv_dataset.coords:
         range_values = sv_dataset["depth"]
-        logger.debug("Using depth from coords (meters)")
     elif "depth" in sv_dataset.data_vars:
         range_values = sv_dataset["depth"]
-        logger.debug("Using depth from data_vars (meters)")
     else:
-        # Last resort: estimate range from range_sample
-        # Typical EK80 sample interval is ~0.1m depending on sound speed
         n_samples = sv_dataset.sizes.get(range_dim, 1000)
-        # Estimate sample spacing (approx 0.18m for 1300m over 7218 samples)
-        sample_spacing = 0.18  # meters per sample (typical EK80 CW)
+        sample_spacing = 0.18
         range_values = xr.DataArray(
-            np.arange(n_samples) * sample_spacing,
-            dims=[range_dim]
+            np.arange(n_samples) * sample_spacing, dims=[range_dim]
         )
-        logger.warning(f"No echo_range found, estimating from {range_dim} with {sample_spacing}m spacing")
-    
-    # Handle auto range window  
-    if range_window == "auto":
-        # Estimate range resolution
-        if hasattr(range_values, 'diff'):
-            try:
-                dr = float(range_values.isel({range_dim: slice(0, 100)}).diff(range_dim).median())
-                range_window = max(1, int(round(10.0 / dr)))  # ~10m window
-            except Exception:
-                range_window = 50  # fallback
+        logger.warning(
+            f"No echo_range found, estimating from {range_dim} "
+            f"with {sample_spacing}m spacing"
+        )
+
+    rng_var = range_coord  # name used for coarsen dim
+
+    # ------------------------------------------------------------------
+    # 4. Auto range window
+    # ------------------------------------------------------------------
+    if rng_win == "auto":
+        if range_coord == "depth":
+            dz = float(sv_dataset["depth"].diff("depth").median())
+            rng_win = max(1, round(1.0 / dz))
         else:
-            range_window = 50
-    
-    # Remove TVG: 20 log10(r) + 2αr
+            try:
+                dr = float(
+                    range_values.isel({range_dim: slice(0, 100)})
+                    .diff(range_dim)
+                    .median()
+                )
+                rng_win = max(1, int(round(10.0 / dr)))
+            except Exception:
+                rng_win = 50
+
+    # ------------------------------------------------------------------
+    # 5. Remove TVG: 20 log10(r) + 2 α r
+    # ------------------------------------------------------------------
     r_safe = xr.where(range_values > 0, range_values, np.nan)
     tvg = 20.0 * np.log10(r_safe) + 2.0 * sound_absorption * r_safe
     Sv_flat_db = Sv - tvg
-    
-    # Convert to linear domain for block averaging
+
+    # ------------------------------------------------------------------
+    # 6. Block averaging in linear domain
+    # ------------------------------------------------------------------
     power_lin = 10.0 ** (Sv_flat_db / 10.0)
-    
-    # Coarsen to block averages using the dimension name
     binned_lin = power_lin.coarsen(
-        ping_time=ping_window,
-        **{range_dim: range_window},
+        ping_time=ping_win,
+        **{range_dim: rng_win},
         boundary="pad",
     ).mean()
-    
-    # Convert to dB for depth statistic
+
     binned_db = 10.0 * np.log10(binned_lin.where(binned_lin > 0))
-    
-    # Rechunk for range operations
+
     if hasattr(binned_db, "chunk") and range_dim in binned_db.dims:
         binned_db = binned_db.chunk({range_dim: -1})
-    
-    # Get noise estimate from range minimum (deepest, quietest part)
-    noise_1d_db = binned_db.min(dim=range_dim, skipna=True)
-    
-    # Align ping_time indices
+
+    # ------------------------------------------------------------------
+    # 7. Optional guard: exclude DSL from depth statistic
+    # ------------------------------------------------------------------
+    if guard_mode:
+        z = sv_dataset[range_coord]
+        if guard_mode == "above":
+            if guard_depth is None:
+                raise ValueError(
+                    "guard_depth required when guard_mode='above'."
+                )
+            region = z <= float(guard_depth)
+        elif guard_mode == "outside_band":
+            if not guard_band or len(guard_band) != 2:
+                raise ValueError(
+                    "guard_band=[z0, z1] required when guard_mode='outside_band'."
+                )
+            z0, z1 = sorted(map(float, guard_band))
+            region = (z < z0) | (z > z1)
+        else:
+            raise ValueError("guard_mode must be None|'above'|'outside_band'.")
+        binned_db = binned_db.where(region)
+
+    # ------------------------------------------------------------------
+    # 8. Depth statistic (noise estimate)
+    # ------------------------------------------------------------------
+    if depth_stat == "min":
+        noise_1d_db = binned_db.min(dim=range_dim, skipna=True)
+    elif depth_stat == "quantile":
+        noise_1d_db = binned_db.quantile(
+            depth_quantile, dim=range_dim, skipna=True
+        )
+        if "quantile" in noise_1d_db.dims:
+            noise_1d_db = noise_1d_db.squeeze("quantile", drop=True)
+    else:
+        raise ValueError("depth_stat must be 'min' or 'quantile'.")
+
+    # ------------------------------------------------------------------
+    # 9. Align ping-time indices (first ping of each coarsened bin)
+    # ------------------------------------------------------------------
     noise_1d_db = noise_1d_db.assign_coords(
-        ping_time=ping_window * np.arange(noise_1d_db.sizes["ping_time"])
+        ping_time=ping_win * np.arange(noise_1d_db.sizes["ping_time"])
     )
     power_lin = power_lin.assign_coords(
         ping_time=np.arange(power_lin.sizes["ping_time"])
     )
-    
-    # Cap noise floor (more negative = gentler; less negative = more aggressive)
+
+    # Cap noise floor
     if background_noise_max is not None:
         noise_1d_db = noise_1d_db.where(
             noise_1d_db < background_noise_max, background_noise_max
         )
-    
-    # Restore TVG to noise estimate
-    noise_lin = 10.0 ** (noise_1d_db / 10.0)
-    noise_interp = noise_lin.interp(
-        ping_time=power_lin.ping_time,
-        method="nearest",
-        kwargs={"fill_value": "extrapolate"},
-    )
-    
-    # Broadcast noise to full shape using range_dim
-    if range_dim in noise_interp.dims:
-        noise_broadcast = noise_interp
-    else:
-        # Need to expand along range_dim
-        n_range = sv_dataset.sizes[range_dim]
-        noise_broadcast = noise_interp.expand_dims({range_dim: n_range})
-        # Ensure dimension order matches power_lin
-        if set(noise_broadcast.dims) == set(power_lin.dims):
-            noise_broadcast = noise_broadcast.transpose(*power_lin.dims)
-    
-    # Compute SNR
-    signal_minus_noise = power_lin - noise_broadcast
-    snr = 10.0 * np.log10(
-        xr.where(signal_minus_noise > 0, signal_minus_noise, 1e-30)
-    ) - 10.0 * np.log10(xr.where(noise_broadcast > 0, noise_broadcast, 1e-30))
-    
-    # Create masks
-    mask_low_snr = snr < snr_threshold
-    mask_non_positive = signal_minus_noise <= 0
-    
-    # Combine masks
-    combined_mask = mask_low_snr | mask_non_positive
-    
-    # Broadcast back to original ping_time using integer indexing
-    # (the mask was computed with integer ping_time indices)
-    original_n_pings = sv_dataset.sizes["ping_time"]
-    mask_n_pings = combined_mask.sizes["ping_time"]
-    
-    if mask_n_pings != original_n_pings:
-        # Use integer indices for reindexing
-        orig_indices = np.arange(original_n_pings)
-        combined_mask_float = combined_mask.astype(float)
-        combined_mask_float = combined_mask_float.interp(
-            ping_time=orig_indices,
-            method="nearest",
-            kwargs={"fill_value": 1.0},
-        )
-        combined_mask = combined_mask_float > 0.5
-    
-    # Reassign original ping_time coordinate
-    combined_mask = combined_mask.assign_coords(
-        ping_time=sv_dataset.ping_time.values
-    )
-    
-    logger.info(
-        f"Background noise mask: {float(combined_mask.mean().values) * 100:.1f}% flagged"
-    )
-    
-    return combined_mask
 
+    # ------------------------------------------------------------------
+    # 10. Restore TVG to noise and compute masks
+    # ------------------------------------------------------------------
+    Sv_noise_db = (
+        noise_1d_db
+        .reindex({"ping_time": power_lin["ping_time"]}, method="ffill")
+        .assign_coords(ping_time=sv_dataset["ping_time"])
+        + tvg
+    )
 
-def _extract_db(value) -> float:
-    """Extract dB value from string like '3.0dB' or numeric."""
-    if isinstance(value, str):
-        return float(value.replace("dB", "").strip())
-    return float(value)
+    Sv_lin_tot = 10.0 ** (Sv / 10.0)
+    bgn_lin_tot = 10.0 ** (Sv_noise_db / 10.0)
+    lin_diff = Sv_lin_tot - bgn_lin_tot
+
+    mask_non_positive = lin_diff <= 0
+    Sv_clean_db = xr.where(mask_non_positive, np.nan, 10.0 * np.log10(lin_diff))
+    snr_db = Sv_clean_db - Sv_noise_db
+    mask_low_snr = snr_db < snr_threshold
+
+    pct = float(mask_low_snr.mean()) * 100 if mask_low_snr.size > 0 else 0.0
+    logger.info(f"Background noise mask: {pct:.1f}% flagged")
+
+    return mask_low_snr, mask_non_positive

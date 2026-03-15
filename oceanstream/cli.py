@@ -898,6 +898,15 @@ if typer:
         pmtiles_include_measurements: bool = typer.Option(True, help="Include oceanographic measurements in PMTiles."),
         pmtiles_measurement_columns: list[str] = typer.Option(None, help="Specific measurement columns to include (None = auto-discover from data)."),
         pmtiles_exclude_patterns: list[str] = typer.Option(None, help="Regex patterns to exclude when auto-discovering columns (e.g., '.*_STDDEV$'). Defaults exclude _STDDEV, _MIN, _MAX, _PEAK suffixes. Pass empty list to include all."),
+        pmtiles_include_arrows: bool = typer.Option(True, help="Include direction arrow features in PMTiles for track visualization."),
+        pmtiles_arrows_per_segment: int = typer.Option(3, help="Number of direction arrows per track segment."),
+        pmtiles_arrow_min_points: int = typer.Option(5, help="Minimum points in a segment to generate arrows."),
+        generate_heatmaps: bool = typer.Option(False, "--generate-heatmaps", help="Generate COG heatmap rasters from interpolated measurement data (requires scipy, rasterio)."),
+        heatmap_resolution: float = typer.Option(0.05, help="Heatmap grid resolution in degrees (0.05 ≈ 5km)."),
+        heatmap_method: str = typer.Option("linear", help="Heatmap interpolation method: 'linear', 'nearest', or 'cubic'."),
+        heatmap_search_radius: float = typer.Option(0.5, help="Maximum interpolation distance in degrees for heatmaps."),
+        heatmap_variables: list[str] = typer.Option(None, help="Specific variables for heatmaps (None = auto-detect common measurements)."),
+        heatmap_max_variables: int = typer.Option(10, help="Maximum number of heatmap variables when auto-detecting."),
         campaign_id: str = typer.Option(None, help="Campaign/cruise identifier (REQUIRED - provide if not auto-detected from filenames/metadata)."),
         platform_id: str = typer.Option(None, help="Platform identifier (overrides auto-detection from filenames)."),
         attribution: str = typer.Option(None, help="Data attribution/citation (overrides provider/file metadata)."),
@@ -962,6 +971,15 @@ if typer:
                 pmtiles_include_measurements=pmtiles_include_measurements,
                 pmtiles_measurement_columns=pmtiles_measurement_columns,
                 pmtiles_exclude_patterns=pmtiles_exclude_patterns,
+                pmtiles_include_arrows=pmtiles_include_arrows,
+                pmtiles_arrows_per_segment=pmtiles_arrows_per_segment,
+                pmtiles_arrow_min_points=pmtiles_arrow_min_points,
+                generate_heatmaps=generate_heatmaps,
+                heatmap_resolution=heatmap_resolution,
+                heatmap_method=heatmap_method,
+                heatmap_search_radius=heatmap_search_radius,
+                heatmap_variables=heatmap_variables,
+                heatmap_max_variables=heatmap_max_variables,
                 campaign_id=campaign_id,
                 platform_id=platform_id,
                 attribution=attribution,
@@ -1006,6 +1024,9 @@ if typer:
         time_gap_minutes: int = typer.Option(60, help="Time gap in minutes to split track segments."),
         include_measurements: bool = typer.Option(True, help="Include oceanographic measurements in tiles."),
         measurement_columns: list[str] = typer.Option(None, help="Specific measurement columns to include (defaults to auto-selected important ones)."),
+        include_arrows: bool = typer.Option(True, help="Include direction arrow features for track visualization."),
+        arrows_per_segment: int = typer.Option(3, help="Number of direction arrows per track segment."),
+        arrow_min_points: int = typer.Option(5, help="Minimum points in a segment to generate arrows."),
     ) -> None:
         global _provider_obj
         provider_obj = _provider_obj
@@ -1030,6 +1051,9 @@ if typer:
                 time_gap_minutes=time_gap_minutes,
                 include_measurements=include_measurements,
                 measurement_columns=measurement_columns,
+                include_arrows=include_arrows,
+                arrows_per_segment=arrows_per_segment,
+                arrow_min_points=arrow_min_points,
             )
             if result is None:
                 typer.echo("[geotrack] ERROR: PMTiles generation failed")
@@ -1042,6 +1066,111 @@ if typer:
             raise typer.Exit(code=1)
         except Exception as e:
             typer.echo(f"[geotrack] ERROR: {e}")
+            raise typer.Exit(code=1)
+    
+    @geotrack_app.command(
+        "heatmaps",
+        help="Generate COG heatmap rasters from an existing GeoParquet dataset.",
+    )
+    def heatmaps_command(
+        geoparquet_dir: Path = typer.Option(
+            ...,
+            exists=True,
+            file_okay=False,
+            help="Directory containing GeoParquet dataset.",
+        ),
+        output_dir: Path = typer.Option(
+            None,
+            help="Output directory for heatmaps (default: <geoparquet_dir>/../heatmaps).",
+        ),
+        variables: Optional[list[str]] = typer.Option(
+            None,
+            "--variable", "-var",
+            help="Specific variable(s) to generate heatmaps for. Can be specified multiple times. Default: auto-detect.",
+        ),
+        resolution: float = typer.Option(
+            0.05,
+            help="Grid resolution in degrees (0.05 ≈ 5km).",
+        ),
+        method: str = typer.Option(
+            "linear",
+            help="Interpolation method: 'linear', 'nearest', or 'cubic'.",
+        ),
+        search_radius: float = typer.Option(
+            0.5,
+            help="Maximum distance in degrees to interpolate from data points.",
+        ),
+        sample_rate: int = typer.Option(
+            1,
+            help="Sample rate: take every Nth point (1=all points).",
+        ),
+        max_variables: int = typer.Option(
+            10,
+            help="Maximum number of variables to process when auto-detecting.",
+        ),
+        verbose: bool = typer.Option(False, "-v", help="Emit detailed progress information."),
+    ) -> None:
+        """Generate Cloud Optimized GeoTIFF heatmaps from interpolated measurement data.
+        
+        Reads measurement variables from the GeoParquet dataset and generates
+        interpolated raster heatmaps using scipy's griddata interpolation.
+        Output files are Cloud Optimized GeoTIFF (COG) format for efficient
+        web visualization with HTTP range requests.
+        
+        Examples:
+            # Auto-detect and generate all heatmaps
+            oceanstream process geotrack heatmaps --geoparquet-dir ./output/TPOS_2023
+            
+            # Generate specific variables
+            oceanstream process geotrack heatmaps \\
+                --geoparquet-dir ./output/TPOS_2023 \\
+                --variable TEMP_SBE37_MEAN \\
+                --variable SAL_SBE37_MEAN
+        """
+        import logging
+        from .geotrack.raster import generate_all_heatmaps
+        
+        if verbose:
+            logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        
+        # Determine output directory
+        if output_dir is None:
+            output_dir = geoparquet_dir.parent / "heatmaps"
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        if verbose:
+            typer.echo(f"[geotrack] Generating heatmaps from {geoparquet_dir}")
+            typer.echo(f"[geotrack] Output directory: {output_dir}")
+        
+        try:
+            manifest = generate_all_heatmaps(
+                geoparquet_root=geoparquet_dir,
+                output_dir=output_dir,
+                variables=variables,
+                resolution_deg=resolution,
+                method=method,
+                search_radius_deg=search_radius,
+                sample_rate=sample_rate,
+                max_variables=max_variables,
+            )
+            
+            if verbose:
+                typer.echo(f"[geotrack] ✓ Generated {len(manifest['variables'])} heatmaps")
+                for var_info in manifest['variables']:
+                    typer.echo(f"[geotrack]   • {var_info['name']}: {var_info['file']} "
+                              f"(range: {var_info['min']:.2f} - {var_info['max']:.2f} {var_info['unit']})")
+            else:
+                typer.echo(f"Generated {len(manifest['variables'])} heatmaps in {output_dir}")
+                
+        except ValueError as e:
+            typer.echo(f"[geotrack] ERROR: {e}")
+            raise typer.Exit(code=1)
+        except Exception as e:
+            typer.echo(f"[geotrack] ERROR: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
             raise typer.Exit(code=1)
     
     @geotrack_app.command(

@@ -53,6 +53,7 @@ __all__ = [
     "compute_sound_speed",
     "compute_absorption_coefficient",
     "fetch_copernicus_environment",
+    "smooth_gps_track",
     # Compute
     "compute_sv",
     "compute_sv_from_echodata",
@@ -78,6 +79,14 @@ __all__ = [
     "plot_mask_channel",
     "plot_all_masks",
     "plot_masks_vertical",
+    "create_interactive_echogram",
+    "plot_sv_with_seabed",
+    # Location / GPS
+    "merge_location_data_from_gps",
+    "interpolate_location_from_dataframe",
+    "extract_location_data",
+    "ramer_douglas_peucker",
+    "extract_start_end_lat_lon",
     # STAC
     "emit_stac",
     "emit_echodata_collection",
@@ -104,6 +113,7 @@ __all__ = [
     "detect_seabed_maxSv",
     "detect_seabed_deltaSv",
     "detect_seabed_ariza",
+    "detect_seabed_composite",
     "mask_seabed",
     "compute_seabed_stats",
     "SeabedDetectionResult",
@@ -163,6 +173,7 @@ def __getattr__(name: str):
         "compute_sound_speed",
         "compute_absorption_coefficient",
         "fetch_copernicus_environment",
+        "smooth_gps_track",
     ):
         from oceanstream.echodata.environment import (
             enrich_environment,
@@ -172,6 +183,7 @@ def __getattr__(name: str):
             compute_sound_speed,
             compute_absorption_coefficient,
             fetch_copernicus_environment,
+            smooth_gps_track,
         )
         return locals()[name]
     
@@ -202,6 +214,7 @@ def __getattr__(name: str):
         "detect_seabed_maxSv",
         "detect_seabed_deltaSv",
         "detect_seabed_ariza",
+        "detect_seabed_composite",
         "mask_seabed",
         "compute_seabed_stats",
         "SeabedDetectionResult",
@@ -211,6 +224,7 @@ def __getattr__(name: str):
             detect_seabed_maxSv,
             detect_seabed_deltaSv,
             detect_seabed_ariza,
+            detect_seabed_composite,
             mask_seabed,
             compute_seabed_stats,
             SeabedDetectionResult,
@@ -229,7 +243,7 @@ def __getattr__(name: str):
         return locals()[name]
     
     # Plot functions
-    if name in ("generate_echograms", "plot_echogram", "plot_sv_data", "plot_sv_channel", "prepare_channel_da", "ensure_channel_labels", "plot_mask_channel", "plot_all_masks", "plot_masks_vertical"):
+    if name in ("generate_echograms", "plot_echogram", "plot_sv_data", "plot_sv_channel", "prepare_channel_da", "ensure_channel_labels", "plot_mask_channel", "plot_all_masks", "plot_masks_vertical", "create_interactive_echogram", "plot_sv_with_seabed"):
         from oceanstream.echodata.plot import (
             generate_echograms,
             plot_echogram,
@@ -240,6 +254,25 @@ def __getattr__(name: str):
             plot_mask_channel,
             plot_all_masks,
             plot_masks_vertical,
+            create_interactive_echogram,
+            plot_sv_with_seabed,
+        )
+        return locals()[name]
+
+    # Location / GPS functions
+    if name in (
+        "merge_location_data_from_gps",
+        "interpolate_location_from_dataframe",
+        "extract_location_data",
+        "ramer_douglas_peucker",
+        "extract_start_end_lat_lon",
+    ):
+        from oceanstream.echodata.consolidate.location import (
+            merge_location_data as merge_location_data_from_gps,
+            interpolate_location_from_dataframe,
+            extract_location_data,
+            ramer_douglas_peucker,
+            extract_start_end_lat_lon,
         )
         return locals()[name]
     

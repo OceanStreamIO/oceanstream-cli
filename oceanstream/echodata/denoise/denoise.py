@@ -1,16 +1,17 @@
 """Main denoising pipeline for Sv datasets.
 
 Provides high-level functions for applying multiple denoising
-methods and combining masks.
+methods and combining masks.  Supports frequency-keyed parameter
+dispatch and pulse-length selection.
 
-Ported from _echodata-legacy-code/saildrone-echodata-processing/denoise/
+Ported from saildrone-data/saildrone/denoise/mask.py and workflow.py
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Hashable, Mapping, Optional, Union
 
 import numpy as np
 
@@ -19,6 +20,62 @@ if TYPE_CHECKING:
     from oceanstream.echodata.config import DenoiseConfig
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Frequency-keyed parameter dispatch (ported from saildrone/denoise/mask.py)
+# ---------------------------------------------------------------------------
+
+def _params_for_channel(
+    param_sets: Mapping[Any, Any],
+    ch_ds: "xr.Dataset",
+    pulse_length: str | None = None,
+) -> dict | None:
+    """Return the parameter dictionary for a single channel.
+
+    Behaviour:
+      - If *param_sets* is a flat dict (no per-frequency sub-dicts),
+        return it unchanged.
+      - Otherwise pick the entry keyed by the channel's
+        ``frequency_nominal`` (supports int/str keys like ``38000`` /
+        ``"38000"``).
+      - If *pulse_length* is supplied (``"short_pulse"`` or
+        ``"long_pulse"``) and the per-frequency entry contains that
+        sub-key, return the sub-dict.  The sub-dict may be ``None``
+        (meaning "skip this channel for this stage").
+
+    Returns ``None`` when the channel should be skipped entirely.
+    """
+    # Single-dict case: no per-frequency mappings
+    if not any(isinstance(v, Mapping) for v in param_sets.values()):
+        return dict(param_sets)
+
+    # Resolve frequency key
+    freq = float(ch_ds["frequency_nominal"].compute().item())
+    key_str = str(int(freq))
+
+    if freq in param_sets:
+        entry = param_sets[freq]
+    elif key_str in param_sets:
+        entry = param_sets[key_str]
+    else:
+        logger.warning(f"{freq} Hz parameters missing, skipping channel")
+        return None
+
+    # Optional pulse-length selection
+    if pulse_length and isinstance(entry, Mapping):
+        pl = pulse_length.lower()
+        if pl.startswith("short"):
+            subkey = "short_pulse"
+        elif pl.startswith("long"):
+            subkey = "long_pulse"
+        else:
+            subkey = None
+
+        if subkey and subkey in entry:
+            return entry[subkey]  # may be None (explicitly disabled)
+
+    return dict(entry) if isinstance(entry, Mapping) else entry
 
 
 def apply_denoising(
@@ -117,121 +174,155 @@ def apply_denoising(
 
 def build_full_mask(
     ds: "xr.Dataset",
-    methods: list[str],
-    config: "DenoiseConfig",
+    methods: list[str] | None = None,
+    config: Optional["DenoiseConfig"] = None,
+    stages: Mapping[str, dict] | None = None,
     var_name: str = "Sv",
     return_stage_masks: bool = True,
+    mask_unfeasible: bool = False,
+    pulse_length: str | None = None,
 ) -> Union["xr.DataArray", tuple["xr.DataArray", dict]]:
-    """
-    Build combined noise mask using per-channel processing.
-    
+    """Build combined noise mask using per-channel processing.
+
     Processes each channel independently, building masks for each
     denoising method and combining them with OR logic.
-    
-    Supports frequency-specific parameters when config.use_frequency_specific=True.
-    
+
+    Two calling conventions are supported:
+
+    1. **Config-based** (OceanStream native)::
+
+           build_full_mask(ds, methods=["background", "impulse"], config=cfg)
+
+    2. **Stages-dict** (saildrone-compatible)::
+
+           build_full_mask(ds, stages={
+               "impulsive": {"fn": impulse_noise_mask, "param_sets": {...}},
+               "background": {"fn": background_noise_mask, "param_sets": {...}},
+           })
+
+       When using *stages*, each ``param_sets`` value may be:
+       - A flat dict (used for every channel), **or**
+       - A frequency-keyed dict (``{"38000": {...}, "200000": {...}}``),
+         optionally with ``"short_pulse"`` / ``"long_pulse"`` sub-keys.
+
     Args:
-        ds: Sv xarray Dataset
-        methods: List of method names
-        config: DenoiseConfig with parameters
-        var_name: Variable to mask (default: "Sv")
-        return_stage_masks: If True, also return per-stage masks
-        
+        ds: Sv xarray Dataset.
+        methods: List of method name strings (config-based API).
+        config: DenoiseConfig with parameters (config-based API).
+        stages: Dict mapping stage names to ``{"fn": callable, "param_sets": ...}``
+            (stages-dict API).
+        var_name: Variable to mask (default ``"Sv"``).
+        return_stage_masks: If True, also return per-stage masks.
+        mask_unfeasible: If True, OR the unfeasible mask into the stage mask.
+        pulse_length: ``"short_pulse"`` or ``"long_pulse"`` for pulse-length
+            dispatch.
+
     Returns:
-        Combined mask DataArray, or tuple of (mask, stage_dict) if return_stage_masks
+        Combined mask DataArray, or ``(mask, stage_cubes_dict)`` if
+        *return_stage_masks* is True.
     """
     import xarray as xr
-    
+
     from oceanstream.echodata.denoise.background_noise import background_noise_mask
     from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
     from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
     from oceanstream.echodata.denoise.attenuation import attenuation_mask
-    
-    n_ch = ds.dims.get("channel", 1)
-    
-    # Initialize stage tracking
-    stage_masks = {method: [] for method in methods}
-    ch_masks = []
-    
-    # Map method names to functions
+
+    # Map method names → functions (config-based API)
     method_fns = {
         "background": background_noise_mask,
         "transient": transient_noise_mask,
         "impulse": impulse_noise_mask,
         "attenuation": attenuation_mask,
     }
-    
-    # Process each channel
-    for ch in range(n_ch):
-        ch_ds = ds.isel(channel=ch)
-        reference = ds[var_name].isel(channel=ch)
-        stage_or = None
-        
-        # Get frequency for this channel (for frequency-specific params)
-        frequency_hz = None
-        if "frequency_nominal" in ch_ds.coords:
-            frequency_hz = float(ch_ds["frequency_nominal"].values)
-        
+
+    # ── Build a unified stages dict from whichever API was used ──────
+    if stages is not None:
+        # Already in stages-dict form – nothing to do
+        pass
+    elif methods is not None:
+        if config is None:
+            from oceanstream.echodata.config import DenoiseConfig
+            config = DenoiseConfig()
+        stages = {}
         for method in methods:
             if method not in method_fns:
                 logger.warning(f"Unknown method {method}, skipping")
                 continue
-            
-            fn = method_fns[method]
-            
-            # Get parameters - frequency-specific if enabled
-            if config.use_frequency_specific and frequency_hz is not None:
-                params = config.get_params_for_frequency(frequency_hz, method)
-                logger.debug(f"Using frequency-specific params for {frequency_hz} Hz, {method}")
+            # Build param_sets from config
+            if method == "background":
+                params = config.to_background_params()
+            elif method == "transient":
+                params = config.to_transient_params()
+            elif method == "impulse":
+                params = config.to_impulse_params()
+            elif method == "attenuation":
+                params = config.to_attenuation_params()
             else:
-                # Use global params
-                if method == "background":
-                    params = config.to_background_params()
-                elif method == "transient":
-                    params = config.to_transient_params()
-                elif method == "impulse":
-                    params = config.to_impulse_params()
-                elif method == "attenuation":
-                    params = config.to_attenuation_params()
-            
-            try:
-                result = fn(ch_ds, params)
-                
-                # Handle functions that return tuple (mask, unfeasible_mask, ...)
-                if isinstance(result, (tuple, list)):
-                    stage_mask = result[0]
-                else:
-                    stage_mask = result
-                
-                if stage_mask is None:
-                    continue
-                
-                # Ensure mask matches reference coordinates
-                stage_mask = stage_mask.broadcast_like(reference)
-                stage_mask = stage_mask.reset_coords(drop=True)
-                
-                # Expand to channel dimension
-                ch_value = ds["channel"].values[ch]
-                stage_mask = stage_mask.expand_dims(channel=[ch_value])
-                
-                # Only mask where data is valid
-                stage_mask = stage_mask & ~reference.isnull().expand_dims(channel=[ch_value])
-                
-                # Store per-stage
-                stage_masks[method].append(stage_mask)
-                
-                # Combine with OR logic
-                stage_or = stage_mask if stage_or is None else (stage_or | stage_mask)
-                
-            except Exception as e:
-                logger.warning(f"Error computing {method} mask for channel {ch}: {e}")
+                params = {}
+            stages[method] = {"fn": method_fns[method], "param_sets": params}
+        pulse_length = pulse_length or getattr(config, "pulse_length", None)
+    else:
+        raise ValueError("Either 'methods' or 'stages' must be provided.")
+
+    n_ch = ds.sizes.get("channel", 1)
+    stage_masks: dict[str, list] = {name: [] for name in stages}
+    ch_masks: list[xr.DataArray] = []
+
+    for ch in range(n_ch):
+        ch_ds = ds.isel(channel=ch)
+        reference = ds[var_name].isel(channel=ch)
+        stage_or = None
+
+        for stage_name, spec in stages.items():
+            fn = spec["fn"]
+            param_sets = spec["param_sets"]
+
+            # Resolve parameters for this channel
+            pars = _params_for_channel(param_sets, ch_ds, pulse_length)
+            if pars is None:
                 continue
-        
+
+            try:
+                result = fn(ch_ds, pars)
+            except Exception as e:
+                logger.warning(
+                    f"Error computing {stage_name} mask for channel {ch}: {e}"
+                )
+                continue
+
+            # All denoise functions now return (mask, unfeasible) tuples
+            if isinstance(result, (tuple, list)):
+                if mask_unfeasible and len(result) >= 2:
+                    stage_mask = result[0] | result[1]
+                else:
+                    stage_mask = result[0]
+            else:
+                stage_mask = result
+
+            if stage_mask is None:
+                continue
+
+            # Align coordinates
+            stage_mask = stage_mask.broadcast_like(reference)
+            stage_mask = stage_mask.reset_coords(drop=True)
+            for cname in reference.coords:
+                if cname in stage_mask.dims or cname == "channel":
+                    continue
+                stage_mask = stage_mask.assign_coords({cname: reference.coords[cname]})
+
+            # Expand to channel dimension
+            ch_value = ds["channel"].values[ch]
+            stage_mask = stage_mask.expand_dims(channel=[ch_value])
+            stage_mask = stage_mask & ~reference.isnull().expand_dims(channel=[ch_value])
+
+            stage_masks[stage_name].append(stage_mask)
+            stage_or = stage_mask if stage_or is None else (stage_or | stage_mask)
+
         if stage_or is not None:
             ch_masks.append(stage_or)
-    
+
     if not ch_masks:
-        # Return all-False mask if nothing worked
         full_mask = xr.DataArray(
             np.zeros(ds[var_name].shape, dtype=bool),
             dims=ds[var_name].dims,
@@ -240,26 +331,24 @@ def build_full_mask(
         if return_stage_masks:
             return full_mask, {}
         return full_mask
-    
-    # Combine channel masks
+
     full_mask = xr.concat(ch_masks, dim="channel")
     full_mask = full_mask.broadcast_like(ds[var_name])
     full_mask.name = "combined_mask"
-    
+
     pct_flagged = float(full_mask.mean().values) * 100
     logger.info(f"Combined mask: {pct_flagged:.1f}% flagged as noise")
-    
+
     if not return_stage_masks:
         return full_mask
-    
-    # Stitch per-stage lists into cubes
-    stage_cubes = {}
-    for method, m_list in stage_masks.items():
+
+    stage_cubes: dict[str, xr.DataArray] = {}
+    for name, m_list in stage_masks.items():
         if m_list:
-            stage_cube = xr.concat(m_list, dim="channel")
-            stage_cube = stage_cube.broadcast_like(ds[var_name])
-            stage_cubes[method] = stage_cube
-    
+            cube = xr.concat(m_list, dim="channel")
+            cube = cube.broadcast_like(ds[var_name])
+            stage_cubes[name] = cube
+
     return full_mask, stage_cubes
 
 
@@ -291,24 +380,30 @@ def build_noise_mask(
         
         if method == "background":
             from oceanstream.echodata.denoise.background_noise import background_noise_mask
-            mask = background_noise_mask(sv_dataset, config.to_background_params())
-        
+            result = background_noise_mask(sv_dataset, config.to_background_params())
+
         elif method == "transient":
             from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
-            mask = transient_noise_mask(sv_dataset, config.to_transient_params())
-        
+            result = transient_noise_mask(sv_dataset, config.to_transient_params())
+
         elif method == "impulse":
             from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
-            mask = impulse_noise_mask(sv_dataset, config.to_impulse_params())
-        
+            result = impulse_noise_mask(sv_dataset, config.to_impulse_params())
+
         elif method == "attenuation":
             from oceanstream.echodata.denoise.attenuation import attenuation_mask
-            mask = attenuation_mask(sv_dataset, config.to_attenuation_params())
-        
+            result = attenuation_mask(sv_dataset, config.to_attenuation_params())
+
         else:
             logger.warning(f"Unknown denoising method: {method}, skipping")
             continue
         
+        # All functions now return (mask, unfeasible) tuples
+        if isinstance(result, (tuple, list)):
+            mask = result[0]
+        else:
+            mask = result
+
         if mask is not None:
             masks.append(mask)
     

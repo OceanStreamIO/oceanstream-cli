@@ -787,3 +787,320 @@ def _plot_single_mask_cube(
     plt.close(fig)
     
     return out_path
+
+
+# ---------------------------------------------------------------------------
+# Interactive HoloViews echogram (ported from saildrone/process/plot.py)
+# ---------------------------------------------------------------------------
+
+def create_interactive_echogram(
+    ds_Sv: "xr.Dataset",
+    channel: int = 0,
+    var: str = "Sv",
+    title: Optional[str] = None,
+    out_html: Union[str, Path] = "echogram.html",
+    cmap: str = "ocean_r",
+    vmin: float = -80,
+    vmax: float = -50,
+    time_split: Optional[str] = None,
+    seabed_depth: Optional["xr.DataArray"] = None,
+    constrain_pan: bool = True,
+    lock_zoom_out: bool = True,
+    auto_clip_shallow: bool = True,
+    auto_clip_margin: float = 50.0,
+    min_width: int = 600,
+    max_width: int = 1600,
+    min_height: int = 300,
+    max_height: int = 800,
+    px_per_meter: float = 0.8,
+    tools: str = "pan,wheel_zoom,box_zoom,reset,hover",
+    plot_bg_color: Optional[str] = "#f9f9f9",
+) -> Path:
+    """Create an interactive echogram as a standalone HTML file.
+
+    Uses HoloViews/Panel with rasterized quadmesh for fast rendering
+    of large datasets.  Optionally overlays a seabed detection line
+    and supports time-split tabs for multi-day data.
+
+    Requires optional dependencies: ``holoviews``, ``panel``, ``hvplot``,
+    ``datashader``, ``bokeh``.
+
+    Args:
+        ds_Sv: Sv xarray Dataset (with ``channel`` dimension).
+        channel: Channel index to plot.
+        var: Variable name to plot (default ``"Sv"``).
+        title: Plot title.
+        out_html: Output HTML file path.
+        cmap: Colormap name.
+        vmin, vmax: Colour scale limits (dB).
+        time_split: Pandas offset alias for splitting into tabs
+            (e.g. ``"12h"``, ``"1D"``).  ``None`` = single plot.
+        seabed_depth: Optional DataArray with seabed depth per ping
+            (from ``detect_seabed``).  Overlaid as a red line.
+        constrain_pan: Lock panning to data extents.
+        lock_zoom_out: Prevent zoom-out beyond data extents.
+        auto_clip_shallow: Clip shallow all-NaN regions.
+        auto_clip_margin: Margin (m) below deepest valid data for
+            auto-clip.
+        min_width, max_width, min_height, max_height: Canvas size bounds (px).
+        px_per_meter: Pixels per metre of depth range.
+        tools: Bokeh tools string.
+        plot_bg_color: Background colour for the plot area.
+
+    Returns:
+        Path to the generated HTML file.
+    """
+    try:
+        import holoviews as hv
+        import hvplot.xarray  # noqa: F401  – registers accessor
+        import panel as pn
+        from bokeh.resources import INLINE as bokeh_resources
+    except ImportError as e:
+        raise ImportError(
+            "Interactive echograms require holoviews, hvplot, panel, "
+            "datashader, and bokeh.  Install with: "
+            "pip install holoviews hvplot panel datashader bokeh"
+        ) from e
+
+    import re
+
+    import xarray as xr
+
+    hv.extension("bokeh")
+    out_html = Path(out_html)
+
+    ds_Sv = ensure_channel_labels(ds_Sv)
+
+    # Determine axes
+    if "depth" in ds_Sv.dims or "depth" in ds_Sv.coords:
+        ydim = "depth"
+    elif "echo_range" in ds_Sv.dims or "echo_range" in ds_Sv.coords:
+        ydim = "echo_range"
+    elif "range_sample" in ds_Sv.dims:
+        ydim = "range_sample"
+    else:
+        ydim = [d for d in ds_Sv[var].dims if d not in ("channel", "ping_time")][0]
+    xdim = "ping_time"
+
+    # Select channel
+    da = ds_Sv[var].isel(channel=channel)
+    if da.dims != (xdim, ydim):
+        da = da.transpose(xdim, ydim)
+
+    if ydim == "depth" and np.any(np.diff(da[ydim].values) < 0):
+        da = da.sortby(ydim)
+
+    try:
+        da = da.compute()
+    except Exception:
+        pass
+
+    # Sanitize attrs
+    da.name = "Sv"
+    da.attrs.setdefault("units", "dB")
+
+    # Auto-clip shallow
+    if auto_clip_shallow and ydim == "depth":
+        valid_by_depth = np.isfinite(da).any(dim=xdim)
+        if bool(valid_by_depth.any()):
+            depth_with_data = da[ydim].where(valid_by_depth, drop=True)
+            dmin = float(depth_with_data.min().values)
+            dmax_data = float(depth_with_data.max().values)
+            dmax_full = float(da[ydim].max().values)
+            if dmax_data < dmax_full - 1e-6:
+                upper = dmax_data + auto_clip_margin
+                da = da.sel({ydim: slice(dmin, upper)})
+
+    def _canvas_size(chunk):
+        n_x = chunk.sizes[xdim]
+        w = int(np.clip(n_x * 0.05, min_width, max_width))
+        yy = chunk[ydim].values
+        y0, y1 = float(np.nanmin(yy)), float(np.nanmax(yy))
+        span_m = max(abs(y1 - y0), 1.0)
+        h = int(np.clip(span_m * px_per_meter, min_height, max_height))
+        return w, h
+
+    def _plot(chunk, label: str):
+        w, h = _canvas_size(chunk)
+        p = chunk.hvplot.quadmesh(
+            x=xdim,
+            y=ydim,
+            rasterize=True,
+            upsample=True,
+            aggregator="mean",
+            width=w,
+            height=h,
+            cmap=cmap,
+            clim=(vmin, vmax),
+            cnorm="linear",
+            flip_yaxis=(ydim == "depth"),
+            clabel="Sv (dB)",
+            colorbar=True,
+            title=label,
+            tools=[],
+        )
+
+        # Overlay seabed line
+        if seabed_depth is not None:
+            sb_df = pd.DataFrame({
+                xdim: seabed_depth["ping_time"].values,
+                "seabed": seabed_depth.values,
+            }).dropna()
+            if not sb_df.empty:
+                import pandas as pd_  # noqa: F811
+                sb_curve = hv.Curve(sb_df, xdim, "seabed").opts(
+                    color="red", line_width=1.5, line_dash="dashed",
+                )
+                p = p * sb_curve
+
+        p = p.opts(
+            active_tools=["xwheel_zoom"],
+            tools=[],
+            bgcolor=plot_bg_color,
+            padding=0.02,
+            fontsize=11,
+        )
+        return p
+
+    import pandas as pd
+
+    if time_split:
+        t0 = pd.to_datetime(da[xdim].values[0]).floor(time_split)
+        t1 = pd.to_datetime(da[xdim].values[-1]).ceil(time_split)
+        edges = pd.date_range(t0, t1, freq=time_split)
+
+        tabs = []
+        for start, end in zip(edges[:-1], edges[1:]):
+            sl = da.sel({xdim: slice(start, end)})
+            if sl.size == 0:
+                continue
+            try:
+                sl = sl.compute()
+            except Exception:
+                pass
+            tabs.append(
+                (f"{start:%Y-%m-%d %H:%M} – {end:%H:%M}", _plot(sl, ""))
+            )
+
+        panel_obj = (
+            pn.Tabs(*tabs)
+            if len(tabs) > 1
+            else (pn.panel(tabs[0][1]) if tabs else pn.pane.Markdown("No data"))
+        )
+    else:
+        panel_obj = pn.panel(_plot(da, title or ""))
+
+    panel_obj.save(
+        str(out_html), embed=True, resources=bokeh_resources, title=(title or "Echogram")
+    )
+    logger.info(f"Interactive echogram saved to {out_html}")
+    return out_html
+
+
+def plot_sv_with_seabed(
+    ds_Sv: "xr.Dataset",
+    seabed_depth: "xr.DataArray",
+    channel: int = 0,
+    file_base_name: str = "echogram",
+    echogram_path: str = ".",
+    cmap: str = "ocean_r",
+    vmin: float = -80,
+    vmax: float = -50,
+    dpi: int = 180,
+    seabed_color: str = "red",
+    seabed_linewidth: float = 1.5,
+) -> Path:
+    """Plot Sv echogram with a seabed detection line overlay.
+
+    A convenience wrapper around ``plot_sv_channel`` that adds the
+    seabed line from a ``SeabedDetectionResult.seabed_depth`` DataArray.
+
+    Args:
+        ds_Sv: Sv xarray Dataset.
+        seabed_depth: 1-D DataArray (indexed by ``ping_time``) with
+            seabed depth in metres.
+        channel: Channel index.
+        file_base_name: Output file base name.
+        echogram_path: Output directory.
+        cmap: Colormap.
+        vmin, vmax: Colour scale limits.
+        dpi: Image resolution.
+        seabed_color: Line colour for the seabed overlay.
+        seabed_linewidth: Line width.
+
+    Returns:
+        Path to the saved PNG file.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
+    ds_Sv = ensure_channel_labels(ds_Sv)
+
+    da, meta = prepare_channel_da(ds_Sv, channel)
+    import pandas as pd
+
+    t = pd.to_datetime(da[meta["xdim"]].values)
+    hours = max(1.0, (t[-1] - t[0]).total_seconds() / 3600.0)
+    width_in = max(14.0, hours * 1.0)
+    height_in = 12.0
+
+    fig, ax = plt.subplots(figsize=(width_in, height_in))
+
+    da.T.plot.pcolormesh(
+        x=meta["xdim"],
+        y=meta["ydim"],
+        shading="auto",
+        yincrease=False,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=cmap,
+        add_colorbar=True,
+        ylim=(meta["bot"], meta["top"]),
+        ax=ax,
+        rasterized=True,
+    )
+
+    # Overlay seabed line
+    sb_times = pd.to_datetime(seabed_depth["ping_time"].values)
+    sb_vals = seabed_depth.values.astype(float)
+    valid = ~np.isnan(sb_vals)
+    if valid.any():
+        ax.plot(
+            sb_times[valid],
+            sb_vals[valid],
+            color=seabed_color,
+            linewidth=seabed_linewidth,
+            linestyle="--",
+            label="Seabed",
+        )
+        ax.legend(loc="lower right", fontsize=10)
+
+    ax.set_facecolor("#f9f9f9")
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=18))
+    ax.xaxis.set_major_formatter(meta["x_formatter"])
+    ax.set_xlabel(meta["x_label"], fontsize=16, labelpad=14)
+    ax.set_ylabel(
+        "Depth [m]" if meta["ydim"] != "range_sample" else "Sample #",
+        fontsize=16,
+        labelpad=14,
+    )
+    ax.set_title(
+        meta["ch_label"],
+        fontsize=18,
+        fontweight="bold",
+        pad=16,
+    )
+    ax.tick_params(which="major", length=6, width=1, labelsize=11)
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+
+    fig.tight_layout(pad=2)
+
+    out_path = Path(echogram_path) / f"{file_base_name}_{meta['safe_label']}_seabed.png"
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+
+    logger.info(f"Echogram with seabed overlay saved to {out_path}")
+    return out_path
+

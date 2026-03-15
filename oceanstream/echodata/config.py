@@ -162,6 +162,11 @@ def get_frequency_params(
     """
     Get denoising parameters optimized for a specific frequency.
     
+    Supports optional pulse-length selection. When a frequency preset contains
+    ``"short_pulse"`` / ``"long_pulse"`` sub-dicts inside a method entry **and**
+    *pulse_length* is provided, the corresponding sub-dict is returned.
+    Otherwise the method entry is returned as-is.
+    
     Args:
         frequency_hz: Nominal frequency in Hz (e.g., 38000, 200000)
         method: Denoising method ("background", "transient", "impulse", "attenuation")
@@ -188,7 +193,18 @@ def get_frequency_params(
     if method not in preset:
         raise ValueError(f"Unknown method '{method}'. Available: {list(preset.keys())}")
     
-    return preset[method].copy()
+    entry = preset[method]
+
+    # Pulse-length selection (mirrors legacy _params_for_channel logic)
+    if pulse_length and isinstance(entry, dict):
+        pl = pulse_length.lower()
+        subkey = "short_pulse" if pl.startswith("short") else (
+            "long_pulse" if pl.startswith("long") else None
+        )
+        if subkey and subkey in entry:
+            return entry[subkey].copy() if entry[subkey] is not None else {}
+
+    return entry.copy()
 
 
 @dataclass
@@ -279,8 +295,7 @@ class DenoiseConfig:
                 return self.frequency_params[freq_int][method].copy()
         
         # Fall back to presets
-        return get_frequency_params(freq_int, method, self.pulse_length)
-    
+        return get_frequency_params(freq_int, method, self.pulse_length)    
     def _get_global_params(self, method: str) -> dict:
         """Get global (non-frequency-specific) parameters."""
         if method == "background":
@@ -413,10 +428,7 @@ class EchodataConfig:
         if not path.exists():
             return cls()
         
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # Python < 3.11
+        import tomllib
         
         with open(path, "rb") as f:
             data = tomllib.load(f)

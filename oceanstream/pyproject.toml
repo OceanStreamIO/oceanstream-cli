@@ -10,7 +10,7 @@ readme = "README.md"
 oceanstream = "oceanstream.cli:app"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.13"
+python = ">=3.11,<3.14"
 # Core dependencies (always installed)
 pandas = ">=2.1"
 pyarrow = ">=14"
