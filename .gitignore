@@ -71,3 +71,4 @@ Thumbs.db
 _echodata-legacy-code/
 _oceanstream-website-static/
 web_app
+coverage.json

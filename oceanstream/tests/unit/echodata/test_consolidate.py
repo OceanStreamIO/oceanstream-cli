@@ -197,7 +197,7 @@ class TestAddDepthFromEchodata:
         assert callable(add_depth_from_echodata)
     
     def test_with_missing_echodata_file(self, tmp_path):
-        """Test that missing echodata file raises FileNotFoundError."""
+        """Test that missing echodata file uses fallback when echopype is unavailable."""
         from oceanstream.echodata.consolidate.depth import add_depth_from_echodata
         
         ds = xr.Dataset(
@@ -215,16 +215,29 @@ class TestAddDepthFromEchodata:
         
         fake_path = tmp_path / "nonexistent.zarr"
         
-        # Should raise FileNotFoundError for missing file
-        with pytest.raises(FileNotFoundError):
-            add_depth_from_echodata(ds, fake_path, depth_offset=5.0)
+        # When echopype is not installed, add_depth_from_echodata falls back
+        # to add_depth_to_sv(echodata=None) rather than raising.
+        try:
+            import echopype  # noqa: F401
+            # echopype IS available — the path check should raise
+            with pytest.raises(FileNotFoundError):
+                add_depth_from_echodata(ds, fake_path, depth_offset=5.0)
+        except ImportError:
+            # echopype NOT available — fallback path returns a dataset with depth
+            result = add_depth_from_echodata(ds, fake_path, depth_offset=5.0)
+            assert "depth" in result.data_vars or "depth" in result.coords
 
 
 class TestDepthComputation:
     """Integration tests for depth computation in NASC workflow."""
 
     def test_nasc_with_auto_depth(self):
-        """Test that compute_nasc works with auto-computed depth."""
+        """Test that compute_nasc works with auto-computed depth.
+        
+        Requires echopype — skipped when the fork is not installed or
+        has version-incompatible dependencies (datatree / xarray).
+        """
+        ep = pytest.importorskip("echopype", reason="echopype not available")
         from oceanstream.echodata.compute import compute_nasc
         
         np.random.seed(42)
