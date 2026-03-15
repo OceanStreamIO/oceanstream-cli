@@ -3,9 +3,10 @@
 .AppleDouble
 .LSOverride
 
-# VSCode
+# VSCode / IDE
 .vscode/
 .history/
+.idea/
 
 # Python
 __pycache__/
@@ -19,6 +20,7 @@ __pycache__/
 # Virtual envs
 .venv/
 venv/
+venv311/
 env/
 
 # Packaging
@@ -38,14 +40,25 @@ coverage_html/
 # Logs
 *.log
 
+# Backup files
+*.bak*
+
 # Data outputs
 out/
 **/out/
 **/geoparquet/
+data/
+output/
+raw_data/
 
-# Documentation build
-.docs-website/site/
-docs/site/
+# Documentation (lives in oceanstream-docs repo)
+.docs-website/
+.mkdocs-shadcn-fork/
+docs-internal/
+
+# Processing artifacts
+.oceanstream_staging/
+.oceanstream_work/
 
 # Local overrides
 .env
@@ -53,7 +66,8 @@ docs/site/
 
 # OS cruft
 Thumbs.db
-raw_data
 
+# Legacy / internal (removed from repo)
+_echodata-legacy-code/
+_oceanstream-website-static/
 web_app
-venv311
