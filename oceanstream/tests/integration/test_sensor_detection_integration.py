@@ -197,8 +197,8 @@ class TestSensorDetectionWithRealData:
 
     @pytest.fixture
     def test_data_dir(self):
-        """Get the test data directory."""
-        return Path(__file__).parent.parent.parent.parent / "raw_data"
+        """Get the saildrone test data directory."""
+        return Path(__file__).parent.parent.parent.parent / "raw_data" / "saildrone"
 
     def test_detect_sensors_from_real_csv(self, test_data_dir):
         """Test sensor detection with real Saildrone CSV files."""

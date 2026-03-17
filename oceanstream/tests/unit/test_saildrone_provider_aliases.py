@@ -1,10 +1,11 @@
-from providers import get_provider
+from oceanstream.providers import get_provider
 import pandas as pd
 
 
 def test_saildrone_semantic_alias_mapping():
     """Test semantic mappings for Saildrone-specific abbreviations."""
     provider = get_provider("saildrone")
+    assert provider.name == "noaa_pmel"  # renamed but backward-compatible
     cols = ["SOG", "COG", "HDG", "TEMP_AIR_MEAN", "CHLOR_WETLABS_MEAN"]
     aliases = provider.alias_mapping(cols)
     

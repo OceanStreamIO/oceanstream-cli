@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from oceanstream.cli import app
+from oceanstream.geotrack import campaign as campaign_module
 
 runner = CliRunner()
 
@@ -25,7 +26,7 @@ def clean_campaign(request):
     
     # Cleanup after test
     for campaign_id in campaign_ids:
-        campaign_dir = Path.home() / ".oceanstream" / "campaigns" / campaign_id
+        campaign_dir = campaign_module.get_campaigns_dir() / campaign_id
         if campaign_dir.exists():
             shutil.rmtree(campaign_dir)
 
@@ -46,7 +47,7 @@ class TestCampaignCreateCLI:
         assert campaign_id in result.stdout
         
         # Verify metadata file exists
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         assert metadata_file.exists()
         
         with open(metadata_file) as f:
@@ -68,7 +69,7 @@ class TestCampaignCreateCLI:
         assert "az://mycontainer/campaigns" in result.stdout
         
         # Verify output_dir in metadata
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         with open(metadata_file) as f:
             metadata = json.load(f)
         
@@ -102,7 +103,7 @@ class TestCampaignCreateCLI:
         assert "Campaign created successfully" in result.stdout
         
         # Verify all fields in metadata
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         with open(metadata_file) as f:
             metadata = json.load(f)
         
@@ -189,7 +190,7 @@ class TestCampaignCreateInteractive:
         assert "Campaign created successfully" in result.stdout
         
         # Verify campaign was created
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         assert metadata_file.exists()
     
     def test_interactive_mode_with_cloud_uri(self, clean_campaign):
@@ -225,7 +226,7 @@ class TestCampaignCreateInteractive:
         assert "Campaign created successfully" in result.stdout
         
         # Verify metadata
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         with open(metadata_file) as f:
             metadata = json.load(f)
         
@@ -271,7 +272,7 @@ class TestCampaignCreateInteractive:
         assert result.exit_code == 0
         
         # Verify metadata
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         with open(metadata_file) as f:
             metadata = json.load(f)
         
@@ -313,7 +314,7 @@ class TestCampaignCreateInteractive:
         assert result.exit_code == 0
         
         # Verify custom values
-        metadata_file = Path.home() / ".oceanstream" / "campaigns" / campaign_id / "campaign.json"
+        metadata_file = campaign_module.get_campaigns_dir() / campaign_id / "campaign.json"
         with open(metadata_file) as f:
             metadata = json.load(f)
         

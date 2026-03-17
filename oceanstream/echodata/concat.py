@@ -145,7 +145,7 @@ def concatenate_daily(
     except ImportError as e:
         raise ImportError(
             "echopype is required. Install the fork: "
-            "pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge"
+            "pip install git+https://github.com/OceanStreamIO/echopype.git@oceanstream-integration"
         ) from e
     
     output_path = Path(output_path)

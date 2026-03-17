@@ -25,8 +25,7 @@ Dependencies:
     This module requires the echodata extras to be installed:
         pip install "oceanstream[echodata]"
     
-    Additionally, the echopype fork must be installed manually:
-        pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge
+    echopype is included automatically from the OceanStreamIO fork.
 """
 
 from __future__ import annotations

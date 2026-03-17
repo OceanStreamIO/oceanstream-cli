@@ -9,7 +9,9 @@ def test_list_providers_function():
     providers = list_providers()
     assert isinstance(providers, list)
     assert len(providers) > 0
-    assert "saildrone" in providers
+    assert "saildrone" not in providers  # alias, hidden from listing
+    assert "noaa_pmel" in providers
+    assert "generic" in providers
     # Verify sorted order
     assert providers == sorted(providers)
 
@@ -24,7 +26,7 @@ def test_providers_cli_command():
     
     assert result.exit_code == 0
     assert "Available providers:" in result.output
-    assert "saildrone" in result.output
+    assert "saildrone" not in result.output  # alias, hidden from listing
 
 
 @pytest.mark.integration

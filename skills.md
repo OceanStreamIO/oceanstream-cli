@@ -811,8 +811,8 @@ oceanstream process geotrack convert --list-columns --input-source ./data
 **Echodata dependency error**
 ```bash
 # Echodata requires the echopype fork
-pip install oceanstream[echodata]
-# Then install echopype fork separately
+pip install "oceanstream[echodata]"
+# echopype is included as a dependency from the OceanStreamIO fork
 ```
 
 ### Debug Mode

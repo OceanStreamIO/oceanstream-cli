@@ -73,8 +73,8 @@ def test_cli_geotrack_with_pmtiles(tmp_path: Path, monkeypatch):
     parquet_files = list(geoparquet_dir.rglob("*.parquet"))
     assert parquet_files, "No GeoParquet files were created"
     
-    # Check PMTiles file was created in tiles/ directory
-    tiles_dir = out_dir / "tiles"
+    # Check PMTiles file was created in tiles/ directory (sibling of campaign dir inside geoparquet)
+    tiles_dir = out_dir / "geoparquet" / "tiles"
     assert tiles_dir.exists(), f"Tiles directory not created. Output:\n{result.output}"
     
     pmtiles_file = tiles_dir / "track.pmtiles"
@@ -253,8 +253,8 @@ def test_cli_geotrack_pmtiles_custom_params(tmp_path: Path, monkeypatch):
     
     assert result.exit_code == 0, f"CLI failed: {result.exit_code}\n{result.output}"
     
-    # Check PMTiles file was created
-    tiles_dir = out_dir / "tiles"
+    # Check PMTiles file was created (sibling of campaign dir inside geoparquet)
+    tiles_dir = out_dir / "geoparquet" / "tiles"
     pmtiles_file = tiles_dir / "track.pmtiles"
     assert pmtiles_file.exists(), f"PMTiles file not created"
     

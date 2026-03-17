@@ -8,12 +8,15 @@ Design Goals:
 - Pluggable data sources: CF table + alias table shipped as static JSON snapshots.
 - Lightweight heuristics: name normalization + exact/alias/fuzzy match with confidence scoring.
 """
+
 from __future__ import annotations
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable, Optional
+
 import json
 import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 
 _NORMALIZE_NON_ALNUM = re.compile(r"[^0-9a-zA-Z]+")
@@ -25,8 +28,8 @@ _PREFIX_STRIP = ["sd_", "saildrone_", "raw_", "obs_"]
 @dataclass
 class SemanticConfig:
     enabled: bool = True
-    cf_table_path: Optional[str] = None  # path to CF standard name snapshot (JSON)
-    alias_table_path: Optional[str] = None  # provider/global alias map (JSON)
+    cf_table_path: str | None = None  # path to CF standard name snapshot (JSON)
+    alias_table_path: str | None = None  # provider/global alias map (JSON)
     min_confidence: float = 0.7
     rename_columns: bool = False  # if True apply canonical names to df copy
 
@@ -61,15 +64,15 @@ class SemanticMapper:
             builtin_cf = self._get_builtin_table_path("cf-standard-names.json")
             if builtin_cf.exists():
                 cf_path = builtin_cf
-        
+
         if cf_path:
-            with open(cf_path, "r", encoding="utf-8") as f:
+            with open(cf_path, encoding="utf-8") as f:
                 cf_list = json.load(f)
             if isinstance(cf_list, list):
                 self._cf_table = {str(x).lower() for x in cf_list}
             elif isinstance(cf_list, dict):
                 self._cf_table = {str(k).lower() for k in cf_list.keys()}
-        
+
         # Load alias table
         # Priority: 1. User-supplied path, 2. Built-in Saildrone aliases
         alias_path = None
@@ -79,18 +82,30 @@ class SemanticMapper:
             builtin_alias = self._get_builtin_table_path("saildrone-aliases.json")
             if builtin_alias.exists():
                 alias_path = builtin_alias
-        
+
         if alias_path:
-            with open(alias_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                # assume mapping canonical->list[aliases] OR alias->canonical; normalize both
-                for k, v in data.items():
-                    if isinstance(v, list):
-                        for alias in v:
-                            self._aliases[str(alias).lower()] = str(k).lower()
-                    else:
-                        self._aliases[str(k).lower()] = str(v).lower()
+            self._load_alias_file(alias_path)
+
+    def load_provider_aliases(self, provider_name: str) -> None:
+        """Load additional provider-specific aliases on top of existing ones.
+
+        Looks for ``<provider_name>-aliases.json`` in the built-in data
+        directory.  If found, the aliases are merged into the current table.
+        """
+        alias_path = self._get_builtin_table_path(f"{provider_name}-aliases.json")
+        if alias_path.exists():
+            self._load_alias_file(alias_path)
+
+    def _load_alias_file(self, alias_path: Path) -> None:
+        with open(alias_path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    for alias in v:
+                        self._aliases[str(alias).lower()] = str(k).lower()
+                else:
+                    self._aliases[str(k).lower()] = str(v).lower()
 
     # --- Public API ---
     def apply(self, df: pd.DataFrame) -> SemanticResult:
@@ -138,7 +153,7 @@ class SemanticMapper:
         s = name.strip()
         for p in _PREFIX_STRIP:
             if s.lower().startswith(p):
-                s = s[len(p):]
+                s = s[len(p) :]
         if s.isupper():
             s = s.lower()
         else:
@@ -147,10 +162,10 @@ class SemanticMapper:
         s = _MULTI_US.sub("_", s).strip("_")
         return s
 
-    def _explicit_alias(self, norm_name: str) -> Optional[str]:
+    def _explicit_alias(self, norm_name: str) -> str | None:
         return self._aliases.get(norm_name)
 
-    def _cf_match(self, canonical: str) -> tuple[Optional[str], float]:
+    def _cf_match(self, canonical: str) -> tuple[str | None, float]:
         # Exact
         if canonical in self._cf_table:
             return canonical, 1.0
@@ -173,7 +188,9 @@ class SemanticMapper:
             return "m"
         return None
 
+
 # Future enhancement: function to emit parquet metadata dict from SemanticResult
+
 
 def semantic_to_parquet_metadata(result: SemanticResult) -> dict[str, Any]:
     return {

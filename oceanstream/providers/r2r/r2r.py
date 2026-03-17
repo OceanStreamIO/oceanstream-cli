@@ -67,6 +67,7 @@ class R2RProvider(ProviderBase):
 
     name: str = "r2r"
     supported_modules: List[ProcessingModule] = ["geotrack"]
+    is_stationary: bool = False
 
     # Column name mappings: R2R name -> oceanstream standard
     COLUMN_MAPPINGS = {
@@ -328,3 +329,27 @@ class R2RProvider(ProviderBase):
             md["r2r:doi"] = doi
 
         return md
+
+    def detect_confidence(
+        self,
+        headers: list[str],
+        metadata_lines: list[str],
+        filename: str,
+    ) -> float:
+        """Detect R2R GeoCSV data by metadata comments and column names."""
+        score = 0.0
+        meta_text = " ".join(metadata_lines).lower()
+        # GeoCSV metadata markers
+        if "field_unit" in meta_text or "source_repository" in meta_text:
+            score += 0.4
+        if "r2r" in meta_text or "cruise_id" in meta_text:
+            score += 0.3
+        # Column header signatures
+        lower_headers = {h.lower() for h in headers}
+        r2r_cols = {"ship_latitude", "ship_longitude", "iso_time", "nmea_quality"}
+        if lower_headers & r2r_cols:
+            score = max(score, 0.5 + 0.1 * len(lower_headers & r2r_cols))
+        # Filename pattern: 2-4 uppercase letters + 2-6 digits
+        if re.match(r"[A-Z]{2,4}\d{2,6}", filename):
+            score = max(score, 0.3)
+        return min(score, 1.0)

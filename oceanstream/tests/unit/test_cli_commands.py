@@ -28,14 +28,14 @@ class TestProvidersCommand:
     
     def test_providers_command_lists_providers(self):
         """Test that providers command lists available providers."""
-        with patch('oceanstream.cli.list_providers', return_value=['saildrone', 'r2r', 'erddap']):
-            result = runner.invoke(app, ["providers"])
-        
+        result = runner.invoke(app, ["providers"])
+
         assert result.exit_code == 0
         assert "Available providers:" in result.stdout
-        assert "saildrone" in result.stdout
+        assert "noaa_pmel" in result.stdout
+        assert "saildrone" not in result.stdout  # alias, hidden from listing
         assert "r2r" in result.stdout
-        assert "erddap" in result.stdout
+        assert "generic" in result.stdout
     
     def test_providers_command_empty_list(self):
         """Test providers command with no providers."""

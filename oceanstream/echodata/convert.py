@@ -60,7 +60,7 @@ def convert_raw_file(
     except ImportError as e:
         raise ImportError(
             "echopype is required for echodata processing. "
-            "Install with: pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge"
+            "Install with: pip install git+https://github.com/OceanStreamIO/echopype.git@oceanstream-integration"
         ) from e
     
     if not raw_file.exists():
@@ -204,7 +204,7 @@ def open_converted(zarr_path: Path) -> "EchoData":
     except ImportError as e:
         raise ImportError(
             "echopype is required. Install the fork: "
-            "pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge"
+            "pip install git+https://github.com/OceanStreamIO/echopype.git@oceanstream-integration"
         ) from e
     
     return EchoData.from_file(zarr_path)

@@ -1,9 +1,12 @@
 from __future__ import annotations
-from typing import Any, Iterable
+
 import re
+from collections.abc import Iterable
+from typing import Any
+
 import pandas as pd
 
-from .base import ProviderBase, ProcessingModule
+from .base import ProcessingModule
 from .models import OceanographicMeasurement
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
@@ -28,11 +31,17 @@ def _normalize_alias(name: str) -> str:
     return s or name.lower()
 
 
-class SaildroneProvider(ProviderBase):
-    name = "saildrone"
-    # TODO: Add 'echodata' and 'adcp' once processing logic is implemented
+class NoaaPmelProvider:
+    """Provider for NOAA-PMEL data (Saildrone USV deployments).
+
+    Formerly ``SaildroneProvider``. The actual data provider is NOAA Pacific
+    Marine Environmental Laboratory; Saildrone Inc. manufactures the platforms.
+    """
+
+    name = "noaa_pmel"
     supported_modules: list[ProcessingModule] = ["geotrack"]
-    
+    is_stationary: bool = False
+
     # Semantic mappings: Saildrone-specific column names → canonical field names
     # This allows cross-provider interoperability
     SEMANTIC_MAPPINGS = {
@@ -48,7 +57,6 @@ class SaildroneProvider(ProviderBase):
         "HDG": "heading_deg",
         "HDG_FILTERED_MEAN": "heading_filtered_mean_deg",
         "HDG_FILTERED_STDDEV": "heading_filtered_stddev_deg",
-        
         # Platform orientation
         "ROLL_FILTERED_MEAN": "roll_filtered_mean_deg",
         "ROLL_FILTERED_STDDEV": "roll_filtered_stddev_deg",
@@ -56,7 +64,6 @@ class SaildroneProvider(ProviderBase):
         "PITCH_FILTERED_MEAN": "pitch_filtered_mean_deg",
         "PITCH_FILTERED_STDDEV": "pitch_filtered_stddev_deg",
         "PITCH_FILTERED_PEAK": "pitch_filtered_peak_deg",
-        
         # Wing orientation
         "HDG_WING": "wing_heading_deg",
         "WING_HDG_FILTERED_MEAN": "wing_heading_filtered_mean_deg",
@@ -68,7 +75,6 @@ class SaildroneProvider(ProviderBase):
         "WING_PITCH_FILTERED_STDDEV": "wing_pitch_filtered_stddev_deg",
         "WING_PITCH_FILTERED_PEAK": "wing_pitch_filtered_peak_deg",
         "WING_ANGLE": "wing_angle_deg",
-        
         # Meteorological
         "WIND_FROM_MEAN": "wind_direction_mean_deg",
         "WIND_FROM_STDDEV": "wind_direction_stddev_deg",
@@ -90,7 +96,6 @@ class SaildroneProvider(ProviderBase):
         "RH_STDDEV": "relative_humidity_stddev_percent",
         "BARO_PRES_MEAN": "barometric_pressure_mean_hpa",
         "BARO_PRES_STDDEV": "barometric_pressure_stddev_hpa",
-        
         # Radiation
         "PAR_AIR_MEAN": "par_air_mean_umol_s_m2",
         "PAR_AIR_STDDEV": "par_air_stddev_umol_s_m2",
@@ -98,19 +103,15 @@ class SaildroneProvider(ProviderBase):
         "SW_IRRAD_TOTAL_STDDEV": "shortwave_irradiance_total_stddev_w_m2",
         "SW_IRRAD_DIFFUSE_MEAN": "shortwave_irradiance_diffuse_mean_w_m2",
         "SW_IRRAD_DIFFUSE_STDDEV": "shortwave_irradiance_diffuse_stddev_w_m2",
-        
         # Sea surface temperature
         "TEMP_IR_SEA_WING_UNCOMP_MEAN": "sea_surface_temperature_ir_uncompensated_mean_c",
         "TEMP_IR_SEA_WING_UNCOMP_STDDEV": "sea_surface_temperature_ir_uncompensated_stddev_c",
-        
         # Waves
         "WAVE_DOMINANT_PERIOD": "wave_dominant_period_s",
         "WAVE_SIGNIFICANT_HEIGHT": "wave_significant_height_m",
-        
         # Water column (near-surface)
         "TEMP_DEPTH_HALFMETER_MEAN": "water_temperature_0_5m_mean_c",
         "TEMP_DEPTH_HALFMETER_STDDEV": "water_temperature_0_5m_stddev_c",
-        
         # CTD (SBE37)
         "TEMP_SBE37_MEAN": "water_temperature_ctd_mean_c",
         "TEMP_SBE37_STDDEV": "water_temperature_ctd_stddev_c",
@@ -118,13 +119,11 @@ class SaildroneProvider(ProviderBase):
         "SAL_SBE37_STDDEV": "salinity_ctd_stddev_psu",
         "COND_SBE37_MEAN": "conductivity_ctd_mean_ms_cm",
         "COND_SBE37_STDDEV": "conductivity_ctd_stddev_ms_cm",
-        
         # Dissolved oxygen
         "O2_CONC_SBE37_MEAN": "oxygen_concentration_mean_umol_l",
         "O2_CONC_SBE37_STDDEV": "oxygen_concentration_stddev_umol_l",
         "O2_SAT_SBE37_MEAN": "oxygen_saturation_mean_percent",
         "O2_SAT_SBE37_STDDEV": "oxygen_saturation_stddev_percent",
-        
         # Chlorophyll
         "CHLOR_WETLABS_MEAN": "chlorophyll_fluorescence_mean_ug_l",
         "CHLOR_WETLABS_STDDEV": "chlorophyll_fluorescence_stddev_ug_l",
@@ -132,41 +131,41 @@ class SaildroneProvider(ProviderBase):
 
     def identify_platform(self, filename: str) -> str | None:
         """Extract platform/campaign ID from Saildrone filename.
-        
+
         Saildrone filename format: sd{drone_id}_{mission}_{year}_{hash}_{hash}_{hash}.csv
         Returns: sd{drone_id}_{mission}_{year} (matches ERDDAP Dataset ID pattern)
-        
+
         This ensures campaign_id aligns with NOAA PMEL ERDDAP server conventions.
         Example: sd1030_tpos_2023_7ef2_e8f7_98f9.csv → sd1030_tpos_2023
-        
+
         Args:
             filename: Name of the Saildrone CSV file
-            
+
         Returns:
             Platform ID in format sd{id}_{mission}_{year}, or None if not parsable
         """
         # Remove file extension
         name_without_ext = filename.rsplit('.', 1)[0]
         parts = name_without_ext.split("_")
-        
+
         # Saildrone format: sd{id}_{mission}_{year}_{hash}_{hash}_{hash}
         # We want: sd{id}_{mission}_{year}
         if len(parts) >= 3 and parts[0].startswith('sd') and parts[0][2:].isdigit():
             # Check if third part looks like a year (4 digits)
             if len(parts[2]) == 4 and parts[2].isdigit():
                 return f"{parts[0]}_{parts[1]}_{parts[2]}"
-        
+
         # Fallback: return first part (drone ID only) for older formats
         return parts[0] if parts else None
 
     def enrich_dataframe(self, df: pd.DataFrame, metadata: dict | None = None) -> pd.DataFrame:
         """
         Enrich the Saildrone dataframe.
-        
+
         Args:
             df: Input dataframe
             metadata: Optional metadata dict (not used by Saildrone provider)
-            
+
         Returns:
             Enriched dataframe
         """
@@ -183,16 +182,20 @@ class SaildroneProvider(ProviderBase):
                     pass
         return out
 
-    def units_mapping(self, header: Iterable[str], units_row: Iterable[str] | None = None, 
-                     metadata: dict | None = None) -> dict[str, Any]:
+    def units_mapping(
+        self,
+        header: Iterable[str],
+        units_row: Iterable[str] | None = None,
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
         """
         Extract units mapping for Saildrone data.
-        
+
         Args:
             header: Column names
             units_row: Optional units row from CSV
             metadata: Optional metadata dict (not used by Saildrone provider)
-            
+
         Returns:
             Dictionary mapping column names to units
         """
@@ -207,11 +210,11 @@ class SaildroneProvider(ProviderBase):
     def alias_mapping(self, columns: Iterable[str]) -> dict[str, str]:
         """
         Generate alias mapping with semantic + syntactic normalization.
-        
+
         Priority:
         1. Semantic mappings (provider-specific → canonical vocabulary)
         2. Syntactic normalization (snake_case conversion)
-        
+
         This enables cross-provider interoperability while maintaining backward compatibility.
         """
         aliases: dict[str, str] = {}
@@ -229,11 +232,11 @@ class SaildroneProvider(ProviderBase):
     def parquet_metadata(self, df: pd.DataFrame, metadata: dict | None = None) -> dict[str, Any]:
         """
         Generate parquet metadata for Saildrone data.
-        
+
         Args:
             df: Dataframe to generate metadata for
             metadata: Optional metadata dict (not used by Saildrone provider)
-            
+
         Returns:
             Dictionary of metadata key-value pairs
         """
@@ -244,27 +247,66 @@ class SaildroneProvider(ProviderBase):
                 "columns": list(df.columns),
             }
         }
-    
+
     def supports_module(self, module: ProcessingModule) -> bool:
         """Check if this provider supports the given processing module."""
         return module in self.supported_modules
+
+    def detect_confidence(
+        self,
+        headers: list[str],
+        metadata_lines: list[str],
+        filename: str,
+    ) -> float:
+        """High confidence for Saildrone CSV patterns."""
+        lower_headers = {h.lower() for h in headers}
+        score = 0.0
+        # Signature columns
+        saildrone_signatures = {
+            "trajectory",
+            "sog",
+            "sog_filtered_mean",
+            "temp_sbe37_mean",
+            "cog_filtered_mean",
+            "hdg_filtered_mean",
+            "wing_angle",
+        }
+        matches = lower_headers & saildrone_signatures
+        if matches:
+            score = min(0.4 + len(matches) * 0.1, 0.9)
+        # Filename pattern: sd{digits}_
+        if re.match(r"sd\d{3,5}_", filename, re.IGNORECASE):
+            score = max(score, 0.8)
+        return score
 
     # Optional: helper to convert a row into the generic model
     def to_models(self, df: pd.DataFrame) -> list[OceanographicMeasurement]:
         models: list[OceanographicMeasurement] = []
         for _, row in df.iterrows():
             ts = row.get("time")
-            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else (str(ts) if ts is not None else "")
+            ts_str = (
+                ts.isoformat() if hasattr(ts, "isoformat") else (str(ts) if ts is not None else "")
+            )
             models.append(
                 OceanographicMeasurement(
                     platform_id=str(row.get("platform_id", "")),
                     latitude=float(row.get("latitude")),
                     longitude=float(row.get("longitude")),
                     timestamp=ts_str,
-                    temperature=float(row["temperature"]) if "temperature" in row and pd.notna(row["temperature"]) else None,
-                    salinity=float(row["salinity"]) if "salinity" in row and pd.notna(row["salinity"]) else None,
-                    depth=float(row["depth"]) if "depth" in row and pd.notna(row["depth"]) else None,
+                    temperature=float(row["temperature"])
+                    if "temperature" in row and pd.notna(row["temperature"])
+                    else None,
+                    salinity=float(row["salinity"])
+                    if "salinity" in row and pd.notna(row["salinity"])
+                    else None,
+                    depth=float(row["depth"])
+                    if "depth" in row and pd.notna(row["depth"])
+                    else None,
                     other_measurements=None,
                 )
             )
         return models
+
+
+# Backward-compatible alias so existing code using SaildroneProvider still works
+SaildroneProvider = NoaaPmelProvider

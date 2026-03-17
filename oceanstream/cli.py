@@ -11,7 +11,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency for nicer CLI
     typer = None  # type: ignore
 
-from .providers import get_provider, list_providers
+from .providers import get_provider, list_providers, detect_or_get_provider
 from . import geotrack, echodata, multibeam, adcp
 
 
@@ -66,7 +66,9 @@ if typer:
         available = list_providers()
         typer.echo("Available providers:")
         for p in available:
-            typer.echo(f"  - {p}")
+            provider_obj = get_provider(p)
+            stationary = " (stationary)" if getattr(provider_obj, "is_stationary", False) else ""
+            typer.echo(f"  - {p}{stationary}")
     
     @campaign_app.command("create")
     def create_campaign_command(
@@ -850,15 +852,17 @@ if typer:
     
     @process_app.callback()
     def process_callback(
-        provider: str = typer.Option("saildrone", help="Data provider type (applies to all subcommands)."),
+        provider: str = typer.Option(None, help="Data provider type (applies to all subcommands). Auto-detected if not specified."),
     ) -> None:
         """Global options for all process subcommands."""
         global _provider_obj
-        try:
-            _provider_obj = get_provider(provider)
-        except ValueError as e:
-            typer.echo(f"[process] ERROR: {e}")
-            raise typer.Exit(code=1)
+        if provider is not None:
+            try:
+                _provider_obj = get_provider(provider)
+            except ValueError as e:
+                typer.echo(f"[process] ERROR: {e}")
+                raise typer.Exit(code=1)
+        # else: leave _provider_obj as None; subcommands auto-detect from data
 
     # Nested geotrack command group
     geotrack_app = typer.Typer(
@@ -928,13 +932,14 @@ if typer:
             except ValueError as e:
                 typer.echo(f"[geotrack] ERROR: Invalid provider '{provider}': {e}")
                 raise typer.Exit(code=1)
-        else:
+        elif _provider_obj is not None:
             provider_obj = _provider_obj
+        else:
+            # Auto-detect from data
+            provider_obj = detect_or_get_provider(None, input_source if input_source.is_file() else None)
+            if verbose:  # pragma: no cover
+                typer.echo(f"[geotrack] Auto-detected provider: {provider_obj.name}")
             
-        if provider_obj is None:
-            typer.echo("[geotrack] ERROR: Provider not initialized")
-            raise typer.Exit(code=1)
-        
         if not provider_obj.supports_module("geotrack"):
             typer.echo(f"[geotrack] ERROR: Provider '{provider_obj.name}' does not support geotrack processing")
             raise typer.Exit(code=1)
@@ -1031,8 +1036,8 @@ if typer:
         global _provider_obj
         provider_obj = _provider_obj
         if provider_obj is None:
-            typer.echo("[geotrack] ERROR: Provider not initialized")
-            raise typer.Exit(code=1)
+            # Tiles don't have input data to auto-detect from; use generic
+            provider_obj = get_provider("generic")
         
         if not provider_obj.supports_module("geotrack"):
             typer.echo(f"[geotrack] ERROR: Provider '{provider_obj.name}' does not support geotrack processing")
@@ -1467,7 +1472,7 @@ if typer:
             typer.echo(f"[echodata] ERROR: {e}")
             typer.echo("\nInstall echodata dependencies:")
             typer.echo('  pip install "oceanstream[echodata]"')
-            typer.echo("  pip install git+https://github.com/OceanStreamIO/echopype-dev.git@oceanstream-iotedge")
+            typer.echo("  pip install git+https://github.com/OceanStreamIO/echopype.git@oceanstream-integration")
             raise typer.Exit(code=1)
         except Exception as e:
             typer.echo(f"[echodata] ERROR: {e}")
@@ -2038,8 +2043,7 @@ if typer:
         global _provider_obj
         provider_obj = _provider_obj
         if provider_obj is None:
-            typer.echo("[multibeam] ERROR: Provider not initialized")
-            raise typer.Exit(code=1)
+            provider_obj = get_provider("generic")
         
         multibeam.process(
             provider=provider_obj,
@@ -2065,8 +2069,7 @@ if typer:
         global _provider_obj
         provider_obj = _provider_obj
         if provider_obj is None:
-            typer.echo("[adcp] ERROR: Provider not initialized")
-            raise typer.Exit(code=1)
+            provider_obj = get_provider("generic")
         
         adcp.process(
             provider=provider_obj,
@@ -2100,9 +2103,8 @@ if typer:
         )
         
         typer.echo()
-        typer.echo("═" * 70)
-        typer.echo("  🔧  OceanStream Configuration Wizard")
-        typer.echo("═" * 70)
+        typer.echo("  OceanStream — Configure")
+        typer.echo("  " + "─" * 30)
         typer.echo()
         
         # Load existing configuration if available
@@ -2110,23 +2112,19 @@ if typer:
         try:
             existing_config = load_storage_configuration()
             active_name, active_config = existing_config.get_active_config()
-            typer.echo(f"📋 Current configuration found: {active_config.provider}")
+            typer.echo(f"  Current provider: {active_config.provider}")
             typer.echo()
         except (FileNotFoundError, ValueError):
-            typer.echo("📋 No existing configuration found.")
+            typer.echo("  No existing configuration found.")
             typer.echo()
         
         # Storage Provider Selection
-        typer.echo("━" * 70)
-        typer.echo("  📦 Storage Configuration")
-        typer.echo("━" * 70)
+        typer.echo("  Storage Provider")
         typer.echo()
-        typer.echo("Select storage provider:")
-        typer.echo()
-        typer.echo("  1. 🏠  Local Filesystem (default)")
-        typer.echo("  2. ☁️   Azure Blob Storage")
-        typer.echo("  3. 📁  AWS S3 (coming soon)")
-        typer.echo("  4. 🌐  Google Cloud Storage (coming soon)")
+        typer.echo("  1. Local Filesystem (default)")
+        typer.echo("  2. Azure Blob Storage")
+        typer.echo("  3. AWS S3 (coming soon)")
+        typer.echo("  4. Google Cloud Storage (coming soon)")
         typer.echo()
         
         # Determine default choice based on existing config
@@ -2148,21 +2146,21 @@ if typer:
             provider = "azure"
         elif choice in ["3", "4"]:
             typer.echo()
-            typer.echo("⚠️  This provider is not yet implemented.")
-            typer.echo("   Currently supported: local, azure")
+            typer.echo("  This provider is not yet implemented.")
+            typer.echo("  Currently supported: local, azure")
             raise typer.Exit(code=1)
         else:
-            typer.echo("❌ Invalid selection")
+            typer.echo("  Invalid selection.")
             raise typer.Exit(code=1)
         
         typer.echo()
-        typer.echo(f"🔧 Configuring {provider.upper()} storage...")
+        typer.echo(f"  Configuring {provider} storage...")
         typer.echo()
         
         try:
             if provider == "local":
                 # Local storage configuration
-                typer.echo("📁 Local filesystem storage")
+                typer.echo("  Local filesystem storage")
                 typer.echo()
                 
                 # Get default from existing config if available
@@ -2188,7 +2186,7 @@ if typer:
             
             elif provider == "azure":
                 # Azure Blob Storage configuration
-                typer.echo("☁️  Azure Blob Storage configuration")
+                typer.echo("  Azure Blob Storage configuration")
                 typer.echo()
                 typer.echo("You can provide either:")
                 typer.echo("  • Connection string (recommended), OR")
@@ -2269,19 +2267,19 @@ if typer:
             # Success message
             config_path = get_storage_config_path()
             typer.echo()
-            typer.echo("✅ Configuration saved successfully!")
+            typer.echo("  Configuration saved.")
             typer.echo()
-            typer.echo(f"   Provider: {provider}")
-            typer.echo(f"   Config file: {config_path}")
+            typer.echo(f"  Provider:    {provider}")
+            typer.echo(f"  Config file: {config_path}")
             typer.echo()
             
         except ValueError as e:
             typer.echo()
-            typer.echo(f"❌ Configuration error: {e}")
+            typer.echo(f"  Error: {e}")
             raise typer.Exit(code=1)
         except Exception as e:
             typer.echo()
-            typer.echo(f"❌ Unexpected error: {e}")
+            typer.echo(f"  Unexpected error: {e}")
             raise typer.Exit(code=1)
 
 

@@ -5,6 +5,7 @@ configurations with automatic encryption of sensitive credentials.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,8 @@ from .config import (
     StorageConfigType,
 )
 from .crypto import encrypt_credential, decrypt_credential
+
+logger = logging.getLogger(__name__)
 
 
 # Fields that should be encrypted when saving
@@ -69,7 +72,11 @@ def load_storage_configuration() -> StorageConfiguration:
                         provider_dict[field] = decrypt_credential(encrypted_value)
                     except Exception as e:
                         # If decryption fails, leave as-is and let validation catch it
-                        print(f"Warning: Failed to decrypt {field} for {provider_name}: {e}")
+                        logger.warning(
+                            "Failed to decrypt %s for %s: %s. "
+                            "Re-run 'oceanstream configure' to update credentials.",
+                            field, provider_name, e,
+                        )
     
     # Deserialize to StorageConfiguration
     return StorageConfiguration.from_dict(data)
