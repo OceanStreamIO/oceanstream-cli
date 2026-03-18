@@ -100,12 +100,14 @@ detected = catalogue.detect_sensors(variables)
 
 ### Saildrone Sensors
 
-Currently registered Saildrone instruments:
+Currently registered instruments:
 
 | ID | Name | Manufacturer | Type | Variables |
 |----|------|--------------|------|-----------|
 | `sbe37-odo` | Sea-Bird SBE 37-SMP-ODO MicroCAT | Sea-Bird Scientific | CTD | Temperature, Salinity, Conductivity, DO |
+| `sbe-911plus` | Sea-Bird SBE 911plus CTD | Sea-Bird Scientific | CTD | Temperature, Conductivity, Pressure, Salinity |
 | `wetlabs-flbbcd` | WET Labs ECO Puck FLBBCD | Sea-Bird Scientific | Fluorometer | Chlorophyll-a |
+| `wetlabs-eco-flntu` | WET Labs ECO-FLNTU | WET Labs | Fluorometer | Chlorophyll, Turbidity |
 | `airmar-150wx` | Airmar 150WX WeatherStation | Airmar Technology | Meteorological | Wind, Air temp, Humidity, Pressure |
 | `licor-li190r` | LI-COR LI-190R PAR Sensor | LI-COR Biosciences | Radiation | PAR |
 | `kipp-zonen-cmp` | Kipp & Zonen CMP Pyranometer | Kipp & Zonen | Radiation | Shortwave irradiance |
@@ -113,6 +115,9 @@ Currently registered Saildrone instruments:
 | `thermistor-0.5m` | Hull-Mounted Thermistor | Sea-Bird Scientific | Thermistor | Temperature at 0.5m |
 | `wave-imu` | IMU-Derived Wave Sensor | Saildrone | Wave | Wave height & period |
 | `imu-navigation` | IMU & GPS Navigation | Multiple | Navigation | Position, Heading, Attitude |
+| `gnss-navigation` | GNSS Navigation Receiver | Multiple | Navigation | Position, Speed, Course, Satellites |
+| `valeport-minisvs` | Valeport MiniSVS | Valeport | Acoustic | Sound velocity |
+| `lci90i-winch` | LCI-90i Winch Monitor | MacArtney/Markey | Winch | Wire out, Tension, Speed |
 
 ## Platform-Sensor Mappings
 

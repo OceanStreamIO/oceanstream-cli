@@ -42,7 +42,7 @@ class TestR2RCTDProcessing:
 
     def test_find_cast_files(self, ctd_data_dir: Path):
         """Test finding CTD cast files in directory."""
-        from oceanstream.sensors.processors.r2r_ctd import find_cast_files
+        from oceanstream.sensors.processors.sbe911 import find_cast_files
 
         casts = find_cast_files(ctd_data_dir)
 
@@ -58,7 +58,7 @@ class TestR2RCTDProcessing:
 
     def test_parse_hdr_file(self, ctd_data_dir: Path):
         """Test parsing CTD header file."""
-        from oceanstream.sensors.processors.r2r_ctd import find_cast_files, parse_hdr_file
+        from oceanstream.sensors.processors.sbe911 import find_cast_files, parse_hdr_file
 
         casts = find_cast_files(ctd_data_dir)
 
@@ -81,7 +81,7 @@ class TestR2RCTDProcessing:
 
     def test_parse_xmlcon_file(self, ctd_data_dir: Path):
         """Test parsing CTD configuration file."""
-        from oceanstream.sensors.processors.r2r_ctd import find_cast_files, parse_xmlcon_file
+        from oceanstream.sensors.processors.sbe911 import find_cast_files, parse_xmlcon_file
 
         casts = find_cast_files(ctd_data_dir)
 
@@ -101,7 +101,7 @@ class TestR2RCTDProcessing:
 
     def test_process_ctd_cast(self, ctd_data_dir: Path):
         """Test processing a CTD cast to DataFrame."""
-        from oceanstream.sensors.processors.r2r_ctd import find_cast_files, process_ctd_cast
+        from oceanstream.sensors.processors.sbe911 import find_cast_files, process_ctd_cast
 
         casts = find_cast_files(ctd_data_dir)
 
@@ -124,7 +124,7 @@ class TestR2RCTDProcessing:
 
     def test_process_ctd_cast_output_csv(self, ctd_data_dir: Path, tmp_path: Path):
         """Test writing processed CTD data to CSV."""
-        from oceanstream.sensors.processors.r2r_ctd import find_cast_files, process_ctd_cast
+        from oceanstream.sensors.processors.sbe911 import find_cast_files, process_ctd_cast
 
         casts = find_cast_files(ctd_data_dir)
         cast = casts[0]
@@ -148,7 +148,7 @@ class TestR2RCTDProcessing:
     def test_ctd_descriptor_processor(self, ctd_data_dir: Path):
         """Test CTD sensor descriptor creation."""
         from oceanstream.providers.r2r.r2r_metadata import R2RFileInfo, R2RSensorInfo
-        from oceanstream.sensors.processors.r2r_ctd import ctd_descriptor_processor
+        from oceanstream.sensors.processors.sbe911 import ctd_descriptor_processor
 
         file_info = R2RFileInfo(
             campaign_id="RR2402",
@@ -188,7 +188,7 @@ class TestCTDCalibratedConversion:
                 "Validation data not found: raw_data/r2r/RR2205_ctd_validation/ "
                 "(run: python scripts/fetch_test_data.py --category r2r)"
             )
-        from oceanstream.sensors.processors.r2r_ctd import parse_cnv_file
+        from oceanstream.sensors.processors.sbe911 import parse_cnv_file
 
         cnv_df = parse_cnv_file(VALIDATION_CNV)
         return VALIDATION_RAW, cnv_df
@@ -197,7 +197,7 @@ class TestCTDCalibratedConversion:
     def calibrated_df(self, validation_data: tuple[Path, pd.DataFrame]) -> pd.DataFrame:
         """Process cast 11901 with calibrated conversion."""
         raw_dir = validation_data[0]
-        from oceanstream.sensors.processors.r2r_ctd import CTDCast, process_ctd_cast
+        from oceanstream.sensors.processors.sbe911 import CTDCast, process_ctd_cast
 
         cast = CTDCast(
             cast_id="11901",

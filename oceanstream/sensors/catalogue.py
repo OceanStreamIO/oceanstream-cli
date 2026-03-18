@@ -50,6 +50,7 @@ class Sensor:
     documentation_url: Optional[str] = None
     typical_depth: Optional[str] = None
     typical_mount: Optional[str] = None
+    extra: dict = field(default_factory=dict)
     
     def matches_variables(self, available_vars: set[str]) -> bool:
         """Check if any of the sensor's variables are present in the dataset.

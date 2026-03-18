@@ -29,6 +29,14 @@ class TestSaildroneSensorDefinitions:
         for sensor_id in expected_sensor_ids:
             assert sensor_id in SENSORS, f"Sensor {sensor_id} not found in SENSORS"
 
+    def test_all_catalogue_sensors_loaded(self):
+        """Test that all 14 sensor definitions are loaded into the catalogue."""
+        catalogue = get_sensor_catalogue()
+        all_sensors = catalogue.list_all()
+        assert len(all_sensors) >= 14, (
+            f"Expected at least 14 sensors, got {len(all_sensors)}"
+        )
+
     def test_sbe37_odo_sensor(self):
         """Test SBE37-ODO CTD sensor definition."""
         sensor = SENSORS["sbe37-odo"]
@@ -108,74 +116,6 @@ class TestSaildroneSensorDefinitions:
         assert "TEMP_DEPTH_HALFMETER_MEAN" in sensor.variables
         assert sensor.typical_depth == "0.5m"
 
-    def test_airmar_150wx_sensor(self):
-        """Test Airmar 150WX weather station definition."""
-        sensor = SENSORS["airmar-150wx"]
-        
-        assert sensor.sensor_type == SensorType.METEOROLOGICAL
-        assert "wind" in sensor.description.lower()
-        
-        # Check meteorological variables
-        expected_vars = ["UWND_MEAN", "VWND_MEAN", "BARO_PRES_MEAN", "TEMP_AIR_MEAN"]
-        for var in expected_vars:
-            assert var in sensor.variables
-        
-        assert sensor.typical_mount == "wing"
-
-    def test_licor_li190r_sensor(self):
-        """Test LI-COR LI-190R PAR sensor definition."""
-        sensor = SENSORS["licor-li190r"]
-        
-        assert sensor.sensor_type == SensorType.RADIATION
-        assert "PAR" in sensor.description or "photosynthetically" in sensor.description.lower()
-        assert "PAR_AIR_MEAN" in sensor.variables
-
-    def test_kipp_zonen_cmp_sensor(self):
-        """Test Kipp & Zonen CMP pyranometer definition."""
-        sensor = SENSORS["kipp-zonen-cmp"]
-        
-        assert sensor.sensor_type == SensorType.RADIATION
-        assert "SW_IRRAD_TOTAL_MEAN" in sensor.variables
-
-    def test_apogee_si111_sensor(self):
-        """Test Apogee SI-111 infrared radiometer definition."""
-        sensor = SENSORS["apogee-si111"]
-        
-        assert sensor.sensor_type == SensorType.RADIATION
-        assert "infrared" in sensor.description.lower()
-        assert "TEMP_IR_SEA_WING_UNCOMP_MEAN" in sensor.variables
-
-    def test_thermistor_sensor(self):
-        """Test hull-mounted thermistor definition."""
-        sensor = SENSORS["thermistor-0.5m"]
-        
-        assert sensor.sensor_type == SensorType.THERMISTOR
-        assert "TEMP_DEPTH_HALFMETER_MEAN" in sensor.variables
-        assert sensor.typical_depth == "0.5m"
-
-    def test_kipp_zonen_cmp_sensor(self):
-        """Test Kipp & Zonen CMP pyranometer definition."""
-        sensor = SENSORS["kipp-zonen-cmp"]
-        
-        assert sensor.sensor_type == SensorType.RADIATION
-        assert "SW_IRRAD_TOTAL_MEAN" in sensor.variables
-
-    def test_apogee_si111_sensor(self):
-        """Test Apogee SI-111 infrared radiometer definition."""
-        sensor = SENSORS["apogee-si111"]
-        
-        assert sensor.sensor_type == SensorType.RADIATION
-        assert "infrared" in sensor.description.lower()
-        assert "TEMP_IR_SEA_WING_UNCOMP_MEAN" in sensor.variables
-
-    def test_thermistor_sensor(self):
-        """Test hull-mounted thermistor definition."""
-        sensor = SENSORS["thermistor-0.5m"]
-        
-        assert sensor.sensor_type == SensorType.THERMISTOR
-        assert "TEMP_DEPTH_HALFMETER_MEAN" in sensor.variables
-        assert sensor.typical_depth == "0.5m"
-
     def test_wave_imu_sensor(self):
         """Test wave IMU sensor definition."""
         sensor = SENSORS["wave-imu"]
@@ -200,6 +140,52 @@ class TestSaildroneSensorDefinitions:
                     "ROLL_FILTERED_MEAN", "PITCH_FILTERED_MEAN"]
         for var in nav_vars:
             assert var in sensor.variables
+
+    # --- Tests for sensors added beyond the original 9 Saildrone set ---
+
+    def test_gnss_navigation_sensor(self):
+        """Test GNSS navigation receiver definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("gnss-navigation")
+        assert sensor is not None, "gnss-navigation not in catalogue"
+        assert sensor.sensor_type == SensorType.NAVIGATION
+        assert "latitude" in sensor.variables
+        assert "longitude" in sensor.variables
+
+    def test_sbe_911plus_sensor(self):
+        """Test Sea-Bird SBE 911plus CTD definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("sbe-911plus")
+        assert sensor is not None, "sbe-911plus not in catalogue"
+        assert sensor.sensor_type == SensorType.CTD
+        assert sensor.manufacturer == "Sea-Bird Scientific"
+        assert "temperature" in sensor.variables
+        assert "conductivity" in sensor.variables
+        assert "pressure" in sensor.variables
+
+    def test_valeport_minisvs_sensor(self):
+        """Test Valeport MiniSVS sound velocity sensor definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("valeport-minisvs")
+        assert sensor is not None, "valeport-minisvs not in catalogue"
+        assert sensor.sensor_type == SensorType.ACOUSTIC
+        assert "SOUND_VELOCITY" in sensor.variables
+
+    def test_wetlabs_eco_flntu_sensor(self):
+        """Test WET Labs ECO-FLNTU fluorometer definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("wetlabs-eco-flntu")
+        assert sensor is not None, "wetlabs-eco-flntu not in catalogue"
+        assert sensor.sensor_type == SensorType.FLUOROMETER
+        assert "CHL_FLUOR" in sensor.variables
+
+    def test_lci90i_winch_sensor(self):
+        """Test LCI-90i winch monitoring sensor definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("lci90i-winch")
+        assert sensor is not None, "lci90i-winch not in catalogue"
+        assert sensor.sensor_type == SensorType.WINCH
+        assert "WIRE_OUT" in sensor.variables
 
     def test_all_sensors_registered_in_global_catalogue(self):
         """Test that all Saildrone sensors are registered in the global catalogue."""

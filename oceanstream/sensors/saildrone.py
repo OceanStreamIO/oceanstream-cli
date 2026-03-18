@@ -14,7 +14,16 @@ def get_all_sensors() -> dict:
     return {sensor.id: sensor for sensor in catalogue.list_all()}
 
 
-# For backward compatibility
+def get_saildrone_sensors() -> dict:
+    """Get all registered sensors as a dictionary.
+
+    Unlike the module-level ``SENSORS`` dict, this always reflects
+    the current catalogue state (including dynamically registered sensors).
+    """
+    return get_all_sensors()
+
+
+# For backward compatibility — prefer get_saildrone_sensors() in new code
 SENSORS = get_all_sensors()
 
 
@@ -49,9 +58,7 @@ SAILDRONE_PLATFORM_SENSORS = {
             "wave-imu",
             "imu-navigation"
         ],
-        "optional_sensors": [
-            # Surveyor can have additional acoustic sensors
-        ]
+        "optional_sensors": []
     }
 }
 

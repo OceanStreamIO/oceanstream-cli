@@ -54,7 +54,7 @@ The Valeport MiniSVS is a high-precision sound velocity sensor (SVS) designed fo
 
 ## Data Processing
 
-R2R SSV raw data is processed by the `r2r_ssv` sensor processor, which:
+SSV raw data is processed by the `minisvs` sensor processor, which:
 
 1. Parses proprietary format into standardized CSV
 2. Extracts sound velocity, temperature, and pressure channels

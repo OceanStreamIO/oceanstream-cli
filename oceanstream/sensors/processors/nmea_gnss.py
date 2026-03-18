@@ -40,13 +40,11 @@ try:
     import pynmea2
 except ImportError:
     raise ImportError(
-        "pynmea2 is required for NMEA processing. "
-        "Install with: pip install oceanstream[geotrack]"
+        "pynmea2 is required for NMEA processing. Install with: pip install oceanstream[geotrack]"
     )
 
 if TYPE_CHECKING:
-    from oceanstream.providers.r2r.r2r_metadata import R2RFileInfo, R2RSensorInfo
-    from oceanstream.sensors.processor_base import SensorDescriptor
+    from oceanstream.sensors.processor_base import FileInfo, SensorDescriptor, SensorInfo
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +147,7 @@ def parse_nmea_line(line: str) -> dict[str, Any] | None:
                 day = int(msg.day) if msg.day else 1
                 month = int(msg.month) if msg.month else 1
                 year = int(msg.year) if msg.year else 1970
-                
+
                 # Create datetime from ZDA components
                 gps_datetime = datetime(
                     year=year,
@@ -159,7 +157,7 @@ def parse_nmea_line(line: str) -> dict[str, Any] | None:
                     minute=utc_time.minute,
                     second=utc_time.second,
                     microsecond=utc_time.microsecond,
-                    tzinfo=utc_time.tzinfo
+                    tzinfo=utc_time.tzinfo,
                 )
                 data["gps_utc_time"] = gps_datetime.isoformat()
             except (ValueError, AttributeError) as e:
@@ -173,36 +171,36 @@ def parse_nmea_line(line: str) -> dict[str, Any] | None:
 
 def _apply_sampling(data: list[dict[str, Any]], interval: float) -> list[dict[str, Any]]:
     """Apply time-based sampling/decimation to data points.
-    
+
     Keeps one data point per sampling interval. For each interval,
     selects the point closest to the interval center.
-    
+
     Args:
         data: List of data dictionaries with 'time' key (ISO8601 string)
         interval: Sampling interval in seconds
-        
+
     Returns:
         Decimated list of data points
     """
     if not data or interval <= 0:
         return data
-    
+
     sampled = []
     current_bucket_start = None
     bucket_points = []
-    
+
     for point in data:
         timestamp = datetime.fromisoformat(point["time"])
-        
+
         # Initialize first bucket
         if current_bucket_start is None:
             current_bucket_start = timestamp
             bucket_points = [point]
             continue
-        
+
         # Calculate time since bucket start
         elapsed = (timestamp - current_bucket_start).total_seconds()
-        
+
         if elapsed < interval:
             # Still in current bucket
             bucket_points.append(point)
@@ -211,16 +209,16 @@ def _apply_sampling(data: list[dict[str, Any]], interval: float) -> list[dict[st
             if bucket_points:
                 mid_idx = len(bucket_points) // 2
                 sampled.append(bucket_points[mid_idx])
-            
+
             # Start new bucket
             current_bucket_start = timestamp
             bucket_points = [point]
-    
+
     # Don't forget last bucket
     if bucket_points:
         mid_idx = len(bucket_points) // 2
         sampled.append(bucket_points[mid_idx])
-    
+
     return sampled
 
 
@@ -291,8 +289,10 @@ def process_nmea_raw(
     if sampling_interval and sampling_interval > 0:
         logger.info(f"Applying sampling: 1 point per {sampling_interval}s")
         sampled_data = _apply_sampling(sorted_data, sampling_interval)
-        logger.info(f"Decimation: {pre_sampling_count:,} → {len(sampled_data):,} points "
-                   f"({len(sampled_data)/pre_sampling_count*100:.1f}% retained)")
+        logger.info(
+            f"Decimation: {pre_sampling_count:,} → {len(sampled_data):,} points "
+            f"({len(sampled_data) / pre_sampling_count * 100:.1f}% retained)"
+        )
         sorted_data = sampled_data
 
     # Write CSV
@@ -325,7 +325,9 @@ def process_nmea_raw(
         "data_points_merged": pre_sampling_count,
         "data_points_written": len(sorted_data),
         "sampling_interval": sampling_interval,
-        "decimation_ratio": len(sorted_data) / pre_sampling_count if pre_sampling_count > 0 else 1.0,
+        "decimation_ratio": len(sorted_data) / pre_sampling_count
+        if pre_sampling_count > 0
+        else 1.0,
     }
 
     logger.info(f"Processed {lines_parsed}/{lines_read} lines")
@@ -377,20 +379,20 @@ def detect_nmea_gnss(file_path: Path) -> bool:
 
 def nmea_raw_processor(
     data_dir: Path,
-    file_info: R2RFileInfo,
-    sensor_info: R2RSensorInfo,
+    file_info: FileInfo,
+    sensor_info: SensorInfo,
     descriptor: SensorDescriptor,
 ) -> Path:
     """Process NMEA raw data files into CSV format.
 
-    This is the raw processor interface expected by the R2R provider.
+    This is the raw processor interface expected by provider pipelines.
     It finds NMEA data files in the data directory, processes them,
     and writes a standardized CSV file.
 
     Args:
         data_dir: Directory containing raw NMEA data files
-        file_info: R2R file metadata (not used for NMEA)
-        sensor_info: R2R sensor metadata (not used for NMEA)
+        file_info: File metadata (not used for NMEA)
+        sensor_info: Sensor metadata (not used for NMEA)
         descriptor: Sensor descriptor for this sensor
 
     Returns:
@@ -417,16 +419,11 @@ def nmea_raw_processor(
     # Process the file
     stats = process_nmea_raw(input_file, output_file)
 
-    logger.info(
-        f"NMEA processing complete: {stats['data_points_written']} data points written"
-    )
+    logger.info(f"NMEA processing complete: {stats['data_points_written']} data points written")
 
     return output_file
 
 
-# Register the raw processor for GNSS navigation sensor (deferred to avoid circular imports)
-def _register_nmea_processor() -> None:
-    """Register NMEA processor (called from __init__.py after module load)."""
-    from oceanstream.sensors.processors import register_raw_processor
+from oceanstream.sensors.processors import register_raw_processor
 
-    register_raw_processor(SENSOR_ID_GNSS, nmea_raw_processor)
+register_raw_processor(SENSOR_ID_GNSS, nmea_raw_processor)

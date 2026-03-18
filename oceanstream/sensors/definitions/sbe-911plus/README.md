@@ -32,7 +32,7 @@ A standard SBE 911plus package includes:
 The R2R CTD processor uses the official `seabirdscientific` Python library to parse hex files:
 
 ```python
-from oceanstream.sensors.processors.r2r_ctd import process_ctd_cast, find_cast_files
+from oceanstream.sensors.processors.sbe911 import process_ctd_cast, find_cast_files
 
 # Find all casts in a directory
 casts = find_cast_files(Path("/path/to/ctd/data"))

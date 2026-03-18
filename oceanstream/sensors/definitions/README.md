@@ -64,6 +64,7 @@ The following sensor types are supported:
 - `acoustic` - Acoustic sensors
 - `current` - Current meters
 - `thermistor` - Temperature sensors
+- `winch` - Winch monitoring systems
 - `other` - Other sensor types
 
 ## Adding New Sensors
@@ -80,7 +81,9 @@ To add a new sensor:
 | Sensor ID | Name | Type | Manufacturer |
 |-----------|------|------|--------------|
 | sbe37-odo | Sea-Bird SBE 37-SMP-ODO MicroCAT | CTD | Sea-Bird Scientific |
+| sbe-911plus | Sea-Bird SBE 911plus CTD | CTD | Sea-Bird Scientific |
 | wetlabs-flbbcd | WET Labs ECO Puck FLBBCD | Fluorometer | Sea-Bird Scientific |
+| wetlabs-eco-flntu | WET Labs ECO-FLNTU Fluorometer | Fluorometer | WET Labs |
 | airmar-150wx | Airmar 150WX WeatherStation | Meteorological | Airmar Technology |
 | licor-li190r | LI-COR LI-190R PAR Sensor | Radiation | LI-COR Biosciences |
 | kipp-zonen-cmp | Kipp & Zonen CMP Pyranometer | Radiation | Kipp & Zonen |
@@ -88,3 +91,6 @@ To add a new sensor:
 | thermistor-0.5m | Hull-Mounted Thermistor | Thermistor | Sea-Bird Scientific |
 | wave-imu | IMU-Derived Wave Sensor | Wave | Saildrone |
 | imu-navigation | IMU & GPS Navigation | Navigation | Multiple |
+| gnss-navigation | GNSS Navigation Receiver | Navigation | Multiple |
+| valeport-minisvs | Valeport MiniSVS Sound Velocity Sensor | Acoustic | Valeport |
+| lci90i-winch | MacArtney/Markey LCI-90i Winch | Winch | MacArtney/Markey |

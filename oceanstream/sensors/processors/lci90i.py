@@ -1,7 +1,7 @@
-"""R2R winch (LCI-90i) sensor processors.
+"""LCI-90i winch sensor processors.
 
 This module provides both a SensorDescriptor builder and a raw-data
-processor for LCI-90i winch instruments discovered in R2R archives.
+processor for LCI-90i winch instruments.
 
 The LCI-90i is a winch monitoring system commonly used on research vessels.
 R2R winch data files contain lines of the form::
@@ -25,11 +25,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from oceanstream.providers.r2r_metadata import R2RFileInfo, R2RSensorInfo
-from oceanstream.sensors.processor_base import SensorDescriptor
+from oceanstream.sensors.processor_base import FileInfo, SensorDescriptor, SensorInfo
 from oceanstream.sensors.processors import (
-    RawProcessor,
-    SensorProcessor,
     register_raw_processor,
     register_sensor_processor,
 )
@@ -55,11 +52,11 @@ LCI90I_PATTERN = re.compile(
 
 def winch_descriptor_processor(
     data_dir: Path,
-    file_info: R2RFileInfo,
-    sensor_info: R2RSensorInfo,
+    file_info: FileInfo,
+    sensor_info: SensorInfo,
     provider_id: str,
 ) -> SensorDescriptor:
-    """Build a SensorDescriptor for an R2R LCI-90i winch.
+    """Build a SensorDescriptor for an LCI-90i winch.
 
     This concentrates identification and metadata in one place so that
     other providers sharing the same instrument can re-use the same
@@ -93,11 +90,11 @@ def winch_descriptor_processor(
 
 def winch_raw_processor(
     data_dir: Path,
-    file_info: R2RFileInfo,
-    sensor_info: R2RSensorInfo,
+    file_info: FileInfo,
+    sensor_info: SensorInfo,
     descriptor: SensorDescriptor,
 ) -> Path:
-    """Process R2R LCI-90i winch raw data into a simple CSV file.
+    """Process LCI-90i winch raw data into a simple CSV file.
 
     R2R winch data files (typically named ``winch_lci90i_*``) contain
     lines of the form::
@@ -121,9 +118,9 @@ def winch_raw_processor(
     ----------
     data_dir : Path
         Directory containing raw winch data files.
-    file_info : R2RFileInfo
-        R2R file metadata.
-    sensor_info : R2RSensorInfo
+    file_info : FileInfo
+        File metadata.
+    sensor_info : SensorInfo
         Sensor metadata.
     descriptor : SensorDescriptor
         Sensor descriptor built by the descriptor processor.
@@ -135,15 +132,15 @@ def winch_raw_processor(
     """
 
     rows: list[list[str]] = []
-    
+
     # Find all winch data files - they typically have no extension
     # and are named like "winch_lci90i_rr_trawl-2022-06-14"
     winch_files: list[Path] = []
-    
+
     for f in sorted(data_dir.iterdir()):
         if f.is_file() and "winch" in f.name.lower():
             winch_files.append(f)
-    
+
     # Also check for .Raw files as backup
     if not winch_files:
         winch_files = sorted(data_dir.glob("*.Raw"))
@@ -175,33 +172,38 @@ def winch_raw_processor(
                     # The negative sign indicates wire out (vs wire in)
                     wire_out_m = int(wire_out_raw) / 1000.0  # Rough conversion
 
-                    rows.append([
-                        timestamp_logged,
-                        device_id,
-                        timestamp_instrument,
-                        f"{wire_out_m:.3f}",
-                        turns,
-                        speed,
-                        tension,
-                    ])
+                    rows.append(
+                        [
+                            timestamp_logged,
+                            device_id,
+                            timestamp_instrument,
+                            f"{wire_out_m:.3f}",
+                            turns,
+                            speed,
+                            tension,
+                        ]
+                    )
         except OSError as e:
             # Log and continue with other files
             import logging
+
             logging.getLogger(__name__).warning(f"Could not read {raw_path}: {e}")
             continue
 
     out_path = data_dir / "winch.csv"
     with out_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "time",
-            "device_id",
-            "time_instrument",
-            "wire_out_m",
-            "turns",
-            "wire_speed_mps",
-            "tension_lbs",
-        ])
+        writer.writerow(
+            [
+                "time",
+                "device_id",
+                "time_instrument",
+                "wire_out_m",
+                "turns",
+                "wire_speed_mps",
+                "tension_lbs",
+            ]
+        )
         writer.writerows(rows)
 
     return out_path
@@ -225,7 +227,7 @@ def parse_winch_file(file_path: Path) -> list[dict[str, Any]]:
         wire_out_m, turns, wire_speed_mps, tension_lbs.
     """
     records: list[dict[str, Any]] = []
-    
+
     with file_path.open("r", encoding="ascii", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -246,15 +248,17 @@ def parse_winch_file(file_path: Path) -> list[dict[str, Any]]:
                 tension,
             ) = match.groups()
 
-            records.append({
-                "time": timestamp_logged,
-                "device_id": device_id,
-                "time_instrument": timestamp_instrument,
-                "wire_out_m": int(wire_out_raw) / 1000.0,
-                "turns": int(turns),
-                "wire_speed_mps": float(speed),
-                "tension_lbs": int(tension),
-            })
+            records.append(
+                {
+                    "time": timestamp_logged,
+                    "device_id": device_id,
+                    "time_instrument": timestamp_instrument,
+                    "wire_out_m": int(wire_out_raw) / 1000.0,
+                    "turns": int(turns),
+                    "wire_speed_mps": float(speed),
+                    "tension_lbs": int(tension),
+                }
+            )
 
     return records
 

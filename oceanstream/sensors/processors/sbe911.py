@@ -1,6 +1,6 @@
-"""R2R CTD (SeaBird SBE-911+) sensor processor.
+"""SeaBird SBE-911+ CTD sensor processor.
 
-This module provides processing for SeaBird CTD data from R2R archives.
+This module provides processing for SeaBird CTD data.
 Uses the official seabirdscientific library for hex file parsing.
 
 Supported instruments:
@@ -62,8 +62,7 @@ except ImportError:
     _gsw = None
 
 if TYPE_CHECKING:
-    from oceanstream.providers.r2r.r2r_metadata import R2RFileInfo, R2RSensorInfo
-    from oceanstream.sensors.processor_base import SensorDescriptor
+    from oceanstream.sensors.processor_base import FileInfo, SensorDescriptor, SensorInfo
 
 logger = logging.getLogger(__name__)
 
@@ -862,14 +861,14 @@ def process_ctd_cast(
 
 def ctd_descriptor_processor(
     data_dir: Path,
-    file_info: R2RFileInfo,
-    sensor_info: R2RSensorInfo,
+    file_info: FileInfo,
+    sensor_info: SensorInfo,
     provider_id: str,
 ) -> SensorDescriptor:
-    """Build a SensorDescriptor for an R2R CTD instrument.
+    """Build a SensorDescriptor for a SeaBird SBE-911+ CTD.
 
-    This is called by the R2R provider's inspect_archives method to
-    catalog CTD sensors found in R2R archives.
+    Called by provider pipelines (e.g. R2R ``inspect_archives``) to
+    catalog CTD sensors.
     """
     from oceanstream.sensors.processor_base import SensorDescriptor
 
@@ -904,16 +903,16 @@ def ctd_descriptor_processor(
 
 def ctd_raw_processor(
     data_dir: Path,
-    file_info: R2RFileInfo,
-    sensor_info: R2RSensorInfo,
+    file_info: FileInfo,
+    sensor_info: SensorInfo,
     descriptor: SensorDescriptor,
 ) -> Path:
-    """Process R2R CTD raw data into CSV files.
+    """Process SBE-911+ CTD raw data into CSV files.
 
     Args:
         data_dir: Directory containing .hex, .hdr, .xmlcon files
-        file_info: R2R file metadata
-        sensor_info: R2R sensor metadata
+        file_info: File metadata
+        sensor_info: Sensor metadata
         descriptor: Sensor descriptor from catalog
 
     Returns:
@@ -1142,14 +1141,10 @@ def parse_cnv_file(cnv_path: Path | str) -> pd.DataFrame:
 
 
 # Register processors
-try:
-    from oceanstream.sensors.processors import (
-        register_raw_processor,
-        register_sensor_processor,
-    )
+from oceanstream.sensors.processors import (
+    register_raw_processor,
+    register_sensor_processor,
+)
 
-    register_sensor_processor(SENSOR_TYPE_CTD, ctd_descriptor_processor)
-    register_raw_processor(SENSOR_TYPE_CTD, ctd_raw_processor)
-except ImportError:
-    # Processors module not available during import
-    pass
+register_sensor_processor(SENSOR_TYPE_CTD, ctd_descriptor_processor)
+register_raw_processor(SENSOR_ID_CTD, ctd_raw_processor)

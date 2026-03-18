@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from oceanstream.sensors.processors.r2r_winch import (
+from oceanstream.sensors.processors.lci90i import (
     SENSOR_ID_WINCH,
     SENSOR_TYPE_WINCH,
     LCI90I_PATTERN,
@@ -46,7 +46,9 @@ class TestLCI90IPattern:
 
     def test_pattern_matches_negative_values(self) -> None:
         """Test pattern matches line with negative wire_out and speed (typical payout)."""
-        line = "2022-06-14T12:00:00Z \x1e\x01WINCH,2022-06-14T12:00:00,-0001234,00000100,-00012.5,5000"
+        line = (
+            "2022-06-14T12:00:00Z \x1e\x01WINCH,2022-06-14T12:00:00,-0001234,00000100,-00012.5,5000"
+        )
         match = LCI90I_PATTERN.match(line)
         assert match is not None
         groups = match.groups()
@@ -131,9 +133,7 @@ class TestWinchDescriptorProcessor:
             description="R/V Revelle trawl winch",
         )
 
-        descriptor = winch_descriptor_processor(
-            tmp_path, file_info, sensor_info, "r2r"
-        )
+        descriptor = winch_descriptor_processor(tmp_path, file_info, sensor_info, "r2r")
 
         assert descriptor.sensor_type == SENSOR_TYPE_WINCH
         assert descriptor.sensor_id == SENSOR_ID_WINCH
@@ -147,9 +147,7 @@ class TestWinchDescriptorProcessor:
         file_info = R2RFileInfo(campaign_id="TEST")
         sensor_info = R2RSensorInfo(sensor_type="custom_winch")
 
-        descriptor = winch_descriptor_processor(
-            tmp_path, file_info, sensor_info, "r2r"
-        )
+        descriptor = winch_descriptor_processor(tmp_path, file_info, sensor_info, "r2r")
 
         assert descriptor.sensor_type == "custom_winch"
 

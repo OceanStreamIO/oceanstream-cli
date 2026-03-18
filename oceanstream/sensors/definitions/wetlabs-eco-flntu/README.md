@@ -44,7 +44,7 @@ The WET Labs ECO-FLNTU is a combined fluorometer and turbidity sensor designed f
 
 ## Data Processing
 
-R2R fluorometer raw data (`.Raw` files) is processed by the `r2r_fluorometer` sensor processor, which:
+Fluorometer raw data (`.Raw` files) is processed by the `eco_flntu` sensor processor, which:
 
 1. Parses proprietary binary/text format into standardized CSV
 2. Applies timestamp corrections

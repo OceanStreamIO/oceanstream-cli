@@ -28,7 +28,7 @@ Example:
 
 ## Processing
 
-The `oceanstream.sensors.processors.r2r_winch` module provides:
+The `oceanstream.sensors.processors.lci90i` module provides:
 
 - `parse_winch_file(file_path)` - Parse a single winch data file into records
 - `winch_raw_processor(data_dir, ...)` - Convert winch files to CSV format
@@ -37,7 +37,7 @@ The `oceanstream.sensors.processors.r2r_winch` module provides:
 
 ```python
 from pathlib import Path
-from oceanstream.sensors.processors.r2r_winch import parse_winch_file
+from oceanstream.sensors.processors.lci90i import parse_winch_file
 
 # Parse winch data
 records = parse_winch_file(Path("winch_lci90i_rr_trawl-2022-06-14"))

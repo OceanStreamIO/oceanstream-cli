@@ -22,6 +22,13 @@ def load_sensor_from_json(json_path: Path) -> Optional[Sensor]:
         # Convert sensor_type string to enum
         sensor_type = SensorType(data['sensor_type'])
         
+        known_keys = {
+            'id', 'name', 'manufacturer', 'model', 'sensor_type',
+            'description', 'variables', 'specifications',
+            'documentation_url', 'typical_depth', 'typical_mount',
+        }
+        extra = {k: v for k, v in data.items() if k not in known_keys}
+
         return Sensor(
             id=data['id'],
             name=data['name'],
@@ -33,7 +40,8 @@ def load_sensor_from_json(json_path: Path) -> Optional[Sensor]:
             specifications=data.get('specifications', {}),
             documentation_url=data.get('documentation_url'),
             typical_depth=data.get('typical_depth'),
-            typical_mount=data.get('typical_mount')
+            typical_mount=data.get('typical_mount'),
+            extra=extra,
         )
     except Exception as e:
         print(f"Error loading sensor from {json_path}: {e}")
