@@ -55,6 +55,40 @@ class SeabedDetectionResult:
     params: dict
 
 
+def _select_channel(
+    ds: xr.Dataset, channel: Optional[str] = None
+) -> tuple[xr.Dataset, str]:
+    """Select a single channel from a multi-channel dataset.
+
+    Args:
+        ds: Dataset, possibly with a ``channel`` dimension.
+        channel: Channel label to select.  If *None*, the first channel is
+            used (typically 38 kHz for seabed work).
+
+    Returns:
+        Tuple of (single-channel Dataset, channel label string).
+    """
+    if "channel" not in ds.dims:
+        return ds, channel or "single_channel"
+
+    channels = ds.channel.values
+    if channel is not None:
+        if channel in channels:
+            return ds.sel(channel=channel), str(channel)
+        # Try partial / substring match (e.g. "38" in "WBT 742057-15 ES38-18")
+        matches = [c for c in channels if channel in str(c)]
+        if matches:
+            sel = str(matches[0])
+            return ds.sel(channel=sel), sel
+        raise ValueError(
+            f"Channel '{channel}' not found. Available: {list(channels)}"
+        )
+
+    # Default: first channel
+    first = str(channels[0])
+    return ds.sel(channel=first), first
+
+
 def _get_range_array(ds: xr.Dataset) -> tuple[xr.DataArray, str]:
     """Get the range array and dimension name from a dataset.
     
@@ -790,7 +824,7 @@ def detect_seabed_composite(
 
 def detect_seabed(
     ds: xr.Dataset,
-    method: Literal["maxSv", "deltaSv", "ariza", "composite"] = "ariza",
+    method: Literal["maxSv", "deltaSv", "ariza", "composite", "blackwell"] = "ariza",
     channel: Optional[str] = None,
     r0: float = 10,
     r1: float = 1000,

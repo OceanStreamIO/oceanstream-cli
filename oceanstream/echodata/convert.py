@@ -221,12 +221,27 @@ def detect_sonar_model(raw_file: Path) -> str:
         "EK80" or "EK60" based on file contents
         
     Note:
-        Currently returns "EK80" as default since Saildrone uses EK80.
-        Future: implement actual detection based on file header.
+        Detection reads the first datagram header.
+        Falls back to "EK80" if the header is unrecognised.
     """
-    # TODO: Implement actual detection
-    # For now, default to EK80 (Saildrone standard)
-    logger.debug(f"Auto-detecting sonar model for {raw_file.name}, defaulting to EK80")
+    # Simrad raw files start with a datagram whose 4-byte type field
+    # identifies the instrument:
+    #   EK60 / ES60  → b'CON0' (little-endian ASCII at offset 4)
+    #   EK80 / ES80  → b'XML0'
+    try:
+        with open(raw_file, "rb") as fh:
+            # Skip the 4-byte datagram length and read the 4-byte type.
+            fh.read(4)  # datagram length
+            tag = fh.read(4)
+        if tag == b"CON0":
+            logger.debug(f"{raw_file.name}: detected EK60 (CON0 header)")
+            return "EK60"
+        if tag == b"XML0":
+            logger.debug(f"{raw_file.name}: detected EK80 (XML0 header)")
+            return "EK80"
+        logger.debug(f"{raw_file.name}: unrecognised header {tag!r}, defaulting to EK80")
+    except OSError:
+        logger.debug(f"Cannot read {raw_file.name}, defaulting to EK80")
     return "EK80"
 
 

@@ -779,17 +779,24 @@ def get_env_params_for_calibration(
     
     # Use depth-weighted if target depth and profile provided
     if target_depth_m is not None and copernicus_profile is not None:
+        import pandas as pd
         from oceanstream.echodata.environment.blended import (
             get_blended_env_params_for_calibration,
         )
         
+        # Build the insitu DataFrame that blended.py expects
+        insitu_df = pd.DataFrame({
+            "time": ping_times,
+            "temperature": env_interp.temperature,
+            "salinity": env_interp.salinity,
+        })
+        
         return get_blended_env_params_for_calibration(
-            insitu_temp=env_interp.temperature,
-            insitu_sal=env_interp.salinity,
+            insitu_df=insitu_df,
             copernicus_profile=copernicus_profile,
             ping_times=ping_times,
-            channel_ids=channel_ids,
-            target_depth_m=target_depth_m,
+            channels=channel_ids,
+            target_depth=target_depth_m,
             frequencies_hz=frequencies_hz,
         )
     

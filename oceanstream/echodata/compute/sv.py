@@ -24,6 +24,7 @@ def compute_sv(
     use_dask: bool = True,
     add_depth: bool = True,
     add_location: bool = True,
+    depth_offset: float = 0.0,
     waveform_mode: str = "CW",
     encode_mode: str = "complex",
 ) -> "xr.Dataset":
@@ -40,6 +41,9 @@ def compute_sv(
         use_dask: Enable Dask for large files
         add_depth: Add depth coordinate to output
         add_location: Add lat/lon coordinates to output
+        depth_offset: Transducer depth offset in metres (e.g. depth below
+            waterline).  Passed to echopype ``add_depth`` when platform
+            metadata doesn't already provide it.
         waveform_mode: Waveform mode for EK80 ('CW' for narrowband, 'BB' for broadband)
         encode_mode: Encode mode for EK80 ('complex' or 'power')
         
@@ -90,10 +94,15 @@ def compute_sv(
     logger.info("Computing Sv")
     ds_Sv = ep.calibrate.compute_Sv(echodata, **compute_kwargs)
     
-    # Add depth coordinate
+    # Add depth coordinate using platform-aware flag selection
     if add_depth:
         logger.info("Adding depth coordinate")
-        ds_Sv = ep.consolidate.add_depth(ds_Sv)
+        try:
+            flags = _choose_depth_flags(echodata, depth_offset=depth_offset)
+            ds_Sv = ep.consolidate.add_depth(ds_Sv, echodata, **flags)
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning(f"Depth-flag add_depth failed ({e}), using simple add_depth")
+            ds_Sv = ep.consolidate.add_depth(ds_Sv)
     
     # Add location coordinates
     if add_location:

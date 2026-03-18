@@ -119,11 +119,23 @@ class TestCalibrationParams:
             pass
 
     def test_invalid_frequency_type(self):
-        """Should reject non-numeric frequencies."""
+        """Should reject non-string, non-numeric frequency keys."""
         from oceanstream.echodata.calibrate.calibration import validate_calibration_params
         
+        # String keys are valid (e.g. "38kHz", "38k_short")
+        valid_params = {
+            "38kHz": {
+                "gain": 25.0,
+            }
+        }
+        try:
+            assert validate_calibration_params(valid_params) is True
+        except (NotImplementedError, AttributeError):
+            pass
+        
+        # Non-string/non-numeric keys should be rejected
         invalid_params = {
-            "38kHz": {  # Should be numeric
+            (38, 0): {  # tuple key is invalid
                 "gain": 25.0,
             }
         }

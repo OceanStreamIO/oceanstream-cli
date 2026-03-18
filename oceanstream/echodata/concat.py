@@ -2,6 +2,11 @@
 
 Groups raw files by UTC date and concatenates them for daily processing,
 enabling efficient denoising and MVBS/NASC computation over 24-hour periods.
+
+Includes utilities for:
+- Pulse-category splitting (short_pulse / long_pulse) based on frequency
+  combinations in processed Zarr stores.
+- Time-window batch grouping for multi-day concatenation windows.
 """
 
 from __future__ import annotations
@@ -9,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -394,4 +399,139 @@ def merge_location_data(ds: "xr.Dataset", location_data: list[dict]) -> "xr.Data
         merged = merged.reset_coords("time", drop=True)
     
     return merged
-    return dt
+
+
+# ============================================================================
+# Pulse-category splitting utilities
+# ============================================================================
+
+# Well-known pulse categories for Saildrone EK80.
+# Key = friendly name, value = comma-joined sorted frequency_nominal strings.
+PULSE_CATEGORY_CONFIG: dict[str, dict[str, Optional[str]]] = {
+    "short_pulse": {"freq_key": "38000.0,200000.0"},
+    "long_pulse": {"freq_key": "38000.0"},
+    "exported_ds": {"freq_key": None},  # catch-all
+}
+
+
+def detect_pulse_category(ds: "xr.Dataset") -> str:
+    """Classify a Sv dataset into a pulse category.
+
+    Classification is based on the sorted frequency_nominal values present
+    in the ``channel`` dimension, matching the Saildrone EK80 convention:
+
+    - ``"short_pulse"`` → 38 kHz + 200 kHz (dual-frequency, short CW pulse)
+    - ``"long_pulse"``  → 38 kHz only (single-frequency, long CW pulse)
+    - ``"exported_ds"``  → anything else
+
+    Args:
+        ds: Sv xarray.Dataset with a ``frequency_nominal`` coordinate or
+            variable.
+
+    Returns:
+        One of ``"short_pulse"``, ``"long_pulse"``, or ``"exported_ds"``.
+    """
+    import numpy as np
+
+    if "frequency_nominal" in ds:
+        freqs = np.sort(
+            np.unique(ds["frequency_nominal"].values.astype(float))
+        )
+    elif "channel" in ds.dims:
+        freqs = np.sort(
+            np.unique(ds["channel"].values.astype(float))
+        )
+    else:
+        return "exported_ds"
+
+    freq_str = ",".join(f"{f:.1f}" for f in freqs)
+
+    for category, cfg in PULSE_CATEGORY_CONFIG.items():
+        if cfg["freq_key"] is None or freq_str == cfg["freq_key"]:
+            return category
+
+    return "exported_ds"
+
+
+def group_by_pulse_category(
+    paths: list[Path],
+) -> dict[str, list[Path]]:
+    """Group Zarr store paths by pulse category.
+
+    Opens each Zarr lazily to read ``frequency_nominal`` and assigns the
+    file to a pulse category.
+
+    Args:
+        paths: List of Sv Zarr store paths.
+
+    Returns:
+        ``{category: [path, ...]}`` mapping.
+    """
+    import xarray as xr
+
+    groups: dict[str, list[Path]] = defaultdict(list)
+    for p in paths:
+        try:
+            ds = xr.open_zarr(p)
+            cat = detect_pulse_category(ds)
+        except Exception:
+            logger.warning(f"Could not classify {p}, assigning to exported_ds")
+            cat = "exported_ds"
+        groups[cat].append(p)
+    return dict(groups)
+
+
+# ============================================================================
+# Time-window batch grouping
+# ============================================================================
+
+def batch_key(
+    ts: datetime,
+    window_days: int = 1,
+) -> str:
+    """Return a filename-safe key that anchors *ts* to a fixed time window.
+
+    Args:
+        ts: Timestamp (usually a file start time).
+        window_days: Width of the batching window in days.
+
+    Returns:
+        ``"YYYY-MM-DD"`` for single-day windows, or
+        ``"YYYY-MM-DD_to_YYYY-MM-DD"`` for multi-day windows.
+
+    Examples:
+        >>> batch_key(datetime(2023, 8, 10), 1)
+        '2023-08-10'
+        >>> batch_key(datetime(2023, 8, 10), 3)
+        '2023-08-09_to_2023-08-11'
+    """
+    anchor = datetime(ts.year, ts.month, ts.day)
+
+    if window_days <= 1:
+        return f"{anchor:%Y-%m-%d}"
+
+    # Floor to start of rolling window
+    anchor -= timedelta(days=(anchor - datetime.min).days % window_days)
+    end = anchor + timedelta(days=window_days - 1)
+    return f"{anchor:%Y-%m-%d}_to_{end:%Y-%m-%d}"
+
+
+def group_by_time_window(
+    files: list[tuple[Path, datetime]],
+    window_days: int = 1,
+) -> dict[str, list[Path]]:
+    """Group files into time-window batches.
+
+    Args:
+        files: List of ``(path, start_time)`` tuples.
+        window_days: Width of each batch window in days.
+
+    Returns:
+        ``{batch_key_str: [path, ...]}`` mapping, sorted by key.
+    """
+    groups: dict[str, list[Path]] = defaultdict(list)
+    for path, ts in files:
+        key = batch_key(ts, window_days)
+        groups[key].append(path)
+
+    return dict(sorted(groups.items()))

@@ -104,6 +104,14 @@ __all__ = [
     "DenoiseConfig",
     "MVBSConfig",
     "NASCConfig",
+    # Pydantic denoise parameter models
+    "MaskImpulseNoise",
+    "TransientNoiseMask",
+    "RemoveBackgroundNoise",
+    "MaskAttenuatedSignal",
+    "MVBSComputeOptions",
+    "NASCComputeOptions",
+    "fill_missing_frequency_params",
     # Consolidate (depth computation)
     "add_depth_to_sv",
     "choose_depth_flags",
@@ -158,6 +166,27 @@ def __getattr__(name: str):
             DenoiseConfig,
             MVBSConfig,
             NASCConfig,
+        )
+        return locals()[name]
+    
+    # Pydantic denoise parameter models
+    if name in (
+        "MaskImpulseNoise",
+        "TransientNoiseMask",
+        "RemoveBackgroundNoise",
+        "MaskAttenuatedSignal",
+        "MVBSComputeOptions",
+        "NASCComputeOptions",
+        "fill_missing_frequency_params",
+    ):
+        from oceanstream.echodata.models import (
+            MaskImpulseNoise,
+            TransientNoiseMask,
+            RemoveBackgroundNoise,
+            MaskAttenuatedSignal,
+            MVBSComputeOptions,
+            NASCComputeOptions,
+            fill_missing_frequency_params,
         )
         return locals()[name]
     

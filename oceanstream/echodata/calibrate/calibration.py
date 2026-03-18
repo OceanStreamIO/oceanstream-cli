@@ -186,19 +186,23 @@ def validate_calibration_params(params: dict) -> bool:
     Validate calibration parameters dictionary.
     
     Args:
-        params: Dictionary of calibration parameters by frequency
+        params: Dictionary of calibration parameters by frequency.
+            Keys may be numeric (Hz) or string labels (e.g. "38kHz",
+            "38k_short").
         
     Returns:
         True if valid
         
     Raises:
-        ValueError: If invalid frequency type
+        ValueError: If parameter values are wrong
         TypeError: If parameter types are wrong
     """
     for freq_key, values in params.items():
-        # Frequency keys should be numeric (int)
-        if not isinstance(freq_key, (int, float)):
-            raise TypeError(f"Frequency key must be numeric, got {type(freq_key)}")
+        # Accept both numeric keys (int/float Hz) and string labels
+        if not isinstance(freq_key, (int, float, str)):
+            raise TypeError(
+                f"Frequency key must be numeric or string, got {type(freq_key)}"
+            )
         
         # Values should be a dict
         if not isinstance(values, dict):
@@ -208,34 +212,75 @@ def validate_calibration_params(params: dict) -> bool:
 
 
 def parse_ecs_file(ecs_file: Path) -> dict[int, dict]:
-    """
-    Parse Simrad ECS calibration file format.
-    
+    """Parse Simrad ECS calibration file format.
+
+    ECS files are INI-style text files with ``[ChannelN]`` sections.
+    This parser reads them using :mod:`configparser` and returns
+    calibration values keyed by frequency in Hz.
+
+    Falls back to XML parsing if INI parsing yields no sections (some
+    third-party tools export calibration as XML).
+
     Args:
         ecs_file: Path to .ecs file
-        
+
     Returns:
         Dictionary of calibration values keyed by frequency (Hz)
     """
+    import configparser
+
+    config = configparser.ConfigParser()
+    try:
+        config.read(ecs_file)
+    except configparser.Error:
+        # Not INI format — fall through to XML fallback below
+        config = configparser.ConfigParser()
+
+    params: dict[int, dict] = {}
+    for section in config.sections():
+        if section.startswith("Channel"):
+            freq = config.getfloat(section, "Frequency", fallback=0)
+            freq_hz = int(freq) if freq >= 1000 else int(freq * 1000)
+            params[freq_hz] = {
+                "gain": config.getfloat(section, "Gain", fallback=0),
+                "sa_correction": config.getfloat(section, "SaCorrection", fallback=0),
+                "beamwidth_alongship": config.getfloat(
+                    section, "BeamWidthAlongship", fallback=0
+                ),
+                "beamwidth_athwartship": config.getfloat(
+                    section, "BeamWidthAthwartship", fallback=0
+                ),
+                "angle_offset_alongship": config.getfloat(
+                    section, "AngleOffsetAlongship", fallback=0
+                ),
+                "angle_offset_athwartship": config.getfloat(
+                    section, "AngleOffsetAthwartship", fallback=0
+                ),
+            }
+
+    if params:
+        return params
+
+    # Fallback: try XML parsing for non-standard calibration files
     import xml.etree.ElementTree as ET
-    
-    tree = ET.parse(ecs_file)
+
+    try:
+        tree = ET.parse(ecs_file)
+    except ET.ParseError:
+        logger.warning(f"ECS file {ecs_file} is neither valid INI nor XML")
+        return {}
+
     root = tree.getroot()
-    
-    params = {}
-    
     for cal in root.findall(".//Calibration"):
         freq = int(cal.get("Frequency", 0))
-        params[freq] = {}
-        
-        gain_elem = cal.find("Gain")
-        if gain_elem is not None:
-            params[freq]["gain"] = float(gain_elem.text)
-        
-        sa_elem = cal.find("SaCorrection")
-        if sa_elem is not None:
-            params[freq]["sa_correction"] = float(sa_elem.text)
-    
+        entry: dict[str, float] = {}
+        for tag in ("Gain", "SaCorrection"):
+            elem = cal.find(tag)
+            if elem is not None and elem.text:
+                entry[tag[0].lower() + tag[1:]] = float(elem.text)
+        if entry:
+            params[freq] = entry
+
     return params
 
 

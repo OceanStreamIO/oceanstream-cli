@@ -171,6 +171,33 @@ class EchodataProcessor:
     def _timed_step(self, step_name: str):
         """Context manager for timing a processing step."""
         return _TimedStep(step_name, self)
+
+    def _save_intermediate(
+        self,
+        output_dir: Path,
+        paths: list[Path],
+        stage_name: str,
+    ) -> None:
+        """Save intermediate processing results to a checkpoint directory.
+
+        Copies Zarr stores from *paths* into ``output_dir/<stage_name>/`` so
+        that each pipeline stage can be inspected or resumed independently.
+
+        Args:
+            output_dir: Root output directory for the pipeline run.
+            paths: List of Zarr store paths to snapshot.
+            stage_name: Sub-directory name for this stage (e.g. "raw_sv").
+        """
+        import shutil
+
+        dest_dir = output_dir / stage_name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for src in paths:
+            dst = dest_dir / src.name
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            self.log(f"  Saved intermediate {stage_name}/{src.name}")
     
     # =========================================================================
     # Step 1: Convert Raw Files
