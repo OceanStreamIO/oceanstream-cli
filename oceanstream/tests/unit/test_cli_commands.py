@@ -178,8 +178,7 @@ class TestShowCampaignCommand:
         """Test showing campaign details."""
         mock_metadata = {
             'campaign_id': 'FK161229',
-            'platform_id': 'R/V_Falkor',
-            'platform_name': 'Research Vessel Falkor',
+            'platforms': [{'id': 'R/V_Falkor', 'name': 'Research Vessel Falkor'}],
             'description': 'Test campaign',
             'start_date': '2016-12-29',
             'end_date': '2017-01-20',
@@ -211,12 +210,12 @@ class TestListCampaignsCommand:
         mock_campaigns = [
             {
                 'campaign_id': 'FK161229',
-                'platform_id': 'R/V_Falkor',
+                'platforms': [{'id': 'R/V_Falkor'}],
                 'start_date': '2016-12-29',
             },
             {
                 'campaign_id': 'SD1030_2023',
-                'platform_id': 'sd1030',
+                'platforms': [{'id': 'sd1030'}],
                 'start_date': '2023-06-01',
             },
         ]
@@ -242,7 +241,7 @@ class TestListCampaignsCommand:
         mock_campaigns = [
             {
                 'campaign_id': 'FK161229',
-                'platform_id': 'R/V_Falkor',
+                'platforms': [{'id': 'R/V_Falkor'}],
                 'description': 'Test campaign',
                 'start_date': '2016-12-29',
                 'end_date': '2017-01-20',
@@ -262,7 +261,7 @@ class TestDeleteCampaignCommand:
     
     def test_delete_campaign_success_with_yes_flag(self):
         """Test deleting campaign with --yes flag."""
-        mock_metadata = {'campaign_id': 'FK161229', 'platform_id': 'R/V_Falkor'}
+        mock_metadata = {'campaign_id': 'FK161229', 'platforms': [{'id': 'R/V_Falkor'}]}
         
         with patch('oceanstream.geotrack.campaign.load_campaign_metadata', return_value=mock_metadata):
             with patch('oceanstream.geotrack.campaign.delete_campaign') as mock_delete:

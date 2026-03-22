@@ -1556,7 +1556,6 @@ def convert(
     print_schema: bool = False,
     provider_metadata: bool = False,
     dry_run: bool = False,
-    upload: bool = False,
     yes: bool = False,
     generate_pmtiles: bool = False,
     pmtiles_minzoom: int = 0,
@@ -1601,7 +1600,6 @@ def convert(
         print_schema: Print GeoParquet schema and exit
         provider_metadata: Print provider metadata and exit
         dry_run: Analyze inputs without writing files
-        upload: (Deprecated) Use use_cloud_storage instead
         yes: Skip confirmation prompts
         generate_pmtiles: Generate PMTiles vector tiles with segments, day markers, and arrows
         pmtiles_minzoom: Minimum zoom level for PMTiles (0-15)
@@ -1648,11 +1646,11 @@ def convert(
     output_str = str(output_dir)
     is_cloud_uri = output_str.startswith(("az://", "abfs://", "s3://", "gs://"))
 
-    if is_cloud_uri or use_cloud_storage or upload:
+    if is_cloud_uri or use_cloud_storage:
         try:
             storage_path = resolve_output_path(
                 output_dir,
-                use_active_storage=(use_cloud_storage or upload) and not is_cloud_uri,
+                use_active_storage=use_cloud_storage and not is_cloud_uri,
             )
             filesystem = storage_path.filesystem
             resolved_output_dir = storage_path.path
@@ -1778,7 +1776,6 @@ def convert(
                     print_schema=print_schema,
                     provider_metadata=provider_metadata,
                     dry_run=dry_run,
-                    upload=upload,
                     yes=True,  # Skip confirmation prompts in recursive calls
                     generate_pmtiles=generate_pmtiles,
                     pmtiles_minzoom=pmtiles_minzoom,

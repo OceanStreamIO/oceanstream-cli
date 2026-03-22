@@ -379,12 +379,6 @@ if typer:
         if platforms_list:
             # From --platform CLI option(s)
             metadata['platforms'] = platforms_list
-            # Also set legacy fields for backward compatibility (first platform)
-            metadata['platform_id'] = platforms_list[0]['id']
-            if 'name' in platforms_list[0]:
-                metadata['platform_name'] = platforms_list[0]['name']
-            if 'type' in platforms_list[0]:
-                metadata['platform_type'] = platforms_list[0]['type']
         elif platform_id:
             # From interactive mode - convert to platforms array
             platform_dict = {"id": platform_id}
@@ -393,12 +387,6 @@ if typer:
             if platform_type:
                 platform_dict["type"] = platform_type
             metadata['platforms'] = [platform_dict]
-            # Also set legacy fields
-            metadata['platform_id'] = platform_id
-            if platform_name:
-                metadata['platform_name'] = platform_name
-            if platform_type:
-                metadata['platform_type'] = platform_type
         
         # Remove None values
         metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -475,13 +463,6 @@ if typer:
                             typer.echo(f"      Type: {p['type']}")
                         if 'row_count' in p:
                             typer.echo(f"      Rows: {p['row_count']:,}")
-            # Legacy single-platform fields (backward compatibility)
-            elif "platform_id" in metadata:
-                typer.echo(f"Platform ID:        {metadata['platform_id']}")
-                if "platform_name" in metadata:
-                    typer.echo(f"Platform Name:      {metadata['platform_name']}")
-                if "platform_type" in metadata:
-                    typer.echo(f"Platform Type:      {metadata['platform_type']}")
             
             typer.echo()
             
@@ -585,15 +566,12 @@ if typer:
                     campaign_id = campaign.get("campaign_id", "unknown")
                     typer.echo(f"{i}. {campaign_id}")
                     
-                    # Show platforms (new format) or legacy platform_id
                     if "platforms" in campaign and campaign["platforms"]:
                         platforms = campaign["platforms"]
                         if len(platforms) == 1:
                             typer.echo(f"   Platform:     {platforms[0].get('id', 'N/A')}")
                         else:
                             typer.echo(f"   Platforms:    {len(platforms)} ({', '.join(p.get('id', '?') for p in platforms)})")
-                    elif "platform_id" in campaign:
-                        typer.echo(f"   Platform:     {campaign['platform_id']}")
                     
                     if "description" in campaign:
                         desc = campaign['description']
@@ -623,7 +601,7 @@ if typer:
                         else:
                             platform_str = f"{len(platforms)} platforms"
                     else:
-                        platform_str = campaign.get("platform_id", "N/A")
+                        platform_str = "N/A"
                     
                     description = campaign.get("description", "")
                     
@@ -670,15 +648,12 @@ if typer:
             if not yes:
                 typer.echo(f"[campaign delete] About to delete campaign: {campaign_id}")
                 
-                # Show platforms (new format) or legacy platform_id
                 if "platforms" in metadata and metadata["platforms"]:
                     platforms = metadata["platforms"]
                     if len(platforms) == 1:
                         typer.echo(f"[campaign delete]   Platform: {platforms[0].get('id', 'N/A')}")
                     else:
                         typer.echo(f"[campaign delete]   Platforms: {len(platforms)} ({', '.join(p.get('id', '?') for p in platforms)})")
-                elif "platform_id" in metadata:
-                    typer.echo(f"[campaign delete]   Platform: {metadata['platform_id']}")
                 
                 if "description" in metadata:
                     typer.echo(f"[campaign delete]   Description: {metadata['description']}")
@@ -742,7 +717,6 @@ if typer:
             typer.echo(f"{'=' * 70}")
             
             if metadata:
-                # Show platforms (new format) or legacy platform_id
                 if "platforms" in metadata and metadata["platforms"]:
                     platforms = metadata["platforms"]
                     if len(platforms) == 1:
@@ -752,8 +726,6 @@ if typer:
                         for p in platforms:
                             row_info = f" ({p['row_count']:,} rows)" if 'row_count' in p else ""
                             typer.echo(f"  - {p.get('id', 'unknown')}{row_info}")
-                elif "platform_id" in metadata:
-                    typer.echo(f"Platform:         {metadata['platform_id']}")
                 if "description" in metadata:
                     desc = metadata['description']
                     if len(desc) > 60:
@@ -885,7 +857,6 @@ if typer:
             help="Output path for GeoParquet. Local path or cloud URI (az://container/path, s3://bucket/path). Campaign subdirectories are auto-created.",
         ),
         provider: str = typer.Option(None, "--provider", help="Data provider type (overrides global --provider setting). Available: saildrone, r2r."),
-        upload: bool = typer.Option(False, "--upload", help="(Deprecated) Use --use-cloud-storage instead."),
         use_cloud_storage: bool = typer.Option(False, "--use-cloud-storage", help="Write output to configured cloud storage (requires 'oceanstream storage add' first)."),
         verbose: bool = typer.Option(False, "-v", help="Emit detailed progress information."),
         list_columns: bool = typer.Option(False, help="List available columns from the input CSVs and exit."),
@@ -965,7 +936,6 @@ if typer:
                 print_schema=print_schema,
                 provider_metadata=provider_metadata,
                 dry_run=dry_run,
-                upload=upload,
                 yes=yes,
                 generate_pmtiles=generate_pmtiles,
                 pmtiles_minzoom=pmtiles_minzoom,
@@ -2037,7 +2007,6 @@ if typer:
         input_dir: Path = typer.Option(Path("raw_multibeam"), exists=True, file_okay=False, help="Directory with raw multibeam backscatter data."),
         output_dir: Path = typer.Option(Path("out/multibeam"), help="Output directory for processed multibeam products."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
-        upload: bool = typer.Option(False, help="Upload processed data to cloud storage after conversion (future)."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
         global _provider_obj
@@ -2063,7 +2032,6 @@ if typer:
         input_dir: Path = typer.Option(Path("raw_adcp"), exists=True, file_okay=False, help="Directory with raw ADCP data."),
         output_dir: Path = typer.Option(Path("out/adcp"), help="Output directory for processed ADCP products."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
-        upload: bool = typer.Option(False, help="Upload processed data to cloud storage after conversion (future)."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
         global _provider_obj
