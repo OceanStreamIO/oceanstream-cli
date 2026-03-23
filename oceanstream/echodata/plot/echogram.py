@@ -1104,3 +1104,175 @@ def plot_sv_with_seabed(
     logger.info(f"Echogram with seabed overlay saved to {out_path}")
     return out_path
 
+
+# ── Blob upload helpers (ported from saildrone.process.plot) ────────────
+
+
+def plot_and_upload_echograms(
+    sv_dataset: "xr.Dataset",
+    *,
+    cruise_id: str | None = None,
+    file_base_name: str | None = None,
+    save_to_blobstorage: bool = False,
+    output_path: str | None = None,
+    upload_path: str | None = None,
+    container_name: str | None = None,
+    export_filename=None,
+    create_interactive_pages: bool = False,
+    channel: int | None = None,
+    cmap: str = "ocean_r",
+    plot_var: str = "Sv",
+    title_template: str = "{channel_label}",
+    depth_var: str | None = None,
+    connection_string: str | None = None,
+) -> list[str]:
+    """Generate echograms and optionally upload them to Azure Blob Storage.
+
+    When *save_to_blobstorage* is True, PNGs are written to a temp directory,
+    the directory is uploaded to Azure Blob, and a list of blob-relative paths
+    is returned.
+
+    Parameters
+    ----------
+    sv_dataset : xr.Dataset
+        Dataset containing Sv data.
+    cruise_id : str, optional
+        Cruise identifier (used for path construction).
+    file_base_name : str
+        Base name for the echogram files.
+    save_to_blobstorage : bool
+        Upload to Azure Blob after generation.
+    output_path : str, optional
+        Local directory for non-blob output.
+    upload_path : str, optional
+        Target path inside the blob container.
+    container_name : str, optional
+        Azure Blob container name.
+    export_filename : callable, optional
+        Transform echogram filenames for the returned list.
+    create_interactive_pages : bool
+        Generate interactive HTML echograms.
+    channel : int, optional
+        Plot only a specific channel index.
+    cmap : str
+        Matplotlib colormap name.
+    plot_var : str
+        Variable to plot (default ``"Sv"``).
+    title_template : str
+        Title template with ``{channel_label}`` placeholder.
+    depth_var : str, optional
+        Depth variable name override.
+    connection_string : str, optional
+        Azure connection string override.
+
+    Returns
+    -------
+    list[str]
+        Paths of generated/uploaded echogram files.
+    """
+    import shutil
+
+    if save_to_blobstorage:
+        echograms_dir = f"/tmp/osechograms/{cruise_id or 'default'}/{file_base_name}"
+    else:
+        if output_path is None:
+            raise ValueError("output_path is required when save_to_blobstorage is False")
+        echograms_dir = f"{output_path}/echograms/{file_base_name}"
+
+    os.makedirs(echograms_dir, exist_ok=True)
+
+    echogram_files = plot_sv_data(
+        sv_dataset,
+        file_base_name=file_base_name or "echogram",
+        output_path=echograms_dir,
+        plot_var=plot_var,
+        cmap=cmap,
+        channel=channel,
+        title_template=title_template,
+    )
+
+    if create_interactive_pages:
+        try:
+            n_ch = sv_dataset.sizes.get("channel", 1)
+            for ch in range(n_ch):
+                html_path = f"{echograms_dir}/{file_base_name}_{ch}.html"
+                create_interactive_echogram(
+                    sv_dataset, channel=ch, out_html=html_path,
+                    var=plot_var, cmap=cmap,
+                )
+        except Exception as exc:
+            logger.warning("Interactive echogram generation failed: %s", exc)
+
+    if save_to_blobstorage:
+        from oceanstream.echodata.storage import upload_file_to_blob
+
+        upload_dest = upload_path or f"{cruise_id}/{file_base_name}"
+
+        # Upload all files in the echograms directory
+        echograms_path = Path(echograms_dir)
+        for fpath in echograms_path.rglob("*"):
+            if fpath.is_file():
+                blob_name = f"{upload_dest}/{fpath.name}"
+                upload_file_to_blob(
+                    str(fpath), blob_name, container_name,
+                    connection_string=connection_string,
+                )
+
+        shutil.rmtree(echograms_dir, ignore_errors=True)
+
+        if export_filename is not None:
+            uploaded_files = [export_filename(str(e)) for e in echogram_files]
+        else:
+            uploaded_files = [
+                f"{cruise_id}/{file_base_name}/{Path(e).name}" for e in echogram_files
+            ]
+    else:
+        uploaded_files = [str(Path(e).name) for e in echogram_files]
+
+    return uploaded_files
+
+
+def plot_and_upload_masks(
+    ds: "xr.Dataset",
+    *,
+    file_base_name: str | None = None,
+    upload_path: str | None = None,
+    container_name: str | None = None,
+    title_template: str = "{channel_label} – {cube_name}",
+    connection_string: str | None = None,
+) -> list[str]:
+    """Plot mask cubes and upload to Azure Blob Storage.
+
+    Returns
+    -------
+    list[str]
+        Blob-relative paths of the uploaded images.
+    """
+    import shutil
+
+    local_dir = f"/tmp/osechograms/{file_base_name}"
+    os.makedirs(local_dir, exist_ok=True)
+
+    try:
+        paths = plot_masks_vertical(
+            ds, file_base_name=file_base_name, output_path=local_dir,
+            title_template=title_template,
+        )
+    except Exception as exc:
+        logger.error("plot_masks_vertical failed: %s", exc)
+        return []
+
+    from oceanstream.echodata.storage import upload_file_to_blob
+
+    for fpath in Path(local_dir).rglob("*"):
+        if fpath.is_file():
+            blob_name = f"{upload_path}/{fpath.name}"
+            upload_file_to_blob(
+                str(fpath), blob_name, container_name,
+                connection_string=connection_string,
+            )
+
+    shutil.rmtree(local_dir, ignore_errors=True)
+
+    return [f"{file_base_name}/{p.name}" for p in paths.values()]
+

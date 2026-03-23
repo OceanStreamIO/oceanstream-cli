@@ -20,7 +20,7 @@ def test_campaign_inspect_cli_with_data(tmp_path):
     create_campaign(
         "TEST_CLI",
         metadata={
-            "platform_id": "SD1030",
+            "platforms": [{"id": "SD1030"}],
             "description": "CLI test campaign"
         }
     )

@@ -232,9 +232,9 @@ class TestCampaignCreateInteractive:
         
         assert metadata["campaign_id"] == campaign_id
         assert metadata["output_dir"] == "az://mycontainer/campaigns"
-        assert metadata["platform_id"] == "SD1030"
-        assert metadata["platform_name"] == "Saildrone Explorer 1030"
-        assert metadata["platform_type"] == "USV"
+        assert metadata["platforms"][0]["id"] == "SD1030"
+        assert metadata["platforms"][0]["name"] == "Saildrone Explorer 1030"
+        assert metadata["platforms"][0]["type"] == "USV"
         assert metadata["description"] == "Test interactive campaign"
         assert metadata["attribution"] == "Saildrone Inc."
         assert metadata["license"] == "CC-BY-4.0"
@@ -276,7 +276,7 @@ class TestCampaignCreateInteractive:
         with open(metadata_file) as f:
             metadata = json.load(f)
         
-        assert metadata["platform_type"] == "Research Vessel"
+        assert metadata["platforms"][0]["type"] == "Research Vessel"
         assert metadata["license"] == "CC0"
         assert metadata["bbox"] == [-180.0, -90.0, 180.0, 90.0]
         assert metadata["doi"] == "10.5281/zenodo.123456"
@@ -318,7 +318,7 @@ class TestCampaignCreateInteractive:
         with open(metadata_file) as f:
             metadata = json.load(f)
         
-        assert metadata["platform_type"] == "Underwater Glider"
+        assert metadata["platforms"][0]["type"] == "Underwater Glider"
         assert metadata["license"] == "Apache-2.0"
 
 
