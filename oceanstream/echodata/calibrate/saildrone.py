@@ -145,14 +145,22 @@ def detect_pulse_mode(echodata: "EchoData", atol: float = 5e-6) -> list[str]:
     Raises:
         ValueError: If a channel has mixed pulse durations
     """
-    td = echodata["Sonar/Beam_group1"].transmit_duration_nominal  # (ping_time, channel)
+    td = echodata["Sonar/Beam_group1"].transmit_duration_nominal
+    # Dims may be (channel, ping_time) in echopype 0.11.x or
+    # (ping_time, channel) in older versions.
     
     # Get first ping values as baseline
     first = td.isel(ping_time=0).values.astype(float)
-    td_vals = td.values.astype(float)
     
-    # Check for consistency across pings
-    for ch, col in enumerate(td_vals.T):
+    # Ensure td_vals is (channel, ping_time) for iteration
+    td_vals = td.values.astype(float)
+    if td.dims[0] != "channel" and "channel" in td.dims:
+        # (ping_time, channel) → transpose to (channel, ping_time)
+        td_vals = td_vals.T
+    
+    # Check for consistency across pings per channel
+    for ch in range(len(first)):
+        col = td_vals[ch]  # all pings for this channel
         if not np.allclose(col, first[ch], atol=atol):
             uniq = np.unique(np.round(col, 6))
             if len(uniq) == 1:

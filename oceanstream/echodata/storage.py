@@ -139,7 +139,7 @@ def get_azure_zarr_store(
     container: Optional[str] = None,
     mode: str = "w",
     connection_string: str | None = None,
-) -> "zarr.storage.FSStore":
+):
     """Get a Zarr store backed by Azure Blob Storage.
 
     Args:
@@ -149,7 +149,7 @@ def get_azure_zarr_store(
         connection_string: Explicit connection string.
 
     Returns:
-        zarr.storage.FSStore configured for Azure
+        Zarr store configured for Azure (FSStore for zarr v2, FSMap for v3)
 
     Example:
         store = get_azure_zarr_store("echodata/test/data.zarr")
@@ -163,7 +163,12 @@ def get_azure_zarr_store(
     fs = get_azure_filesystem(connection_string)
     full_path = f"{container}/{path}"
 
-    return zarr.storage.FSStore(full_path, fs=fs, mode=mode)
+    # zarr v2 has FSStore, zarr v3 removed it
+    if hasattr(zarr.storage, "FSStore"):
+        return zarr.storage.FSStore(full_path, fs=fs, mode=mode)
+    else:
+        # zarr v3: use fsspec.FSMap which xarray's to_zarr() accepts
+        return fs.get_mapper(full_path)
 
 
 def get_zarr_store_uri(
@@ -315,6 +320,40 @@ def save_product_to_azure(
     return get_zarr_store_uri(path, container, connection_string=connection_string)
 
 
+def save_dataset_to_azure(
+    dataset: "xr.Dataset",
+    zarr_path: str,
+    container: Optional[str] = None,
+    connection_string: str | None = None,
+) -> str:
+    """Save an xarray Dataset to an arbitrary zarr path on Azure Blob Storage.
+
+    This is a generic helper for callers that manage their own path layout
+    (e.g. ``cruise_id/days/2023-01-01_Sv.zarr``).  For campaign-structured
+    storage prefer :func:`save_sv_to_azure` or :func:`save_product_to_azure`.
+
+    Args:
+        dataset: xarray Dataset to save
+        zarr_path: Path inside the container (e.g. "HB2302/file_Sv.zarr")
+        container: Azure container (default: from credentials)
+
+    Returns:
+        Azure URI of saved zarr store
+    """
+    store = get_azure_zarr_store(
+        zarr_path, container=container, connection_string=connection_string,
+    )
+
+    logger.info(f"Saving dataset to Azure: {zarr_path}")
+    import xarray as xr_mod
+    if isinstance(dataset, xr_mod.Dataset):
+        from oceanstream.echodata.utils.encoding import fix_chunking
+        dataset = fix_chunking(dataset)
+    dataset.to_zarr(store, mode="w")
+
+    return get_zarr_store_uri(zarr_path, container, connection_string=connection_string)
+
+
 def open_echodata_from_azure(
     campaign_id: str,
     filename: str,
@@ -346,26 +385,42 @@ def open_echodata_from_azure(
 
 
 def open_sv_from_azure(
-    campaign_id: str,
-    filename: str,
+    campaign_id: str | None = None,
+    filename: str | None = None,
     container: Optional[str] = None,
     chunks: Optional[dict] = None,
     connection_string: str | None = None,
+    *,
+    zarr_path: str | None = None,
 ) -> "xr.Dataset":
     """Open Sv dataset from Azure Blob Storage.
-    
+
+    Can be called in two ways:
+        # Structured (campaign-based):
+        open_sv_from_azure(campaign_id="HB2302", filename="file1")
+
+        # Direct path:
+        open_sv_from_azure(zarr_path="HB2302/file1_Sv.zarr", container="processed")
+
     Args:
-        campaign_id: Campaign identifier
-        filename: Base filename
-        container: Azure container
+        campaign_id: Campaign identifier (used with *filename*)
+        filename: Base filename (used with *campaign_id*)
+        container: Azure container (default: from credentials)
         chunks: Dask chunking for lazy loading
-        
+        zarr_path: Direct path to the zarr store inside the container.
+            When provided, *campaign_id* and *filename* are ignored.
+
     Returns:
         xarray Dataset with Sv data
     """
     import xarray as xr
-    
-    path = build_echodata_path(campaign_id, f"{filename}_Sv", stage="calibrated")
+
+    if zarr_path is not None:
+        path = zarr_path
+    elif campaign_id is not None and filename is not None:
+        path = build_echodata_path(campaign_id, f"{filename}_Sv", stage="calibrated")
+    else:
+        raise ValueError("Provide either zarr_path or both campaign_id and filename.")
 
     conn_str, default_container = get_azure_credentials(connection_string)
     container = container or default_container
@@ -374,10 +429,16 @@ def open_sv_from_azure(
     logger.info(f"Opening Sv from Azure: {full_path}")
 
     storage_options = {"connection_string": conn_str}
-    
+
+    open_kw: dict = {"storage_options": storage_options}
     if chunks:
-        return xr.open_zarr(full_path, chunks=chunks, storage_options=storage_options)
-    return xr.open_zarr(full_path, storage_options=storage_options)
+        open_kw["chunks"] = chunks
+
+    ds = xr.open_zarr(full_path, **open_kw)
+    if not ds.data_vars:
+        # Zarr v3 stores lack consolidated metadata — retry without it
+        ds = xr.open_zarr(full_path, consolidated=False, **open_kw)
+    return ds
 
 
 def list_campaign_data(

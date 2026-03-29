@@ -167,22 +167,30 @@ class TestGetAzureZarrStore:
 
     @patch.dict("os.environ", {"AZURE_CONNECTION_STRING": "test-conn"}, clear=True)
     @patch("oceanstream.echodata.storage.get_azure_filesystem")
-    @patch("zarr.storage.FSStore")
-    def test_get_zarr_store(self, mock_fsstore, mock_get_fs):
+    def test_get_zarr_store(self, mock_get_fs):
         """Test getting a Zarr store for Azure."""
+        import zarr
         from oceanstream.echodata.storage import get_azure_zarr_store
 
         mock_fs = MagicMock()
         mock_get_fs.return_value = mock_fs
-        mock_store = MagicMock()
-        mock_fsstore.return_value = mock_store
 
-        store = get_azure_zarr_store("echodata/test/file.zarr")
-
-        mock_fsstore.assert_called_once_with(
-            "oceanstream-data/echodata/test/file.zarr", fs=mock_fs, mode="w"
-        )
-        assert store == mock_store
+        if hasattr(zarr.storage, "FSStore"):
+            mock_store = MagicMock()
+            with patch("zarr.storage.FSStore", return_value=mock_store) as mock_fsstore:
+                store = get_azure_zarr_store("echodata/test/file.zarr")
+                mock_fsstore.assert_called_once_with(
+                    "oceanstream-data/echodata/test/file.zarr", fs=mock_fs, mode="w"
+                )
+                assert store == mock_store
+        else:
+            mock_mapper = MagicMock()
+            mock_fs.get_mapper.return_value = mock_mapper
+            store = get_azure_zarr_store("echodata/test/file.zarr")
+            mock_fs.get_mapper.assert_called_once_with(
+                "oceanstream-data/echodata/test/file.zarr"
+            )
+            assert store == mock_mapper
 
     @patch.dict(
         "os.environ",
@@ -190,18 +198,24 @@ class TestGetAzureZarrStore:
         clear=True,
     )
     @patch("oceanstream.echodata.storage.get_azure_filesystem")
-    @patch("zarr.storage.FSStore")
-    def test_get_zarr_store_custom_container(self, mock_fsstore, mock_get_fs):
+    def test_get_zarr_store_custom_container(self, mock_get_fs):
         """Test getting Zarr store with custom container."""
+        import zarr
         from oceanstream.echodata.storage import get_azure_zarr_store
 
-        mock_get_fs.return_value = MagicMock()
-        mock_fsstore.return_value = MagicMock()
+        mock_fs = MagicMock()
+        mock_get_fs.return_value = mock_fs
 
-        get_azure_zarr_store("path/file.zarr", container="override")
-
-        args = mock_fsstore.call_args
-        assert args[0][0] == "override/path/file.zarr"
+        if hasattr(zarr.storage, "FSStore"):
+            with patch("zarr.storage.FSStore", return_value=MagicMock()) as mock_fsstore:
+                get_azure_zarr_store("path/file.zarr", container="override")
+                args = mock_fsstore.call_args
+                assert args[0][0] == "override/path/file.zarr"
+        else:
+            mock_fs.get_mapper.return_value = MagicMock()
+            get_azure_zarr_store("path/file.zarr", container="override")
+            args = mock_fs.get_mapper.call_args
+            assert args[0][0] == "override/path/file.zarr"
 
 
 class TestSaveEchodataToAzure:

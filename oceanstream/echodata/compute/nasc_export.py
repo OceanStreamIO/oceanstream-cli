@@ -80,10 +80,13 @@ def export_nasc_to_geoparquet(
     # Write Hive-partitioned GeoParquet
     partition_cols = ["campaign_id", "lat_bin", "lon_bin"]
 
-    gdf.to_parquet(
-        output_dir / "nasc",
-        engine="pyarrow",
-        partition_cols=partition_cols,
+    import pyarrow.parquet as pq
+
+    table = gdf.to_arrow()
+    pq.write_to_dataset(
+        table,
+        root_path=str(output_dir / "nasc"),
+        partitioning=partition_cols,
         existing_data_behavior="overwrite_or_ignore",
     )
 
