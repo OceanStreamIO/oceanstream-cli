@@ -431,13 +431,18 @@ def open_sv_from_azure(
     storage_options = {"connection_string": conn_str}
 
     open_kw: dict = {"storage_options": storage_options}
-    if chunks:
-        open_kw["chunks"] = chunks
+    # Don't pass chunks to open_zarr — unknown dimension names raise ValueError.
+    # Instead, rechunk after opening.
 
     ds = xr.open_zarr(full_path, **open_kw)
     if not ds.data_vars:
         # Zarr v3 stores lack consolidated metadata — retry without it
         ds = xr.open_zarr(full_path, consolidated=False, **open_kw)
+
+    if chunks:
+        valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
+        if valid_chunks:
+            ds = ds.chunk(valid_chunks)
     return ds
 
 

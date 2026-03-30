@@ -1,0 +1,57 @@
+# Denoise configuration for the Saildrone TPOS 2023 campaign
+# Load with: python process_campaign.py --denoise-config denoise.toml
+#
+# This file is loaded via oceanstream.echodata.config.EchodataConfig.from_toml()
+# Only the [echodata.denoise] section is used by the processing script.
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# Methods to apply (order matters):
+# "background" - remove background noise
+# "impulse"    - remove impulse/spike noise
+# "transient"  - remove transient noise
+# "attenuation"- remove signal attenuation
+methods = ["background", "impulse", "transient", "attenuation"]
+
+# ── Background noise removal ────────────────────────────────────
+background_num_side_pings = 25
+background_snr_threshold = 3.0
+# background_noise_max =       # uncomment to set upper limit
+
+# ── Impulse noise removal ───────────────────────────────────────
+impulse_threshold_db = 10.0
+impulse_num_lags = 3
+
+# ── Transient noise removal ─────────────────────────────────────
+transient_n = 5
+transient_exclude_above = 250.0
+
+# ── Signal attenuation masking ──────────────────────────────────
+attenuation_threshold = 0.8
+attenuation_upper_limit = 180.0
+attenuation_lower_limit = 280.0
+
+# ── Frequency-specific overrides ────────────────────────────────
+# Set use_frequency_specific = true and define per-frequency params
+# to tune denoising differently for 38 kHz vs 200 kHz.
+#
+# use_frequency_specific = true
+#
+# [echodata.denoise.frequency_params.38000]
+# impulse = { threshold_db = 8.0, num_lags = 3 }
+# background = { num_side_pings = 30, snr_threshold = 3.5 }
+#
+# [echodata.denoise.frequency_params.200000]
+# impulse = { threshold_db = 12.0, num_lags = 2 }
+# background = { num_side_pings = 20, snr_threshold = 2.5 }
+
+[echodata.mvbs]
+range_bin = "20m"
+ping_time_bin = "5s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"
