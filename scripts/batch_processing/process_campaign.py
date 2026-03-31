@@ -634,25 +634,53 @@ def denoise_day(
     if "background" in denoise_config.methods:
         from echopype.clean import remove_background_noise as ep_remove_background_noise
 
-        bgn_params = denoise_config.to_background_params()
+        # Build per-frequency params when frequency-specific mode is on,
+        # mirroring the Prefect flow's per-channel dispatch.
+        if denoise_config.use_frequency_specific:
+            bgn_freq_params = denoise_config.to_frequency_keyed_params("background")
+        else:
+            bgn_freq_params = None
+        bgn_global = denoise_config.to_background_params()
+
+        # Capture parent attrs for provenance propagation.
+        # echopype's @add_processing_level decorator on remove_background_noise
+        # requires input_processing_level when lat/lon are present.
+        # compute_Sv is decorated @add_processing_level("L2A"), so the Sv dataset
+        # should logically be "Level 2A".  It may be absent if lat/lon were added
+        # after compute_Sv (e.g. external GPS interpolation).  Set explicitly.
+        parent_attrs = dict(ds_denoised.attrs)
+        parent_attrs.setdefault("processing_level", "Level 2A")
+        parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
 
         def _remove_bgn_one_channel(ch_ds):
-            return ep_remove_background_noise(
+            # Propagate processing-level attrs lost by groupby channel split
+            ch_ds.attrs.update(parent_attrs)
+
+            # Resolve params: per-frequency if available, else global
+            if bgn_freq_params is not None:
+                freq = str(int(ch_ds["frequency_nominal"]))
+                opts = bgn_freq_params.get(freq, bgn_global)
+            else:
+                opts = bgn_global
+
+            result = ep_remove_background_noise(
                 ch_ds,
-                ping_num=bgn_params.get("ping_window", 50),
-                range_sample_num=bgn_params.get("range_window", 20),
-                SNR_threshold=bgn_params.get("SNR_threshold", "3.0dB"),
-                background_noise_max=bgn_params.get("background_noise_max"),
-            )["Sv"]
+                ping_num=opts.get("ping_window", 50),
+                range_sample_num=opts.get("range_window", 20),
+                SNR_threshold=opts.get("SNR_threshold", "3.0dB"),
+                background_noise_max=opts.get("background_noise_max"),
+            )
+            # Use Sv_corrected (background-noise-removed), not original Sv
+            return result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
 
         sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
         sv_clean.name = "Sv"
         ds_denoised["Sv"] = sv_clean
         logger.info("  Background noise removal applied per channel")
 
-    # Keep range_sample dimension as-is through all pipeline stages.
-    # echopype functions (compute_MVBS, compute_NASC) expect range_sample.
-    # Depth conversion can happen in final export / visualization.
+    # range_sample is preserved as the dimension; depth is a separate variable
+    # added by ep.consolidate.add_depth() in Stage 4. Both are preserved
+    # through denoising for downstream compute_MVBS/compute_NASC.
 
     output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
     # Rechunk to uniform sizes — denoising/groupby operations produce
@@ -803,85 +831,43 @@ def compute_mvbs_day(
     category: str,
     cruise_id: str,
     save_netcdf: bool = False,
+    surface_exclusion_depth: float = 0.0,
 ) -> str:
-    """Compute MVBS for a day Zarr. Returns MVBS zarr path.
+    """Compute MVBS for a day Zarr using echopype's compute_MVBS.
 
-    Uses pure-numpy index-based coarsening to avoid the OOM issues caused
-    by echopype's flox-based MVBS (which creates 3D label arrays the same
-    size as Sv).  Processes one channel at a time to keep memory bounded.
+    Uses range_var="depth" when a depth variable is present (added by
+    ep.consolidate.add_depth in Stage 4), otherwise falls back to
+    "echo_range".
+
+    Returns MVBS zarr path.
     """
-    import re
-    import numpy as np
-    import xarray as xr
+    import dask
+    import echopype as ep
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
     logger.info("Computing MVBS %s/%s", day_key, category)
 
-    # Open lazily to inspect metadata
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
 
-    nc = ds.sizes["channel"]
-    n_ping = ds.sizes["ping_time"]
-    n_range = ds.sizes["range_sample"]
+    # Use depth-based binning when depth variable is available
+    range_var = "depth" if "depth" in ds else "echo_range"
+    logger.info("  range_var=%s, range_bin=%s, ping_time_bin=%s", range_var, range_bin, ping_time_bin)
 
-    # Derive bin sizes from physical specs and data sampling rates
-    range_m = float(re.match(r"([\d.]+)", range_bin).group(1))
-    ping_s = float(re.match(r"([\d.]+)", ping_time_bin).group(1))
+    # Exclude near-surface bins that contaminate MVBS (e.g. platform noise)
+    if surface_exclusion_depth > 0 and "depth" in ds:
+        ds = ds.where(ds["depth"] >= surface_exclusion_depth)
+        logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    er0 = ds.echo_range.isel(channel=0, ping_time=0).values
-    sample_spacing = float(np.nanmedian(np.diff(er0)))
-    range_sample_num = max(1, round(range_m / sample_spacing))
+    with dask.config.set(scheduler="synchronous"):
+        ds_mvbs = ep.commongrid.compute_MVBS(
+            ds,
+            range_var=range_var,
+            range_bin=range_bin,
+            ping_time_bin=ping_time_bin,
+        )
 
-    pt = ds.ping_time.values
-    dt_ms = float(np.nanmedian(np.diff(pt[:100]).astype("timedelta64[ms]").astype(float)))
-    ping_num = max(1, round(ping_s * 1000 / dt_ms))
-
-    freq = ds.frequency_nominal.values
-
-    np_trim = (n_ping // ping_num) * ping_num
-    nr_trim = (n_range // range_sample_num) * range_sample_num
-
-    logger.info("  Index binning: range_sample_num=%d (~%.1fm), ping_num=%d (~%.1fs), channels=%d",
-                range_sample_num, range_sample_num * sample_spacing,
-                ping_num, ping_num * dt_ms / 1000, nc)
-
-    # Process one channel at a time to limit peak memory
-    mvbs_channels = []
-    for ch in range(nc):
-        logger.info("  Channel %d/%d: loading Sv...", ch + 1, nc)
-        sv_ch = ds["Sv"].isel(channel=ch).values  # (n_ping, n_range)
-        sv_ch = sv_ch[:np_trim, :nr_trim]
-        sv_lin = 10.0 ** (sv_ch / 10.0)
-        del sv_ch
-        sv_lin = sv_lin.reshape(np_trim // ping_num, ping_num,
-                                nr_trim // range_sample_num, range_sample_num)
-        ch_mean = np.nanmean(sv_lin, axis=(1, 3))
-        del sv_lin
-        ch_mvbs = 10.0 * np.log10(ch_mean)
-        del ch_mean
-        mvbs_channels.append(ch_mvbs)
-        logger.info("  Channel %d/%d: done, shape=%s", ch + 1, nc, ch_mvbs.shape)
-
-    ds.close()
-    del ds
-
-    sv_mvbs = np.stack(mvbs_channels, axis=0)  # (nc, n_ping_binned, n_range_binned)
-    del mvbs_channels
-
-    # Build xarray Dataset
-    ping_time_binned = pt[:np_trim:ping_num]
-    er_binned = er0[:nr_trim:range_sample_num]
-
-    ds_mvbs = xr.Dataset(
-        data_vars={"Sv": (["channel", "ping_time", "echo_range"], sv_mvbs)},
-        coords={
-            "channel": freq,
-            "ping_time": ping_time_binned,
-            "echo_range": er_binned,
-        },
-    )
-    ds_mvbs.attrs["processing"] = "MVBS computed with oceanstream (index binning)"
+    ds_mvbs.attrs["processing"] = "MVBS computed with echopype compute_MVBS"
     ds_mvbs.attrs["range_bin"] = range_bin
     ds_mvbs.attrs["ping_time_bin"] = ping_time_bin
 
@@ -893,7 +879,8 @@ def compute_mvbs_day(
 
     logger.info("  Saved MVBS: %s", output_zarr)
 
-    del ds_mvbs, sv_mvbs
+    ds.close()
+    del ds, ds_mvbs
     _release_memory()
 
     return output_zarr
@@ -927,6 +914,7 @@ def run_mvbs_computation(
                 category=category,
                 cruise_id=cfg.cruise_id,
                 save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
+                surface_exclusion_depth=cfg.surface_exclusion_depth,
             )
             mvbs_zarrs[day_key][category] = mvbs_path
 
@@ -948,6 +936,7 @@ def compute_nasc_day(
     category: str,
     cruise_id: str,
     save_netcdf: bool = False,
+    surface_exclusion_depth: float = 0.0,
 ) -> str:
     """Compute NASC for a day Zarr. Returns NASC zarr path."""
     import dask
@@ -960,18 +949,29 @@ def compute_nasc_day(
     # Promote lat/lon from coords to data vars for echopype
     ds = _ensure_position_coords(ds)
 
+    # NASC requires depth and lat/lon variables
+    if "depth" not in ds and "depth" not in ds.coords:
+        logger.warning("  No depth variable in %s/%s — skipping NASC", day_key, category)
+        ds.close()
+        return ""
+    has_lat_lon = ("latitude" in ds or "latitude" in ds.coords) and (
+        "longitude" in ds or "longitude" in ds.coords
+    )
+    if not has_lat_lon:
+        logger.warning("  No lat/lon in %s/%s — skipping NASC", day_key, category)
+        ds.close()
+        return ""
+
     import echopype as ep
     import numpy as np
 
+    # Exclude near-surface bins that contaminate NASC (e.g. platform noise)
+    if surface_exclusion_depth > 0 and "depth" in ds:
+        ds = ds.where(ds["depth"] >= surface_exclusion_depth)
+        logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
+
     with dask.config.set(scheduler="synchronous"):
         ds_nasc = ep.commongrid.compute_NASC(ds, range_bin=range_bin, dist_bin=dist_bin)
-
-    # Add NASC_log for visualization (same as oceanstream wrapper)
-    ds_nasc["NASC_log"] = 10 * np.log10(ds_nasc["NASC"])
-    ds_nasc["NASC_log"].attrs = {
-        "long_name": "Log10-transformed NASC",
-        "units": "dB re 1 m² nmi⁻²",
-    }
 
     # Add NASC_log for visualization (same as oceanstream wrapper)
     ds_nasc["NASC_log"] = 10 * np.log10(ds_nasc["NASC"])
@@ -1012,7 +1012,6 @@ def run_nasc_computation(
     for day_key, categories in day_zarrs.items():
         nasc_zarrs[day_key] = {}
         for category, zarr_path in categories.items():
-            # Run in main process to avoid nested-task deadlock.
             nasc_path = compute_nasc_day(
                 zarr_path=zarr_path,
                 output_container=output_container,
@@ -1023,8 +1022,10 @@ def run_nasc_computation(
                 category=category,
                 cruise_id=cfg.cruise_id,
                 save_netcdf=cfg.save_nasc_to_netcdf or cfg.save_to_netcdf,
+                surface_exclusion_depth=cfg.surface_exclusion_depth,
             )
-            nasc_zarrs[day_key][category] = nasc_path
+            if nasc_path:
+                nasc_zarrs[day_key][category] = nasc_path
 
     logger.info("NASC computation complete")
     return nasc_zarrs
@@ -1124,21 +1125,24 @@ def generate_echograms_day(
                 from oceanstream.echodata.denoise import drop_noisy_pings
 
                 ds_pruned = drop_noisy_pings(ds, drop_threshold=0.8)
-                files = plot_and_upload_echograms(
-                    ds_pruned,
-                    cruise_id=cruise_id,
-                    file_base_name=f"{day_key}--{category}--denoised-pruned",
-                    save_to_blobstorage=True,
-                    upload_path=day_key,
-                    container_name=output_container,
-                    create_interactive_pages=False,
-                    cmap=colormap,
-                    plot_var="Sv",
-                    title_template=f"{day_key} ({category}, pruned)" + " | {channel_label}",
-                )
-                all_files.extend(files)
+                if ds_pruned.sizes.get("ping_time", 0) == 0:
+                    logger.info("  Denoised-pruned: all pings dropped — skipping echogram")
+                else:
+                    files = plot_and_upload_echograms(
+                        ds_pruned,
+                        cruise_id=cruise_id,
+                        file_base_name=f"{day_key}--{category}--denoised-pruned",
+                        save_to_blobstorage=True,
+                        upload_path=day_key,
+                        container_name=output_container,
+                        create_interactive_pages=False,
+                        cmap=colormap,
+                        plot_var="Sv",
+                        title_template=f"{day_key} ({category}, pruned)" + " | {channel_label}",
+                    )
+                    all_files.extend(files)
+                    logger.info("  Denoised-pruned echograms: %d files", len(files))
                 del ds_pruned
-                logger.info("  Denoised-pruned echograms: %d files", len(files))
             except Exception as e:
                 logger.warning("Denoised-pruned echogram failed for %s/%s: %s", day_key, category, e)
 
@@ -1176,6 +1180,128 @@ def generate_echograms_day(
     return all_files
 
 
+def generate_nasc_echograms_day(
+    nasc_zarr: str,
+    output_container: str,
+    day_key: str,
+    category: str,
+    cruise_id: str,
+    surface_exclusion_depth: float = 10.0,
+    max_depth: float = 500.0,
+    vmin: float = -5,
+    vmax: float = 30,
+) -> list[str]:
+    """Generate NASC echogram PNGs for a day/category.
+
+    Produces two separate images per channel:
+      - Depth-resolved echogram (distance × depth heatmap of NASC_log)
+      - Depth-integrated NASC transect (sA bar chart along distance)
+
+    Surface bins above *surface_exclusion_depth* are excluded (platform noise).
+    """
+    import gc
+
+    import cmocean  # noqa: F401 — registers colormaps
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from oceanstream.echodata.storage import open_sv_from_azure
+
+    ds = open_sv_from_azure(zarr_path=nasc_zarr, container=output_container)
+    ds = ds.load()
+
+    depth = ds.depth.values
+    dist = ds.distance.values
+    depth_mask = (depth >= surface_exclusion_depth) & (depth <= max_depth)
+    depth_plot = depth[depth_mask]
+
+    all_files: list[str] = []
+    n_channels = ds.sizes.get("channel", 1)
+    base = f"{day_key}--{category}"
+
+    for ch_idx in range(n_channels):
+        ch_name = str(ds.channel.values[ch_idx])
+        ch_label = ch_name.split("|")[0].strip() if "|" in ch_name else ch_name
+        ch_suffix = f"_ch{ch_idx}" if n_channels > 1 else ""
+
+        nasc_log = ds["NASC_log"].isel(channel=ch_idx).values[:, depth_mask]
+        nasc_lin = ds["NASC"].isel(channel=ch_idx).values[:, depth_mask]
+
+        # ── 1. Depth-resolved echogram ────────────────────────────
+        fig, ax = plt.subplots(figsize=(14, 5))
+        im = ax.pcolormesh(
+            dist, depth_plot, nasc_log.T,
+            shading="auto", cmap="cmo.haline", vmin=vmin, vmax=vmax,
+        )
+        ax.invert_yaxis()
+        ax.set_xlabel("Distance (nmi)")
+        ax.set_ylabel("Depth (m)")
+        ax.set_title(
+            f"NASC — {base} | {ch_label}\n"
+            f"depth-resolved ({surface_exclusion_depth:.0f}–{max_depth:.0f} m)"
+        )
+        cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
+        cb.set_label("NASC_log (dB re 1 m²/nmi²)")
+        plt.tight_layout()
+
+        fname1 = f"{base}--nasc{ch_suffix}.png"
+        out1 = _save_echogram_png(fig, fname1, day_key, output_container, cruise_id)
+        all_files.append(out1)
+        plt.close(fig)
+
+        # ── 2. Depth-integrated sA transect ───────────────────────
+        integrated = np.nansum(nasc_lin, axis=1)
+        bar_w = np.diff(dist).mean() * 0.9 if len(dist) > 1 else 0.5
+
+        fig, ax = plt.subplots(figsize=(14, 3))
+        ax.bar(dist, integrated, width=bar_w, color="steelblue", edgecolor="none", alpha=0.8)
+        ax.set_xlabel("Distance (nmi)")
+        ax.set_ylabel("sA (m²/nmi²)")
+        ax.set_title(
+            f"Depth-integrated NASC — {base} | {ch_label}\n"
+            f"({surface_exclusion_depth:.0f}–{max_depth:.0f} m)"
+        )
+        ax.set_xlim(dist[0] - bar_w, dist[-1] + bar_w)
+        plt.tight_layout()
+
+        fname2 = f"{base}--nasc-integrated{ch_suffix}.png"
+        out2 = _save_echogram_png(fig, fname2, day_key, output_container, cruise_id)
+        all_files.append(out2)
+        plt.close(fig)
+
+    ds.close()
+    del ds
+    gc.collect()
+    return all_files
+
+
+def _save_echogram_png(
+    fig, filename: str, day_key: str, container: str, cruise_id: str,
+) -> str:
+    """Save a matplotlib figure and upload to blob storage (or local output).
+
+    Returns the local file path.
+    """
+    import os
+    from pathlib import Path
+
+    tmp_dir = Path(f"/tmp/osechograms/{cruise_id}/{day_key}")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    local_path = tmp_dir / filename
+    fig.savefig(str(local_path), dpi=150, bbox_inches="tight")
+
+    blob_path = f"{day_key}/{filename}"
+    try:
+        from oceanstream.echodata.storage import upload_file_to_blob
+        upload_file_to_blob(str(local_path), blob_path, container=container)
+        logger.info("  Saved %s", blob_path)
+    except Exception as e:
+        logger.debug("  Upload skipped for %s: %s", blob_path, e)
+
+    return str(local_path)
+
+
 def _count_existing_echograms(container: str, day_key: str, category: str) -> int:
     """Return the number of PNG echograms already uploaded for a day/category."""
     import os
@@ -1206,6 +1332,7 @@ def run_echogram_generation(
     mvbs_zarrs: dict[str, dict[str, str]],
     cfg: PipelineConfig,
     output_container: str,
+    nasc_zarrs: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Generate echograms for all days."""
     if cfg.skip_echograms:
@@ -1259,6 +1386,23 @@ def run_echogram_generation(
             except Exception as e:
                 logger.warning("  Echogram failed for %s/%s: %s", day_key, category, e)
 
+    # ── NASC echograms ────────────────────────────────────────────
+    if nasc_zarrs:
+        for day_key in sorted(nasc_zarrs):
+            for category, nasc_zarr in sorted(nasc_zarrs[day_key].items()):
+                try:
+                    files = generate_nasc_echograms_day(
+                        nasc_zarr=nasc_zarr,
+                        output_container=output_container,
+                        day_key=day_key,
+                        category=category,
+                        cruise_id=cfg.cruise_id,
+                        surface_exclusion_depth=cfg.surface_exclusion_depth,
+                    )
+                    logger.info("  NASC echograms for %s/%s: %d files", day_key, category, len(files))
+                except Exception as e:
+                    logger.warning("  NASC echogram failed for %s/%s: %s", day_key, category, e)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE 9: PMTiles + COG heatmaps
@@ -1309,8 +1453,8 @@ def export_nasc_and_generate_pmtiles(
         generate_pmtiles_from_geoparquet(
             geoparquet_root=nasc_parquet_dir,
             pmtiles_path=pmtiles_path,
-            min_zoom=2,
-            max_zoom=12,
+            minzoom=2,
+            maxzoom=12,
         )
         logger.info("Generated PMTiles: %s", pmtiles_path)
     except ImportError:
@@ -1461,11 +1605,12 @@ def build_campaign_zarr(
     chunks: dict,
     output_name: str,
 ) -> str | None:
-    """Concatenate all daily Zarrs into a single campaign-wide Zarr.
+    """Concatenate all daily Zarrs into per-category campaign-wide Zarrs.
 
-    Uses incremental append to avoid memory pressure for large datasets.
+    Different pulse categories (long_pulse, short_pulse) have different
+    channel dimensions, so they get separate campaign zarrs.
 
-    Returns the campaign zarr path, or None on failure.
+    Returns the first campaign zarr path, or None on failure.
     """
     import xarray as xr
     from oceanstream.echodata.storage import (
@@ -1473,42 +1618,176 @@ def build_campaign_zarr(
     )
     from oceanstream.echodata.utils.encoding import fix_chunking
 
-    campaign_zarr = f"{cruise_id}/{output_name}"
-    logger.info("Building campaign Zarr: %s", campaign_zarr)
-
-    # Collect all day zarr paths (across categories, sorted by day)
-    all_paths = []
+    # Group paths by category so each gets its own campaign zarr
+    by_category: dict[str, list[tuple[str, str]]] = {}
     for day_key in sorted(day_zarrs.keys()):
         for category, zarr_path in day_zarrs[day_key].items():
-            if zarr_path.endswith(f"{product_suffix}.zarr") or product_suffix == "":
-                all_paths.append((day_key, category, zarr_path))
+            if product_suffix == "" or zarr_path.endswith(f"--{product_suffix.lstrip('_')}.zarr"):
+                by_category.setdefault(category, []).append((day_key, zarr_path))
 
-    if not all_paths:
+    if not by_category:
         logger.warning("No Zarr stores found for campaign aggregation")
         return None
 
-    first = True
-    for day_key, category, zarr_path in all_paths:
-        try:
-            ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container, chunks=chunks)
-            ds = ds.chunk(chunks)
-            ds = fix_chunking(ds)
+    first_zarr = None
+    for category, paths in sorted(by_category.items()):
+        stem, ext = output_name.rsplit(".", 1)
+        cat_name = f"{stem}_{category}.{ext}"
+        campaign_zarr = f"{cruise_id}/{cat_name}"
+        logger.info("Building campaign Zarr: %s (%d days)", campaign_zarr, len(paths))
 
-            if first:
-                store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="w")
-                ds.to_zarr(store, mode="w")
-                first = False
-            else:
-                store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="a")
-                ds.to_zarr(store, append_dim="ping_time")
+        first = True
+        for day_key, zarr_path in paths:
+            try:
+                ds = open_sv_from_azure(
+                    zarr_path=zarr_path, container=output_container, chunks=None,
+                )
+                # Filter chunk spec to only dims present in this dataset
+                ds_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
+                ds = ds.chunk(ds_chunks)
+                # Clear stale encoding to prevent chunk overlap errors
+                for var in ds.data_vars:
+                    ds[var].encoding.clear()
+                for coord in ds.coords:
+                    ds[coord].encoding.clear()
 
-            ds.close()
-            logger.info("  Appended %s/%s to campaign Zarr", day_key, category)
-        except Exception as e:
-            logger.warning("Failed to append %s/%s: %s", day_key, category, e)
+                if first:
+                    store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="w")
+                    ds.to_zarr(store, mode="w")
+                    first = False
+                else:
+                    store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="a")
+                    ds.to_zarr(store, append_dim="ping_time", safe_chunks=False)
 
-    logger.info("Campaign Zarr complete: %s", campaign_zarr)
-    return campaign_zarr
+                ds.close()
+                logger.info("  Appended %s/%s to campaign Zarr", day_key, category)
+            except Exception as e:
+                logger.warning("Failed to append %s/%s: %s", day_key, category, e)
+
+        if first_zarr is None:
+            first_zarr = campaign_zarr
+        logger.info("Campaign Zarr complete: %s", campaign_zarr)
+
+    return first_zarr
+
+
+def generate_campaign_echograms(
+    campaign_zarr: str,
+    category: str,
+    output_container: str,
+    cruise_id: str,
+    vmin: float = -90,
+    vmax: float = -30,
+    max_depth: float = 500.0,
+) -> list[str]:
+    """Generate full-campaign MVBS echogram PNGs from a campaign Zarr.
+
+    Produces one Sv echogram (ping_time x depth) per channel.
+    Time gaps are collapsed so data segments are plotted contiguously,
+    with red dashed vertical lines marking segment boundaries.
+    """
+    import gc
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    import matplotlib.ticker as mticker
+    import numpy as np
+    from oceanstream.echodata.storage import open_sv_from_azure
+
+    ds = open_sv_from_azure(zarr_path=campaign_zarr, container=output_container)
+    ds = ds.load()
+
+    ping_time = ds.ping_time.values
+    depth = ds.depth.values
+    depth_mask = depth <= max_depth
+    depth_plot = depth[depth_mask]
+
+    # ── Detect time gaps ──────────────────────────────────────────
+    diffs = np.diff(ping_time).astype("timedelta64[s]").astype(float)
+    median_dt = np.median(diffs)
+    gap_threshold = max(5 * median_dt, 120)
+    gap_indices = np.where(diffs > gap_threshold)[0]
+
+    # Build contiguous segments
+    seg_bounds = [0]
+    for gi in gap_indices:
+        seg_bounds.append(gi + 1)
+    seg_bounds.append(len(ping_time))
+
+    all_files: list[str] = []
+    n_channels = ds.sizes.get("channel", 1)
+
+    for ch_idx in range(n_channels):
+        ch_name = str(ds.channel.values[ch_idx])
+        ch_label = ch_name.split("|")[0].strip() if "|" in ch_name else ch_name
+        ch_suffix = f"_ch{ch_idx}" if n_channels > 1 else ""
+
+        sv = ds["Sv"].isel(channel=ch_idx).values[:, depth_mask]
+
+        # Use sequential ping index as x-axis so gaps collapse
+        x = np.arange(len(ping_time))
+
+        # ── Date span for title ───────────────────────────────────
+        t0_str = np.datetime_as_string(ping_time[0], unit="D")
+        t1_str = np.datetime_as_string(ping_time[-1], unit="D")
+        date_span = t0_str if t0_str == t1_str else f"{t0_str} — {t1_str}"
+
+        fig, ax = plt.subplots(figsize=(18, 5))
+        im = ax.pcolormesh(
+            x, depth_plot, sv.T,
+            shading="auto", cmap="viridis", vmin=vmin, vmax=vmax,
+        )
+        ax.invert_yaxis()
+        ax.set_ylabel("Depth (m)")
+        ax.set_title(
+            f"Campaign MVBS — {category} | {ch_label}\n"
+            f"{date_span}  (0–{max_depth:.0f} m, {len(ping_time)} pings)"
+        )
+
+        # Segment boundary lines
+        for gi in gap_indices:
+            mid = gi + 0.5
+            ax.axvline(mid, color="red", lw=1.2, ls="--", alpha=0.8)
+
+        # Custom x-tick labels: show real timestamps
+        # Place ~12 ticks evenly, plus segment start labels
+        n_ticks = 12
+        tick_positions = np.linspace(0, len(ping_time) - 1, n_ticks, dtype=int)
+        # Add segment starts (skip the very first)
+        for sb in seg_bounds[1:-1]:
+            tick_positions = np.append(tick_positions, sb)
+        tick_positions = np.unique(np.sort(tick_positions))
+
+        tick_labels = []
+        for tp in tick_positions:
+            ts = ping_time[tp]
+            dt = ts.astype("datetime64[s]").astype("int64")
+            from datetime import datetime, timezone
+            t = datetime.fromtimestamp(dt, tz=timezone.utc)
+            tick_labels.append(t.strftime("%b %d\n%H:%M"))
+
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, fontsize=8)
+        ax.set_xlim(0, len(ping_time) - 1)
+
+        cb = fig.colorbar(im, ax=ax, pad=0.01, aspect=30)
+        cb.set_label("Sv (dB re 1 m⁻¹)")
+        plt.tight_layout()
+
+        fname = f"campaign_mvbs_{category}{ch_suffix}.png"
+        out = _save_echogram_png(
+            fig, fname, "campaign", output_container, cruise_id,
+        )
+        all_files.append(out)
+        plt.close(fig)
+        logger.info("  Campaign echogram: %s (%d pings)", fname, len(ping_time))
+
+    ds.close()
+    del ds
+    gc.collect()
+    return all_files
 
 
 def run_campaign_aggregation(
@@ -1526,6 +1805,7 @@ def run_campaign_aggregation(
     chunks = cfg.chunks.as_dict()
 
     # Campaign MVBS Zarr
+    campaign_mvbs_zarrs: dict[str, str] = {}
     if mvbs_zarrs:
         build_campaign_zarr(
             day_zarrs=mvbs_zarrs,
@@ -1535,6 +1815,12 @@ def run_campaign_aggregation(
             chunks=chunks,
             output_name="campaign_mvbs.zarr",
         )
+        # Collect per-category campaign zarr paths for echograms
+        categories = set()
+        for day_cats in mvbs_zarrs.values():
+            categories.update(day_cats.keys())
+        for cat in sorted(categories):
+            campaign_mvbs_zarrs[cat] = f"{cfg.cruise_id}/campaign_mvbs_{cat}.zarr"
 
     # Campaign Sv Zarr (experimental — large data)
     if cfg.build_campaign_sv_zarr:
@@ -1547,6 +1833,20 @@ def run_campaign_aggregation(
             chunks=chunks,
             output_name="campaign_sv.zarr",
         )
+
+    # Campaign MVBS echograms
+    if campaign_mvbs_zarrs:
+        logger.info("Generating campaign MVBS echograms (%d categories)", len(campaign_mvbs_zarrs))
+        for category, zarr_path in sorted(campaign_mvbs_zarrs.items()):
+            try:
+                generate_campaign_echograms(
+                    campaign_zarr=zarr_path,
+                    category=category,
+                    output_container=output_container,
+                    cruise_id=cfg.cruise_id,
+                )
+            except Exception as e:
+                logger.warning("Failed campaign echogram for %s: %s", category, e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1613,6 +1913,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         t0 = time.time()
         run_echogram_generation(
             client, source_day_zarrs, denoised_day_zarrs, mvbs_zarrs, cfg, output_container,
+            nasc_zarrs=nasc_zarrs,
         )
         logger.info("STAGE 8 complete: echograms (%.1fs)", time.time() - t0)
 

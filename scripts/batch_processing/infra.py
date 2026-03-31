@@ -149,6 +149,51 @@ def delete_vm(cfg: AzureVMConfig) -> None:
     logger.info("Deletion initiated for '%s'", cfg.vm_name)
 
 
+def start_vm(cfg: AzureVMConfig) -> None:
+    """Start a deallocated VM."""
+    logger.info("Starting VM '%s'", cfg.vm_name)
+    _az([
+        "vm", "start",
+        "--resource-group", cfg.resource_group,
+        "--name", cfg.vm_name,
+    ])
+    logger.info("VM '%s' started", cfg.vm_name)
+
+
+def attach_data_disk(
+    cfg: AzureVMConfig,
+    size_gb: int = 128,
+    sku: str = "StandardSSD_LRS",
+) -> None:
+    """Attach a new managed data disk to the VM.
+
+    Can be run while the VM is deallocated or running.
+    The disk must be formatted and mounted via SSH after first boot::
+
+        lsblk
+        sudo mkfs.ext4 /dev/sdc
+        sudo mkdir -p /mnt/data
+        sudo mount /dev/sdc /mnt/data
+        sudo chown oceanstream:oceanstream /mnt/data
+        echo '/dev/sdc /mnt/data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+    """
+    disk_name = f"{cfg.vm_name}-data-disk"
+    logger.info(
+        "Attaching %d GB data disk '%s' (sku=%s) to VM '%s'",
+        size_gb, disk_name, sku, cfg.vm_name,
+    )
+    _az([
+        "vm", "disk", "attach",
+        "--resource-group", cfg.resource_group,
+        "--vm-name", cfg.vm_name,
+        "--name", disk_name,
+        "--size-gb", str(size_gb),
+        "--sku", sku,
+        "--new",
+    ])
+    logger.info("Data disk '%s' attached to '%s'", disk_name, cfg.vm_name)
+
+
 def open_nsg_port(cfg: AzureVMConfig, port: int, priority: int = 1100) -> None:
     """Open a port on the VM's NSG (e.g. 8787 for Dask dashboard)."""
     _az([
@@ -168,9 +213,13 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("create", help="Create processing VM")
+    sub.add_parser("start", help="Start a deallocated VM")
     sub.add_parser("status", help="Check VM status")
     sub.add_parser("deallocate", help="Deallocate VM")
     sub.add_parser("delete", help="Delete VM")
+    disk_parser = sub.add_parser("attach-disk", help="Attach a new data disk")
+    disk_parser.add_argument("--disk-size-gb", type=int, default=128)
+    disk_parser.add_argument("--disk-sku", default="StandardSSD_LRS")
 
     parser.add_argument("--vm-name", default="oceanstream-batch-vm")
     parser.add_argument("--vm-size", default="Standard_E16s_v5")
@@ -188,12 +237,17 @@ def main():
     if args.command == "create":
         ip = create_processing_vm(cfg)
         print(f"VM created: {ip}")
+    elif args.command == "start":
+        start_vm(cfg)
+        print(f"VM '{cfg.vm_name}' started")
     elif args.command == "status":
         print(get_vm_status(cfg))
     elif args.command == "deallocate":
         deallocate_vm(cfg)
     elif args.command == "delete":
         delete_vm(cfg)
+    elif args.command == "attach-disk":
+        attach_data_disk(cfg, size_gb=args.disk_size_gb, sku=args.disk_sku)
     else:
         parser.print_help()
         sys.exit(1)

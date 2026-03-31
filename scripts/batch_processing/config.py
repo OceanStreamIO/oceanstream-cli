@@ -28,10 +28,10 @@ class ChunkConfig:
     """Zarr / xarray chunk sizes used throughout the pipeline."""
 
     ping_time: int = 1000
-    depth: int = -1  # -1 means "all" (no chunking along depth)
+    range_sample: int = -1  # -1 means "all" (no chunking along range_sample)
 
     def as_dict(self) -> dict:
-        return {"ping_time": self.ping_time, "depth": self.depth}
+        return {"ping_time": self.ping_time, "range_sample": self.range_sample}
 
 
 @dataclass
@@ -65,10 +65,15 @@ class DenoiseParams:
         """Convert to ``oceanstream.echodata.config.DenoiseConfig``."""
         from oceanstream.echodata.config import DenoiseConfig
 
+        # Normalize frequency_params keys to int (TOML produces str keys)
+        freq_params = None
+        if self.frequency_params:
+            freq_params = {int(k): v for k, v in self.frequency_params.items()}
+
         return DenoiseConfig(
             methods=self.methods,
             use_frequency_specific=self.use_frequency_specific,
-            frequency_params=self.frequency_params,
+            frequency_params=freq_params,
             background_num_side_pings=self.background_num_side_pings,
             background_snr_threshold=self.background_snr_threshold,
             impulse_threshold_db=self.impulse_threshold_db,
@@ -123,7 +128,7 @@ class RawConversionConfig:
     encode_mode: str = "complex"
 
     # Depth
-    depth_offset: float = 0.0  # transducer depth below waterline (metres)
+    depth_offset: float = 1.9  # Saildrone transducer depth below waterline (metres)
 
 
 @dataclass
@@ -152,6 +157,8 @@ class PipelineConfig:
     source_container: str = "processed"
     output_container: str = ""  # empty → auto-generate
     gps_data_file: Optional[str] = None  # path to exported GPS JSON
+    gps_container: str = ""  # Azure blob container for GPS GeoParquet (e.g. "gpsdata")
+    gps_blob_path: str = ""  # path within gps_container (default: {cruise_id}/)
     file_list_file: Optional[str] = None  # path to pre-generated file list JSON
 
     # ── Date range (for testing subsets) ─────────────────────────
@@ -167,6 +174,7 @@ class PipelineConfig:
     # ── Raw conversion (process_from_raw.py) ─────────────────────
     raw: RawConversionConfig = field(default_factory=RawConversionConfig)
     # ── Processing toggles ───────────────────────────────────────
+    surface_exclusion_depth: float = 1.9  # metres — exclude bins above this depth (Saildrone transducer depth)
     apply_seabed_mask: bool = False  # disabled for tropical pacific (no seabed)
     skip_denoising: bool = False
     skip_echograms: bool = False
@@ -180,7 +188,7 @@ class PipelineConfig:
     per_file_echograms: bool = False    # generate per-file echograms in Stage 2
     build_campaign_zarr: bool = True
     build_campaign_sv_zarr: bool = False  # experimental
-    resume_stage: int = 0               # resume from this stage (0 = start from beginning)
+    resume_stage: int = 0               # resume from this stage (0 = start from beginning)\n    keep_raw: bool = False              # keep downloaded raw files after conversion
 
     # ── Echogram settings ────────────────────────────────────────
     colormap: str = "ocean_r"
@@ -241,7 +249,7 @@ class PipelineConfig:
             dask=DaskConfig(n_workers=2, memory_limit="8GB"),
             apply_seabed_mask=False,
             skip_pmtiles=False,
-            build_campaign_zarr=False,
+            build_campaign_zarr=True,
             save_to_netcdf=False,
             save_nasc_to_netcdf=True,
             save_mvbs_to_netcdf=True,
