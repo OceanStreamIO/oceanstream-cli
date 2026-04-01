@@ -130,6 +130,11 @@ class RawConversionConfig:
     # Depth
     depth_offset: float = 1.9  # Saildrone transducer depth below waterline (metres)
 
+    # Concurrency knobs
+    download_workers: int = 4   # parallel download threads
+    convert_workers: int = 1    # parallel conversion workers (memory-bound, keep low)
+    download_batch_size: int = 8  # files per download batch
+
 
 @dataclass
 class AzureVMConfig:
@@ -188,6 +193,7 @@ class PipelineConfig:
     per_file_echograms: bool = False    # generate per-file echograms in Stage 2
     build_campaign_zarr: bool = True
     build_campaign_sv_zarr: bool = False  # experimental
+    category_parallel: bool = True  # parallelize short_pulse/long_pulse within each day
     resume_stage: int = 0               # resume from this stage (0 = start from beginning)\n    keep_raw: bool = False              # keep downloaded raw files after conversion
 
     # ── Echogram settings ────────────────────────────────────────

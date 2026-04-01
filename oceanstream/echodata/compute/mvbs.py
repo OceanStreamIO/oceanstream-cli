@@ -115,6 +115,21 @@ def compute_mvbs(
         },
     )
 
+    # Propagate lat/lon to MVBS if present in input, averaged per ping_time bin
+    for var in ("latitude", "longitude"):
+        has_var = var in sv_dataset.data_vars or var in sv_dataset.coords
+        if has_var:
+            da = sv_dataset[var]
+            # Collapse multi-dim lat/lon (e.g., channel × ping_time) to 1D
+            extra_dims = [d for d in da.dims if d != "ping_time"]
+            if extra_dims:
+                da = da.isel({d: 0 for d in extra_dims})
+            mean_pos = da.resample(ping_time=ping_time_bin).mean()
+            # Align to the MVBS ping_time coordinate
+            ds_MVBS[var] = mean_pos.reindex(
+                ping_time=ds_MVBS.ping_time, method="nearest"
+            )
+
     # Add attributes
     ds_MVBS.attrs["processing"] = "MVBS computed with oceanstream"
     ds_MVBS.attrs["range_bin"] = range_bin

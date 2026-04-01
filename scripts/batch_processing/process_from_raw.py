@@ -193,18 +193,16 @@ def discover_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
 def _download_raw_file(
     filename: str,
     cfg: PipelineConfig,
+    directory_client=None,
 ) -> Path:
-    """Download a single .raw file from Azure File Share to local disk."""
-    from azure.storage.fileshare import ShareServiceClient
+    """Download a single .raw file from Azure File Share to local disk.
 
-    conn_str = os.environ.get(
-        "AZURE_STORAGE_CONNECTION_STRING",
-        os.environ.get("AZ_SOURCE_CONNECTION_STRING", ""),
-    )
-    svc = ShareServiceClient.from_connection_string(conn_str)
-    share = svc.get_share_client(cfg.raw.file_share_name)
-    fc = share.get_directory_client(cfg.raw.file_share_path).get_file_client(filename)
-
+    Parameters
+    ----------
+    directory_client : ShareDirectoryClient, optional
+        Pre-built directory client to reuse across downloads.
+        When None, a new client is created per call (legacy behaviour).
+    """
     local_dir = cfg.raw.local_raw_dir
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / filename
@@ -212,6 +210,19 @@ def _download_raw_file(
     if local_path.exists():
         logger.info("  Raw file already cached: %s", local_path)
         return local_path
+
+    if directory_client is None:
+        from azure.storage.fileshare import ShareServiceClient
+
+        conn_str = os.environ.get(
+            "AZURE_STORAGE_CONNECTION_STRING",
+            os.environ.get("AZ_SOURCE_CONNECTION_STRING", ""),
+        )
+        svc = ShareServiceClient.from_connection_string(conn_str)
+        share = svc.get_share_client(cfg.raw.file_share_name)
+        directory_client = share.get_directory_client(cfg.raw.file_share_path)
+
+    fc = directory_client.get_file_client(filename)
 
     logger.info("  Downloading %s...", filename)
     download = fc.download_file()
@@ -247,19 +258,35 @@ def download_all_raw_files(
 ) -> dict[str, Path]:
     """Download all raw files in parallel using ThreadPoolExecutor.
 
+    Creates a single Azure FileShare directory client and shares it
+    across all download threads to avoid per-file client overhead.
+
     Returns dict mapping raw_filename → local_path.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    max_workers = min(os.cpu_count() or 4, len(files_list), 8)
+    max_workers = min(cfg.raw.download_workers, len(files_list))
     local_paths: dict[str, Path] = {}
+
+    # Create a shared directory client once for all downloads
+    from azure.storage.fileshare import ShareServiceClient
+
+    conn_str = os.environ.get(
+        "AZURE_STORAGE_CONNECTION_STRING",
+        os.environ.get("AZ_SOURCE_CONNECTION_STRING", ""),
+    )
+    svc = ShareServiceClient.from_connection_string(conn_str)
+    share = svc.get_share_client(cfg.raw.file_share_name)
+    dir_client = share.get_directory_client(cfg.raw.file_share_path)
 
     logger.info("Downloading %d raw files with %d threads", len(files_list), max_workers)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {}
         for raw_filename, rec in files_list:
-            fut = pool.submit(_download_raw_file, raw_filename, cfg)
+            fut = pool.submit(
+                _download_raw_file, raw_filename, cfg, directory_client=dir_client
+            )
             futures[fut] = raw_filename
 
         for fut in as_completed(futures):
@@ -352,7 +379,7 @@ def process_raw_files(
     """
     results = []
     total = len(files_list)
-    batch_size = min(8, total)  # download 8 files at a time
+    batch_size = min(cfg.raw.download_batch_size, total)
 
     for batch_start in range(0, total, batch_size):
         batch = files_list[batch_start:batch_start + batch_size]
@@ -472,14 +499,33 @@ def run_echodata_combine(
                 by_category[cat].append(zp)
 
         day_echodata[day_key] = {}
-        for category, zarr_paths in by_category.items():
-            combined_zarr = combine_echodata_day(
-                ed_zarr_paths=zarr_paths,
-                day_key=day_key,
-                category=category,
-                echodata_dir=echodata_dir,
-            )
-            day_echodata[day_key][category] = combined_zarr
+
+        if cfg.category_parallel and len(by_category) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=len(by_category)) as pool:
+                futures = {}
+                for category, zarr_paths in by_category.items():
+                    fut = pool.submit(
+                        combine_echodata_day,
+                        ed_zarr_paths=zarr_paths,
+                        day_key=day_key,
+                        category=category,
+                        echodata_dir=echodata_dir,
+                    )
+                    futures[fut] = category
+                for fut in as_completed(futures):
+                    cat = futures[fut]
+                    day_echodata[day_key][cat] = fut.result()
+        else:
+            for category, zarr_paths in by_category.items():
+                combined_zarr = combine_echodata_day(
+                    ed_zarr_paths=zarr_paths,
+                    day_key=day_key,
+                    category=category,
+                    echodata_dir=echodata_dir,
+                )
+                day_echodata[day_key][category] = combined_zarr
 
     logger.info("EchoData combine complete: %d days", len(day_echodata))
     return day_echodata
@@ -791,16 +837,36 @@ def run_sv_computation(
             else:
                 logger.info("  GPS for %s: %d points", day_key, len(day_gps))
 
-        for category, ed_zarr_path in categories.items():
-            sv_path = compute_sv_day(
-                ed_zarr_path=ed_zarr_path,
-                day_key=day_key,
-                category=category,
-                cfg=cfg,
-                output_container=output_container,
-                gps_df=day_gps,
-            )
-            sv_zarrs[day_key][category] = sv_path
+        if cfg.category_parallel and len(categories) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=len(categories)) as pool:
+                futures = {}
+                for category, ed_zarr_path in categories.items():
+                    fut = pool.submit(
+                        compute_sv_day,
+                        ed_zarr_path=ed_zarr_path,
+                        day_key=day_key,
+                        category=category,
+                        cfg=cfg,
+                        output_container=output_container,
+                        gps_df=day_gps,
+                    )
+                    futures[fut] = category
+                for fut in as_completed(futures):
+                    cat = futures[fut]
+                    sv_zarrs[day_key][cat] = fut.result()
+        else:
+            for category, ed_zarr_path in categories.items():
+                sv_path = compute_sv_day(
+                    ed_zarr_path=ed_zarr_path,
+                    day_key=day_key,
+                    category=category,
+                    cfg=cfg,
+                    output_container=output_container,
+                    gps_df=day_gps,
+                )
+                sv_zarrs[day_key][category] = sv_path
 
     logger.info("Sv computation complete: %d days", len(sv_zarrs))
     return sv_zarrs
