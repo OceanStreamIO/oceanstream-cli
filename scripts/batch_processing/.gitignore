@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .env
 local-raw-01/
+echodata_intermediate/

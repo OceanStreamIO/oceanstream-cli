@@ -249,8 +249,12 @@ def build_full_mask(
             if method not in method_fns:
                 logger.warning(f"Unknown method {method}, skipping")
                 continue
-            # Build param_sets from config
-            if method == "background":
+            # Build param_sets from config — use frequency-keyed dicts
+            # when per-frequency dispatch is enabled so that
+            # _params_for_channel resolves per-channel parameters.
+            if config.use_frequency_specific:
+                params = config.to_frequency_keyed_params(method)
+            elif method == "background":
                 params = config.to_background_params()
             elif method == "transient":
                 params = config.to_transient_params()

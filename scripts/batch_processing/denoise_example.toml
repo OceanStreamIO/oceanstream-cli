@@ -35,18 +35,24 @@ attenuation_upper_limit = 180.0
 attenuation_lower_limit = 280.0
 
 # ── Frequency-specific overrides ────────────────────────────────
-# Set use_frequency_specific = true and define per-frequency params
-# to tune denoising differently for 38 kHz vs 200 kHz.
-#
-# use_frequency_specific = true
-#
-# [echodata.denoise.frequency_params.38000]
-# impulse = { threshold_db = 8.0, num_lags = 3 }
-# background = { num_side_pings = 30, snr_threshold = 3.5 }
-#
-# [echodata.denoise.frequency_params.200000]
-# impulse = { threshold_db = 12.0, num_lags = 2 }
-# background = { num_side_pings = 20, snr_threshold = 2.5 }
+# Each [frequency_params.<freq_hz>] section maps method names to
+# parameter dicts that override the built-in FREQUENCY_PRESETS.
+# Parameters use the same keys as the denoise functions (see
+# oceanstream.echodata.config.FREQUENCY_PRESETS for all defaults).
+
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+background = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+impulse    = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+transient  = { exclude_above = 250.0, depth_bin = 10.0, n_pings = 20, thr_dB = 8.0 }
+attenuation = { upper_limit_sl = 200.0, lower_limit_sl = 400.0, num_side_pings = 15, threshold = 6.0 }
+
+[echodata.denoise.frequency_params.200000]
+background = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
+impulse    = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+transient  = { exclude_above = 100.0, depth_bin = 3.0, n_pings = 10, thr_dB = 5.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 10, threshold = 4.0 }
 
 [echodata.mvbs]
 range_bin = "20m"

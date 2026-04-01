@@ -160,8 +160,19 @@ def impulse_noise_mask(
         range_coord, range_values = _resolve_range_coord(sv_dataset)
 
     ping_dim = "ping_time"
-    # The vertical dim is the first dim of range_values, or a fallback
-    if range_values.dims:
+
+    # When depth is a 2-D data_var (ping_time, range_sample) we need to
+    # collapse it to 1-D along range_sample so that downstream .diff(),
+    # .sortby(), and .coarsen() operate on the correct dimension.
+    if range_values.ndim == 2 and ping_dim in range_values.dims:
+        vertical_dims = [d for d in range_values.dims if d != ping_dim]
+        range_dim = vertical_dims[0] if vertical_dims else range_coord
+        # Take the depth profile from the first ping (representative)
+        range_values = range_values.isel({ping_dim: 0}, drop=True)
+        # Materialise to avoid dask nanmedian limitations downstream
+        if hasattr(range_values, "compute"):
+            range_values = range_values.compute()
+    elif range_values.dims:
         range_dim = range_values.dims[0]
     else:
         range_dim = range_coord
