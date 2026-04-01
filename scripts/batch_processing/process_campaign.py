@@ -1819,20 +1819,27 @@ def run_campaign_aggregation(
             output_name="campaign_sv.zarr",
         )
 
-    # Campaign MVBS echograms
+    # Campaign MVBS echograms — generate with both default and jet colormaps
     if campaign_mvbs_zarrs:
-        logger.info("Generating campaign MVBS echograms (%d categories)", len(campaign_mvbs_zarrs))
+        cmaps = [cfg.colormap]
+        if "jet" not in cmaps:
+            cmaps.append("jet")
+        logger.info(
+            "Generating campaign MVBS echograms (%d categories × %d colormaps)",
+            len(campaign_mvbs_zarrs), len(cmaps),
+        )
         for category, zarr_path in sorted(campaign_mvbs_zarrs.items()):
-            try:
-                generate_campaign_echograms(
-                    campaign_zarr=zarr_path,
-                    category=category,
-                    output_container=output_container,
-                    cruise_id=cfg.cruise_id,
-                    cmap=cfg.colormap,
-                )
-            except Exception as e:
-                logger.warning("Failed campaign echogram for %s: %s", category, e)
+            for cmap in cmaps:
+                try:
+                    generate_campaign_echograms(
+                        campaign_zarr=zarr_path,
+                        category=category,
+                        output_container=output_container,
+                        cruise_id=cfg.cruise_id,
+                        cmap=cmap,
+                    )
+                except Exception as e:
+                    logger.warning("Failed campaign echogram (%s/%s): %s", category, cmap, e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
