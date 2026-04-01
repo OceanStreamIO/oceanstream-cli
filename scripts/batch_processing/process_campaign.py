@@ -843,6 +843,7 @@ def compute_mvbs_day(
     """
     import dask
     import echopype as ep
+    import xarray as xr
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
     logger.info("Computing MVBS %s/%s", day_key, category)
@@ -859,13 +860,28 @@ def compute_mvbs_day(
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
+    # compute_MVBS per-channel to avoid xarray groupby broadcasting issues
+    # when latitude/longitude are 1D (ping_time only) but Sv is multi-channel
     with dask.config.set(scheduler="synchronous"):
-        ds_mvbs = ep.commongrid.compute_MVBS(
-            ds,
-            range_var=range_var,
-            range_bin=range_bin,
-            ping_time_bin=ping_time_bin,
-        )
+        if "channel" in ds.dims and ds.sizes["channel"] > 1:
+            mvbs_parts = []
+            for ch in ds.channel.values:
+                ds_ch = ds.sel(channel=ch)
+                mvbs_ch = ep.commongrid.compute_MVBS(
+                    ds_ch,
+                    range_var=range_var,
+                    range_bin=range_bin,
+                    ping_time_bin=ping_time_bin,
+                )
+                mvbs_parts.append(mvbs_ch)
+            ds_mvbs = xr.concat(mvbs_parts, dim="channel")
+        else:
+            ds_mvbs = ep.commongrid.compute_MVBS(
+                ds,
+                range_var=range_var,
+                range_bin=range_bin,
+                ping_time_bin=ping_time_bin,
+            )
 
     ds_mvbs.attrs["processing"] = "MVBS computed with echopype compute_MVBS"
     ds_mvbs.attrs["range_bin"] = range_bin
@@ -940,6 +956,7 @@ def compute_nasc_day(
 ) -> str:
     """Compute NASC for a day Zarr. Returns NASC zarr path."""
     import dask
+    import xarray as xr
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
     logger.info("Computing NASC %s/%s", day_key, category)
@@ -970,8 +987,17 @@ def compute_nasc_day(
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
+    # compute_NASC per-channel to avoid xarray groupby broadcasting issues
     with dask.config.set(scheduler="synchronous"):
-        ds_nasc = ep.commongrid.compute_NASC(ds, range_bin=range_bin, dist_bin=dist_bin)
+        if "channel" in ds.dims and ds.sizes["channel"] > 1:
+            nasc_parts = []
+            for ch in ds.channel.values:
+                ds_ch = ds.sel(channel=ch)
+                nasc_ch = ep.commongrid.compute_NASC(ds_ch, range_bin=range_bin, dist_bin=dist_bin)
+                nasc_parts.append(nasc_ch)
+            ds_nasc = xr.concat(nasc_parts, dim="channel")
+        else:
+            ds_nasc = ep.commongrid.compute_NASC(ds, range_bin=range_bin, dist_bin=dist_bin)
 
     # Add NASC_log for visualization (same as oceanstream wrapper)
     ds_nasc["NASC_log"] = 10 * np.log10(ds_nasc["NASC"])
