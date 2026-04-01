@@ -66,7 +66,7 @@ def open_sv_from_azure(
     src = _resolve(zarr_path, container)
     logger.info("Opening local zarr: %s", src)
     if chunks is _UNSET:
-        return xr.open_zarr(str(src), chunks="auto", **kwargs)
+        return xr.open_zarr(str(src), chunks={}, **kwargs)
     return xr.open_zarr(str(src), chunks=chunks, **kwargs)
 
 
@@ -145,6 +145,24 @@ class _LocalFS:
             rel = str(p.relative_to(_OUTPUT_ROOT))
             items.append(rel)
         return items
+
+
+# ── Dask worker plugin ───────────────────────────────────────────────────
+
+class LocalStoragePlugin:
+    """Dask worker plugin that applies local storage patches on each worker.
+
+    Register with ``client.register_worker_plugin(LocalStoragePlugin(root))``
+    so that Dask workers use local filesystem instead of Azure.
+    """
+
+    name = "local-storage"
+
+    def __init__(self, output_root: Path | str) -> None:
+        self.output_root = str(output_root)
+
+    def setup(self, worker) -> None:  # noqa: ARG002
+        patch_storage(self.output_root)
 
 
 # ── monkey-patch entrypoint ──────────────────────────────────────────────
