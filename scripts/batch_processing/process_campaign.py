@@ -833,16 +833,16 @@ def compute_mvbs_day(
     save_netcdf: bool = False,
     surface_exclusion_depth: float = 0.0,
 ) -> str:
-    """Compute MVBS for a day Zarr using echopype's compute_MVBS.
+    """Compute MVBS for a day Zarr.
 
-    Uses range_var="depth" when a depth variable is present (added by
-    ep.consolidate.add_depth in Stage 4), otherwise falls back to
-    "echo_range".
+    Uses a direct xarray resample+groupby implementation to avoid
+    echopype compute_MVBS incompatibility with xarray 2026.x.
 
     Returns MVBS zarr path.
     """
     import dask
-    import echopype as ep
+    import numpy as np
+    import pandas as pd
     import xarray as xr
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
@@ -851,39 +851,57 @@ def compute_mvbs_day(
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
 
-    # Use depth-based binning when depth variable is available
     range_var = "depth" if "depth" in ds else "echo_range"
     logger.info("  range_var=%s, range_bin=%s, ping_time_bin=%s", range_var, range_bin, ping_time_bin)
 
-    # Exclude near-surface bins that contaminate MVBS (e.g. platform noise)
+    # Exclude near-surface bins that contaminate MVBS
     if surface_exclusion_depth > 0 and "depth" in ds:
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    # compute_MVBS per-channel to avoid xarray groupby broadcasting issues
-    # when latitude/longitude are 1D (ping_time only) but Sv is multi-channel
     with dask.config.set(scheduler="synchronous"):
-        if "channel" in ds.dims and ds.sizes["channel"] > 1:
-            mvbs_parts = []
-            for ch in ds.channel.values:
-                ds_ch = ds.sel(channel=ch)
-                mvbs_ch = ep.commongrid.compute_MVBS(
-                    ds_ch,
-                    range_var=range_var,
-                    range_bin=range_bin,
-                    ping_time_bin=ping_time_bin,
-                )
-                mvbs_parts.append(mvbs_ch)
-            ds_mvbs = xr.concat(mvbs_parts, dim="channel")
-        else:
-            ds_mvbs = ep.commongrid.compute_MVBS(
-                ds,
-                range_var=range_var,
-                range_bin=range_bin,
-                ping_time_bin=ping_time_bin,
-            )
+        sv_linear = 10.0 ** (ds["Sv"].compute() / 10.0)
 
-    ds_mvbs.attrs["processing"] = "MVBS computed with echopype compute_MVBS"
+        # Parse range_bin (e.g. "1m" → 1.0)
+        range_bin_m = float(range_bin.replace("m", ""))
+        range_vals = ds[range_var].values
+        if range_vals.ndim > 1:
+            range_vals = range_vals[0] if range_vals.ndim == 2 else range_vals[0, 0]
+        range_min = float(np.nanmin(range_vals))
+        range_max = float(np.nanmax(range_vals))
+        range_edges = np.arange(range_min, range_max + range_bin_m, range_bin_m)
+        range_labels = (range_edges[:-1] + range_edges[1:]) / 2.0
+
+        # Assign depth bins
+        range_1d = ds[range_var]
+        if range_1d.ndim > 1:
+            range_1d = range_1d.isel({d: 0 for d in range_1d.dims if d != "range_sample"})
+        depth_bin = np.digitize(range_1d.values, range_edges) - 1
+        depth_bin = np.clip(depth_bin, 0, len(range_labels) - 1)
+
+        # Group by depth bins → mean linear Sv
+        sv_linear = sv_linear.assign_coords(depth_bin=("range_sample", depth_bin))
+        sv_depth_mean = sv_linear.groupby("depth_bin").mean(dim="range_sample")
+
+        # Resample in time
+        sv_time_depth = sv_depth_mean.resample(ping_time=ping_time_bin).mean()
+
+        # Back to dB
+        mvbs_sv = 10.0 * np.log10(sv_time_depth)
+        mvbs_sv = mvbs_sv.rename({"depth_bin": range_var})
+        mvbs_sv = mvbs_sv.assign_coords({range_var: range_labels[:mvbs_sv.sizes[range_var]]})
+
+        ds_mvbs = xr.Dataset({"Sv": mvbs_sv})
+
+        # Average lat/lon per time bin
+        if "latitude" in ds:
+            lat_mean = ds["latitude"].compute().resample(ping_time=ping_time_bin).mean()
+            ds_mvbs["latitude"] = lat_mean
+        if "longitude" in ds:
+            lon_mean = ds["longitude"].compute().resample(ping_time=ping_time_bin).mean()
+            ds_mvbs["longitude"] = lon_mean
+
+    ds_mvbs.attrs["processing"] = "MVBS computed (direct resample+groupby)"
     ds_mvbs.attrs["range_bin"] = range_bin
     ds_mvbs.attrs["ping_time_bin"] = ping_time_bin
 
@@ -954,19 +972,25 @@ def compute_nasc_day(
     save_netcdf: bool = False,
     surface_exclusion_depth: float = 0.0,
 ) -> str:
-    """Compute NASC for a day Zarr. Returns NASC zarr path."""
+    """Compute NASC for a day Zarr.
+
+    Uses a direct integration implementation to avoid
+    echopype compute_NASC incompatibility with xarray 2026.x.
+
+    NASC = 4π × 1852² × ∫ sv dz  (integrated over depth, binned by distance)
+
+    Returns NASC zarr path.
+    """
     import dask
+    import numpy as np
     import xarray as xr
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
     logger.info("Computing NASC %s/%s", day_key, category)
 
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
-
-    # Promote lat/lon from coords to data vars for echopype
     ds = _ensure_position_coords(ds)
 
-    # NASC requires depth and lat/lon variables
     if "depth" not in ds and "depth" not in ds.coords:
         logger.warning("  No depth variable in %s/%s — skipping NASC", day_key, category)
         ds.close()
@@ -979,27 +1003,91 @@ def compute_nasc_day(
         ds.close()
         return ""
 
-    import echopype as ep
-    import numpy as np
-
-    # Exclude near-surface bins that contaminate NASC (e.g. platform noise)
+    # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    # compute_NASC per-channel to avoid xarray groupby broadcasting issues
     with dask.config.set(scheduler="synchronous"):
-        if "channel" in ds.dims and ds.sizes["channel"] > 1:
-            nasc_parts = []
-            for ch in ds.channel.values:
-                ds_ch = ds.sel(channel=ch)
-                nasc_ch = ep.commongrid.compute_NASC(ds_ch, range_bin=range_bin, dist_bin=dist_bin)
-                nasc_parts.append(nasc_ch)
-            ds_nasc = xr.concat(nasc_parts, dim="channel")
-        else:
-            ds_nasc = ep.commongrid.compute_NASC(ds, range_bin=range_bin, dist_bin=dist_bin)
+        sv_linear = 10.0 ** (ds["Sv"].compute() / 10.0)
 
-    # Add NASC_log for visualization (same as oceanstream wrapper)
+        # Parse range_bin (e.g. "10m" → 10.0)
+        range_bin_m = float(range_bin.replace("m", ""))
+
+        # Parse dist_bin (e.g. "0.5nmi" → 0.5)
+        dist_bin_nmi = float(dist_bin.replace("nmi", ""))
+
+        # Get depth values
+        depth = ds["depth"]
+        if depth.ndim > 1:
+            depth = depth.isel({d: 0 for d in depth.dims if d != "range_sample"})
+
+        # Compute depth resolution (metres per range_sample)
+        depth_vals = depth.values
+        dz = np.nanmedian(np.diff(depth_vals))
+
+        # Integrate sv over depth bins (sum × dz)
+        range_edges = np.arange(
+            float(np.nanmin(depth_vals)),
+            float(np.nanmax(depth_vals)) + range_bin_m,
+            range_bin_m,
+        )
+        range_labels = (range_edges[:-1] + range_edges[1:]) / 2.0
+
+        depth_bin = np.digitize(depth_vals, range_edges) - 1
+        depth_bin = np.clip(depth_bin, 0, len(range_labels) - 1)
+        sv_linear = sv_linear.assign_coords(depth_bin=("range_sample", depth_bin))
+        # Sum sv × dz per depth bin = partial NASC integral
+        sv_integrated = sv_linear.groupby("depth_bin").sum(dim="range_sample") * abs(dz)
+
+        # Compute cumulative distance along track (nautical miles)
+        lat = ds["latitude"].compute().values
+        lon = ds["longitude"].compute().values
+        dlat = np.diff(lat)
+        dlon = np.diff(lon)
+        # Haversine for nm distances
+        R_nm = 3440.065  # Earth radius in nautical miles
+        a = np.sin(np.radians(dlat / 2)) ** 2 + np.cos(np.radians(lat[:-1])) * np.cos(
+            np.radians(lat[1:])
+        ) * np.sin(np.radians(dlon / 2)) ** 2
+        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+        dist_nm = R_nm * c
+        cum_dist = np.concatenate([[0], np.cumsum(dist_nm)])
+
+        # Bin by distance
+        dist_edges = np.arange(0, cum_dist[-1] + dist_bin_nmi, dist_bin_nmi)
+        dist_labels = (dist_edges[:-1] + dist_edges[1:]) / 2.0
+        if len(dist_labels) == 0:
+            dist_labels = np.array([cum_dist[-1] / 2])
+            dist_edges = np.array([0, cum_dist[-1]])
+
+        dist_bin_idx = np.digitize(cum_dist, dist_edges) - 1
+        dist_bin_idx = np.clip(dist_bin_idx, 0, len(dist_labels) - 1)
+
+        sv_integrated = sv_integrated.assign_coords(dist_bin=("ping_time", dist_bin_idx))
+
+        # NASC = 4π × 1852² × mean(sv_integrated) per distance bin
+        NASC_COEFF = 4 * np.pi * 1852**2
+        nasc_vals = sv_integrated.groupby("dist_bin").mean(dim="ping_time") * NASC_COEFF
+
+        nasc_vals = nasc_vals.rename({"depth_bin": "depth", "dist_bin": "distance"})
+        nasc_vals = nasc_vals.assign_coords(
+            depth=range_labels[:nasc_vals.sizes["depth"]],
+            distance=dist_labels[:nasc_vals.sizes["distance"]],
+        )
+
+        ds_nasc = xr.Dataset({"NASC": nasc_vals})
+
+        # Mean lat/lon per distance bin
+        lat_da = xr.DataArray(lat, dims=["ping_time"], coords={"dist_bin": ("ping_time", dist_bin_idx)})
+        lon_da = xr.DataArray(lon, dims=["ping_time"], coords={"dist_bin": ("ping_time", dist_bin_idx)})
+        ds_nasc["latitude"] = lat_da.groupby("dist_bin").mean().rename({"dist_bin": "distance"}).assign_coords(
+            distance=dist_labels[:ds_nasc.sizes["distance"]]
+        )
+        ds_nasc["longitude"] = lon_da.groupby("dist_bin").mean().rename({"dist_bin": "distance"}).assign_coords(
+            distance=dist_labels[:ds_nasc.sizes["distance"]]
+        )
+
     ds_nasc["NASC_log"] = 10 * np.log10(ds_nasc["NASC"])
     ds_nasc["NASC_log"].attrs = {
         "long_name": "Log10-transformed NASC",
