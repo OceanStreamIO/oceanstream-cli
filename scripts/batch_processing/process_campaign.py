@@ -1041,8 +1041,15 @@ def compute_nasc_day(
         sv_integrated = sv_linear.groupby("depth_bin").sum(dim="range_sample") * abs(dz)
 
         # Compute cumulative distance along track (nautical miles)
-        lat = ds["latitude"].compute().values
-        lon = ds["longitude"].compute().values
+        # Extract 1D lat/lon (ping_time only)
+        lat_da = ds["latitude"].compute()
+        lon_da = ds["longitude"].compute()
+        if lat_da.ndim > 1:
+            # Select first channel/range_sample to get 1D ping_time series
+            lat_da = lat_da.isel({d: 0 for d in lat_da.dims if d != "ping_time"})
+            lon_da = lon_da.isel({d: 0 for d in lon_da.dims if d != "ping_time"})
+        lat = lat_da.values
+        lon = lon_da.values
         dlat = np.diff(lat)
         dlon = np.diff(lon)
         # Haversine for nm distances
