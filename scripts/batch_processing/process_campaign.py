@@ -1004,26 +1004,39 @@ def run_nasc_computation(
         logger.info("Skipping NASC computation")
         return {}
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     chunks = cfg.chunks.as_dict()
     nasc_zarrs: dict[str, dict[str, str]] = {}
 
-    for day_key, categories in day_zarrs.items():
-        nasc_zarrs[day_key] = {}
-        for category, zarr_path in categories.items():
-            nasc_path = compute_nasc_day(
-                zarr_path=zarr_path,
-                output_container=output_container,
-                chunks=chunks,
-                range_bin=cfg.nasc.range_bin,
-                dist_bin=cfg.nasc.dist_bin,
-                day_key=day_key,
-                category=category,
-                cruise_id=cfg.cruise_id,
-                save_netcdf=cfg.save_nasc_to_netcdf or cfg.save_to_netcdf,
-                surface_exclusion_depth=cfg.surface_exclusion_depth,
-            )
-            if nasc_path:
-                nasc_zarrs[day_key][category] = nasc_path
+    futures: dict = {}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for day_key, categories in day_zarrs.items():
+            nasc_zarrs[day_key] = {}
+            for category, zarr_path in categories.items():
+                fut = pool.submit(
+                    compute_nasc_day,
+                    zarr_path=zarr_path,
+                    output_container=output_container,
+                    chunks=chunks,
+                    range_bin=cfg.nasc.range_bin,
+                    dist_bin=cfg.nasc.dist_bin,
+                    day_key=day_key,
+                    category=category,
+                    cruise_id=cfg.cruise_id,
+                    save_netcdf=cfg.save_nasc_to_netcdf or cfg.save_to_netcdf,
+                    surface_exclusion_depth=cfg.surface_exclusion_depth,
+                )
+                futures[fut] = (day_key, category)
+
+        for fut in as_completed(futures):
+            day_key, category = futures[fut]
+            try:
+                nasc_path = fut.result()
+                if nasc_path:
+                    nasc_zarrs[day_key][category] = nasc_path
+            except Exception as e:
+                logger.warning("NASC failed for %s/%s: %s", day_key, category, e)
 
     logger.info("NASC computation complete")
     return nasc_zarrs
@@ -1339,6 +1352,8 @@ def run_echogram_generation(
 
     chunks = cfg.chunks.as_dict()
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     # Build union of all day/category combos across source, denoised, and
     # MVBS zarrs so we don't skip combos that are missing a source zarr.
     all_keys: dict[str, set[str]] = {}
@@ -1346,30 +1361,34 @@ def run_echogram_generation(
         for dk, cats in mapping.items():
             all_keys.setdefault(dk, set()).update(cats.keys())
 
-    # Run on main thread — day datasets can exceed 30GB worker memory
-    for day_key in sorted(all_keys):
-        for category in sorted(all_keys[day_key]):
-            # Skip if echograms already exist in Azure
-            existing = _count_existing_echograms(output_container, day_key, category)
-            if existing > 0:
-                logger.info("  Skipping %s/%s — %d echograms already exist", day_key, category, existing)
-                continue
+    # Parallelize echogram generation — each day/category is independent.
+    # 2 workers overlap Azure I/O with matplotlib rendering (Agg backend
+    # is used throughout, safe for concurrent use).
+    futures: dict = {}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for day_key in sorted(all_keys):
+            for category in sorted(all_keys[day_key]):
+                # Skip if echograms already exist in Azure
+                existing = _count_existing_echograms(output_container, day_key, category)
+                if existing > 0:
+                    logger.info("  Skipping %s/%s — %d echograms already exist", day_key, category, existing)
+                    continue
 
-            source_zarr = source_day_zarrs.get(day_key, {}).get(category)
-            denoised_zarr = denoised_day_zarrs.get(day_key, {}).get(category)
-            mvbs_zarr = mvbs_zarrs.get(day_key, {}).get(category)
+                source_zarr = source_day_zarrs.get(day_key, {}).get(category)
+                denoised_zarr = denoised_day_zarrs.get(day_key, {}).get(category)
+                mvbs_zarr = mvbs_zarrs.get(day_key, {}).get(category)
 
-            # Use denoised as source fallback when base source zarr is missing
-            if not source_zarr and denoised_zarr:
-                logger.info("  No source zarr for %s/%s — using denoised as source", day_key, category)
-                source_zarr = denoised_zarr
+                # Use denoised as source fallback when base source zarr is missing
+                if not source_zarr and denoised_zarr:
+                    logger.info("  No source zarr for %s/%s — using denoised as source", day_key, category)
+                    source_zarr = denoised_zarr
 
-            if not source_zarr:
-                logger.warning("  No source or denoised zarr for %s/%s — skipping", day_key, category)
-                continue
+                if not source_zarr:
+                    logger.warning("  No source or denoised zarr for %s/%s — skipping", day_key, category)
+                    continue
 
-            try:
-                result = generate_echograms_day(
+                fut = pool.submit(
+                    generate_echograms_day,
                     source_zarr=source_zarr,
                     denoised_zarr=denoised_zarr,
                     mvbs_zarr=mvbs_zarr,
@@ -1380,16 +1399,24 @@ def run_echogram_generation(
                     cruise_id=cfg.cruise_id,
                     colormap=cfg.colormap,
                 )
+                futures[fut] = (day_key, category)
+
+        for fut in as_completed(futures):
+            day_key, category = futures[fut]
+            try:
+                result = fut.result()
                 logger.info("  Echograms completed for %s/%s: %d files", day_key, category, len(result))
             except Exception as e:
                 logger.warning("  Echogram failed for %s/%s: %s", day_key, category, e)
 
-    # ── NASC echograms ────────────────────────────────────────────
+    # ── NASC echograms (also parallelized) ────────────────────────
     if nasc_zarrs:
-        for day_key in sorted(nasc_zarrs):
-            for category, nasc_zarr in sorted(nasc_zarrs[day_key].items()):
-                try:
-                    files = generate_nasc_echograms_day(
+        futures = {}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for day_key in sorted(nasc_zarrs):
+                for category, nasc_zarr in sorted(nasc_zarrs[day_key].items()):
+                    fut = pool.submit(
+                        generate_nasc_echograms_day,
                         nasc_zarr=nasc_zarr,
                         output_container=output_container,
                         day_key=day_key,
@@ -1397,6 +1424,12 @@ def run_echogram_generation(
                         cruise_id=cfg.cruise_id,
                         surface_exclusion_depth=cfg.surface_exclusion_depth,
                     )
+                    futures[fut] = (day_key, category)
+
+            for fut in as_completed(futures):
+                day_key, category = futures[fut]
+                try:
+                    files = fut.result()
                     logger.info("  NASC echograms for %s/%s: %d files", day_key, category, len(files))
                 except Exception as e:
                     logger.warning("  NASC echogram failed for %s/%s: %s", day_key, category, e)

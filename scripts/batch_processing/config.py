@@ -211,6 +211,7 @@ class PipelineConfig:
         default_factory=lambda: Path("/tmp/oceanstream/batch_output")
     )
     local_save_dir: Optional[Path] = None  # None → Azure, set → local filesystem
+    upload_after: bool = False  # process locally, bulk upload to Azure at end
 
     @classmethod
     def from_env(cls) -> PipelineConfig:

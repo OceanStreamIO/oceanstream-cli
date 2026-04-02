@@ -1283,6 +1283,12 @@ def parse_args() -> PipelineConfig:
         help="Save all outputs to local directory instead of Azure. "
              "Zarrs, echograms, NetCDFs all go under DIR/container/.",
     )
+    parser.add_argument(
+        "--upload-after",
+        action="store_true",
+        help="Process locally for speed, then bulk-upload to Azure at the end. "
+             "Uses --local-save dir (or /mnt/data/output) during processing.",
+    )
 
     # Surface exclusion
     parser.add_argument(
@@ -1356,7 +1362,12 @@ def parse_args() -> PipelineConfig:
     cfg.keep_raw = args.keep_raw
 
     # Local save mode
-    cfg.local_save_dir = Path(args.local_save) if args.local_save else None
+    cfg.upload_after = args.upload_after
+    if args.upload_after and not args.local_save:
+        # Default to /mnt/data/output for fast local NVMe processing
+        cfg.local_save_dir = Path("/mnt/data/output")
+    else:
+        cfg.local_save_dir = Path(args.local_save) if args.local_save else None
 
     # GPS
     cfg.gps_container = args.gps_container
@@ -1391,6 +1402,84 @@ def parse_args() -> PipelineConfig:
         )
 
     return cfg
+
+
+def _bulk_upload_to_azure(local_dir: Path, container: str) -> None:
+    """Upload all files from local output directory to Azure Blob Storage.
+
+    Uses a ThreadPoolExecutor to upload multiple blobs in parallel.
+    Skips files that already exist in Azure with the same size.
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from azure.storage.blob import ContainerClient
+
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+    if not conn_str:
+        logger.error("AZURE_STORAGE_CONNECTION_STRING not set — cannot upload")
+        return
+
+    source_dir = local_dir / container
+    if not source_dir.exists():
+        logger.error("Local output directory %s does not exist", source_dir)
+        return
+
+    client = ContainerClient.from_connection_string(conn_str, container)
+    try:
+        client.create_container()
+    except Exception:
+        pass  # already exists
+
+    # Collect all files to upload
+    files_to_upload = []
+    for root, _dirs, files in os.walk(source_dir):
+        for fname in files:
+            local_path = Path(root) / fname
+            blob_name = str(local_path.relative_to(source_dir))
+            files_to_upload.append((local_path, blob_name))
+
+    logger.info("Uploading %d files from %s to container '%s'", len(files_to_upload), source_dir, container)
+
+    # Build set of existing blobs with their sizes for skip logic
+    existing = {}
+    try:
+        for blob in client.list_blobs():
+            existing[blob.name] = blob.size
+    except Exception:
+        pass
+
+    uploaded = 0
+    skipped = 0
+
+    def _upload_one(local_path: Path, blob_name: str) -> bool:
+        size = local_path.stat().st_size
+        if blob_name in existing and existing[blob_name] == size:
+            return False  # skip — same size
+        with open(local_path, "rb") as f:
+            client.upload_blob(blob_name, f, overwrite=True)
+        return True
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(_upload_one, lp, bn): bn
+            for lp, bn in files_to_upload
+        }
+        for fut in as_completed(futures):
+            try:
+                if fut.result():
+                    uploaded += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.warning("Upload failed for %s: %s", futures[fut], e)
+
+    elapsed = time.time() - t0
+    logger.info(
+        "Upload complete: %d uploaded, %d skipped (same size) in %.1fs",
+        uploaded, skipped, elapsed,
+    )
 
 
 def main():
@@ -1428,7 +1517,9 @@ def main():
         "GPS source: %s",
         f"{cfg.gps_container}/{cfg.gps_blob_path or cfg.cruise_id + '/'}" if cfg.gps_container else "(none)",
     )
-    if cfg.local_save_dir:
+    if cfg.local_save_dir and cfg.upload_after:
+        logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
+    elif cfg.local_save_dir:
         logger.info("Storage: LOCAL → %s", cfg.local_save_dir)
     else:
         logger.info("Storage: Azure Blob")
@@ -1446,14 +1537,18 @@ def main():
     except Exception:
         logger.exception("Pipeline failed with error")
         raise
-    finally:
-        if cfg.azure_vm.auto_deallocate:
-            from infra import deallocate_vm
-            logger.info("Auto-deallocating VM...")
-            try:
-                deallocate_vm(cfg.azure_vm)
-            except Exception as e:
-                logger.warning("VM deallocation failed: %s", e)
+
+    # Bulk upload to Azure after local processing
+    if cfg.upload_after and cfg.local_save_dir:
+        _bulk_upload_to_azure(cfg.local_save_dir, cfg.output_container)
+
+    if cfg.azure_vm.auto_deallocate:
+        from infra import deallocate_vm
+        logger.info("Auto-deallocating VM...")
+        try:
+            deallocate_vm(cfg.azure_vm)
+        except Exception as e:
+            logger.warning("VM deallocation failed: %s", e)
 
 
 if __name__ == "__main__":
