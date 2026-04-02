@@ -75,6 +75,24 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
 )
 logging.getLogger("adlfs").setLevel(logging.WARNING)
 
+# Suppress verbose Dask / distributed logging — these produce millions of
+# lines at INFO level (task events, heartbeats, memory status, serialisation)
+# which overflow SSH sessions and crash the remote IDE.
+for _noisy in (
+    "distributed", "distributed.worker", "distributed.scheduler",
+    "distributed.nanny", "distributed.comm", "distributed.batched",
+    "dask", "bokeh", "tornado.access",
+    "echopype", "fsspec", "zarr",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="Running on a single-machine scheduler",
+    category=UserWarning,
+)
+
 from config import PipelineConfig
 
 # Import post-processing stages from the existing pipeline

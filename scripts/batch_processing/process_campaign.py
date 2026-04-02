@@ -67,6 +67,27 @@ logging.getLogger("azure").setLevel(logging.WARNING)
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 logging.getLogger("adlfs").setLevel(logging.WARNING)
 
+# Suppress verbose Dask / distributed logging — these produce millions of
+# lines at INFO level (task events, heartbeats, memory status, serialisation)
+# which overflow SSH sessions and crash the remote IDE.
+for _noisy in (
+    "distributed", "distributed.worker", "distributed.scheduler",
+    "distributed.nanny", "distributed.comm", "distributed.batched",
+    "dask", "bokeh", "tornado.access",
+    "echopype", "fsspec", "zarr",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+# Suppress the repetitive "Running on a single-machine scheduler when a
+# distributed client is active" warning that fires on every synchronous
+# compute() / to_zarr() call.
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="Running on a single-machine scheduler",
+    category=UserWarning,
+)
+
 # ---------------------------------------------------------------------------
 # Imports from oceanstream and local config
 # ---------------------------------------------------------------------------
@@ -164,6 +185,7 @@ def setup_dask_client(cfg: PipelineConfig):
             n_workers=cfg.dask.n_workers,
             threads_per_worker=cfg.dask.threads_per_worker,
             memory_limit=cfg.dask.memory_limit,
+            silence_logs=logging.WARNING,
         )
         client = Client(cluster)
 
@@ -602,6 +624,7 @@ def denoise_day(
 
     Returns the denoised zarr path.
     """
+    import dask
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
     from oceanstream.echodata.denoise import apply_denoising
 
@@ -609,94 +632,85 @@ def denoise_day(
 
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container, chunks=chunks)
 
-    # Load into memory to avoid Dask distributed overhead during denoising.
-    # Rolling operations in remove_background_noise create enormous task graphs
-    # that the distributed scheduler struggles with.  The day-level zarrs
-    # are small enough (~0.3–1.8 GB) to fit in the worker memory limit.
-    logger.info("  Loading dataset into memory (%s/%s)", day_key, category)
-    ds = ds.load()
+    # Run everything with the synchronous scheduler.  The data is loaded
+    # into memory so there is nothing to parallelise, and the distributed
+    # scheduler would serialise the full ~9 GiB numpy arrays into a task
+    # graph, overwhelming the scheduler and producing huge log output.
+    with dask.config.set(scheduler="synchronous"):
 
-    # Filter chunks to only include dimensions present in the dataset
-    valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
+        logger.info("  Loading dataset into memory (%s/%s)", day_key, category)
+        ds = ds.load()
 
-    # Step 1: Mask-based denoising (impulse, transient, attenuation — no background).
-    # This matches the Prefect flow which applies masks first and handles
-    # background noise removal separately via echopype.
-    mask_methods = [m for m in denoise_config.methods if m != "background"]
-    if mask_methods:
-        ds_denoised = apply_denoising(ds, methods=mask_methods, config=denoise_config)
-    else:
-        ds_denoised = ds
+        # Filter chunks to only include dimensions present in the dataset
+        valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
 
-    # Step 2: echopype background noise removal per channel.
-    # This directly modifies Sv values (not just masking) and is applied
-    # per-channel with frequency-specific parameters.
-    if "background" in denoise_config.methods:
-        from echopype.clean import remove_background_noise as ep_remove_background_noise
-
-        # Build per-frequency params when frequency-specific mode is on,
-        # mirroring the Prefect flow's per-channel dispatch.
-        if denoise_config.use_frequency_specific:
-            bgn_freq_params = denoise_config.to_frequency_keyed_params("background")
+        # Step 1: Mask-based denoising (impulse, transient, attenuation — no background).
+        mask_methods = [m for m in denoise_config.methods if m != "background"]
+        if mask_methods:
+            ds_denoised = apply_denoising(ds, methods=mask_methods, config=denoise_config)
         else:
-            bgn_freq_params = None
-        bgn_global = denoise_config.to_background_params()
+            ds_denoised = ds
 
-        # Capture parent attrs for provenance propagation.
-        # echopype's @add_processing_level decorator on remove_background_noise
-        # requires input_processing_level when lat/lon are present.
-        # compute_Sv is decorated @add_processing_level("L2A"), so the Sv dataset
-        # should logically be "Level 2A".  It may be absent if lat/lon were added
-        # after compute_Sv (e.g. external GPS interpolation).  Set explicitly.
-        parent_attrs = dict(ds_denoised.attrs)
-        parent_attrs.setdefault("processing_level", "Level 2A")
-        parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
+        # Step 2: echopype background noise removal per channel.
+        # This directly modifies Sv values (not just masking) and is applied
+        # per-channel with frequency-specific parameters.
+        if "background" in denoise_config.methods:
+            from echopype.clean import remove_background_noise as ep_remove_background_noise
 
-        def _remove_bgn_one_channel(ch_ds):
-            # Propagate processing-level attrs lost by groupby channel split
-            ch_ds.attrs.update(parent_attrs)
-
-            # Resolve params: per-frequency if available, else global
-            if bgn_freq_params is not None:
-                freq = str(int(ch_ds["frequency_nominal"]))
-                opts = bgn_freq_params.get(freq, bgn_global)
+            # Build per-frequency params when frequency-specific mode is on,
+            # mirroring the Prefect flow's per-channel dispatch.
+            if denoise_config.use_frequency_specific:
+                bgn_freq_params = denoise_config.to_frequency_keyed_params("background")
             else:
-                opts = bgn_global
+                bgn_freq_params = None
+            bgn_global = denoise_config.to_background_params()
 
-            result = ep_remove_background_noise(
-                ch_ds,
-                ping_num=opts.get("ping_window", 50),
-                range_sample_num=opts.get("range_window", 20),
-                SNR_threshold=opts.get("SNR_threshold", "3.0dB"),
-                background_noise_max=opts.get("background_noise_max"),
-            )
-            # Use Sv_corrected (background-noise-removed), not original Sv
-            return result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
+            # Capture parent attrs for provenance propagation.
+            parent_attrs = dict(ds_denoised.attrs)
+            parent_attrs.setdefault("processing_level", "Level 2A")
+            parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
 
-        sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
-        sv_clean.name = "Sv"
-        ds_denoised["Sv"] = sv_clean
-        logger.info("  Background noise removal applied per channel")
+            def _remove_bgn_one_channel(ch_ds):
+                # Propagate processing-level attrs lost by groupby channel split
+                ch_ds.attrs.update(parent_attrs)
 
-    # range_sample is preserved as the dimension; depth is a separate variable
-    # added by ep.consolidate.add_depth() in Stage 4. Both are preserved
-    # through denoising for downstream compute_MVBS/compute_NASC.
+                # Resolve params: per-frequency if available, else global
+                if bgn_freq_params is not None:
+                    freq = str(int(ch_ds["frequency_nominal"]))
+                    opts = bgn_freq_params.get(freq, bgn_global)
+                else:
+                    opts = bgn_global
 
-    output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
-    # Rechunk to uniform sizes — denoising/groupby operations produce
-    # non-uniform chunks at concatenation boundaries that Zarr cannot write.
-    rechunk_spec = {"ping_time": chunks.get("ping_time", 1000)}
-    if "range_sample" in ds_denoised.dims:
-        rechunk_spec["range_sample"] = -1
-    ds_denoised = ds_denoised.chunk(rechunk_spec)
-    for var in ds_denoised.data_vars:
-        ds_denoised[var].encoding.clear()
-    for coord in ds_denoised.coords:
-        ds_denoised[coord].encoding.clear()
-    save_dataset_to_azure(ds_denoised, zarr_path=output_zarr, container=output_container)
+                result = ep_remove_background_noise(
+                    ch_ds,
+                    ping_num=opts.get("ping_window", 50),
+                    range_sample_num=opts.get("range_window", 20),
+                    SNR_threshold=opts.get("SNR_threshold", "3.0dB"),
+                    background_noise_max=opts.get("background_noise_max"),
+                )
+                # Use Sv_corrected (background-noise-removed), not original Sv
+                return result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
 
-    if save_netcdf:
-        _save_netcdf_to_blob(ds_denoised, f"{day_key}/{day_key}--{category}--denoised.nc", output_container)
+            sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
+            sv_clean.name = "Sv"
+            ds_denoised["Sv"] = sv_clean
+            logger.info("  Background noise removal applied per channel")
+
+        # Rechunk to uniform sizes — denoising/groupby operations produce
+        # non-uniform chunks at concatenation boundaries that Zarr cannot write.
+        output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
+        rechunk_spec = {"ping_time": chunks.get("ping_time", 1000)}
+        if "range_sample" in ds_denoised.dims:
+            rechunk_spec["range_sample"] = -1
+        ds_denoised = ds_denoised.chunk(rechunk_spec)
+        for var in ds_denoised.data_vars:
+            ds_denoised[var].encoding.clear()
+        for coord in ds_denoised.coords:
+            ds_denoised[coord].encoding.clear()
+        save_dataset_to_azure(ds_denoised, zarr_path=output_zarr, container=output_container)
+
+        if save_netcdf:
+            _save_netcdf_to_blob(ds_denoised, f"{day_key}/{day_key}--{category}--denoised.nc", output_container)
 
     logger.info("  Saved denoised: %s", output_zarr)
 
