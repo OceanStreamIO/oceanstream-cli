@@ -57,13 +57,17 @@ def compute_mvbs(
 
     logger.info(f"Computing MVBS with range_bin={range_bin}, ping_time_bin={ping_time_bin}")
 
-    # echopype expects range_var to be "echo_range" or "depth"
-    range_var = "echo_range" if "echo_range" in sv_dataset else "depth"
+    # Prefer depth (accounts for transducer offset) over echo_range
+    range_var = "depth" if "depth" in sv_dataset else "echo_range"
 
     # --- Replicate echopype compute_MVBS setup (api.py lines 100-140) ---
     ds_Sv, range_bin_val = _setup_and_validate(sv_dataset, range_var, range_bin, "left")
 
     # Range bins
+    # TODO: bins start at 0 regardless of transducer depth. When depth is used
+    # (e.g. depth starts at 1.9m for Saildrone), the first bin(s) are empty or
+    # partial. For NASC this causes ~19% underestimate in the surface layer.
+    # Investigate starting bins at min(depth) or accepting a depth_offset param.
     range_var_max = float(ds_Sv[range_var].max(skipna=True))
     range_interval = np.arange(0, range_var_max + range_bin_val, range_bin_val)
 

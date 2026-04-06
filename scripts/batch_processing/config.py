@@ -199,7 +199,8 @@ class PipelineConfig:
     # ── Echogram settings ────────────────────────────────────────
     colormap: str = "ocean_r"
 
-    # ── Dask ─────────────────────────────────────────────────────
+    # ── Concurrency ─────────────────────────────────────────────
+    parallel_workers: int = 0  # 0 → auto-detect from RAM (2 GB per denoise worker)
     dask: DaskConfig = field(default_factory=DaskConfig)
     batch_size: int = 6  # max concurrent Dask futures
 
@@ -236,6 +237,25 @@ class PipelineConfig:
             cfg.dask.memory_limit = mem
 
         return cfg
+
+    def effective_parallel_workers(self, mem_per_worker_gb: float = 2.0) -> int:
+        """Return the number of parallel stage workers.
+
+        If ``parallel_workers`` is 0 (the default), auto-detect from total
+        system RAM, reserving memory for Dask workers and OS overhead.
+        Each parallel denoise/echogram task needs ~2 GB.
+        """
+        if self.parallel_workers > 0:
+            return self.parallel_workers
+        try:
+            total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3)
+        except (ValueError, OSError):
+            return 2  # safe default if detection fails
+        # Reserve ~50% for the Dask LocalCluster, OS, and headroom
+        available_gb = total_gb * 0.5
+        workers = max(1, int(available_gb / mem_per_worker_gb))
+        # Cap at a reasonable maximum to avoid thrashing
+        return min(workers, 16)
 
     @classmethod
     def for_local_test(

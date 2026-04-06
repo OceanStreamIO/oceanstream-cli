@@ -390,14 +390,21 @@ def process_raw_files(
 ) -> list[tuple[str, str, str]]:
     """Download and convert raw files to EchoData Zarrs.
 
-    Downloads in batches to limit disk usage, then converts sequentially.
+    Downloads in batches to limit disk usage, then converts in parallel.
     Each raw file is deleted after conversion to free disk space.
 
     Returns list of (category, echodata_zarr_path, file_name).
     """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     results = []
     total = len(files_list)
     batch_size = min(cfg.raw.download_batch_size, total)
+
+    # Use parallel conversion — CPU-bound (EK80 binary parsing).
+    # Limit workers to avoid overwhelming disk I/O.
+    convert_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=4.0), 12)
+    logger.info("Conversion parallelism: %d workers", convert_workers)
 
     for batch_start in range(0, total, batch_size):
         batch = files_list[batch_start:batch_start + batch_size]
@@ -406,29 +413,38 @@ def process_raw_files(
         # Download this batch in parallel
         local_paths = download_all_raw_files(batch, cfg)
 
-        # Convert each file in the batch
-        for idx, (raw_filename, rec) in enumerate(batch, batch_start + 1):
-            if raw_filename not in local_paths:
-                logger.error("  File %s not downloaded — skipping", rec["file_name"])
-                results.append(("unknown", "", rec["file_name"]))
-                continue
+        # Convert files in parallel using ProcessPoolExecutor
+        futures = {}
+        with ProcessPoolExecutor(max_workers=convert_workers) as pool:
+            for idx, (raw_filename, rec) in enumerate(batch, batch_start + 1):
+                if raw_filename not in local_paths:
+                    logger.error("  File %s not downloaded — skipping", rec["file_name"])
+                    results.append(("unknown", "", rec["file_name"]))
+                    continue
 
-            logger.info("Converting file %d/%d: %s", idx, total, rec["file_name"])
-            try:
-                result = convert_and_save_echodata(
+                logger.info("Submitting file %d/%d: %s", idx, total, rec["file_name"])
+                fut = pool.submit(
+                    convert_and_save_echodata,
                     local_raw_path=local_paths[raw_filename],
                     file_record=rec,
                     cfg=cfg,
                     echodata_dir=echodata_dir,
                 )
-                results.append(result)
-            except Exception as e:
-                logger.error("  FAILED: %s — %s", rec["file_name"], e)
-                results.append(("unknown", "", rec["file_name"]))
-            finally:
-                # Delete raw file after conversion to free disk space
-                if not cfg.keep_raw:
-                    local_paths[raw_filename].unlink(missing_ok=True)
+                futures[fut] = (raw_filename, rec)
+
+            for fut in as_completed(futures):
+                raw_filename, rec = futures[fut]
+                try:
+                    result = fut.result()
+                    results.append(result)
+                    logger.info("  Converted %s [%s]", rec["file_name"], result[0])
+                except Exception as e:
+                    logger.error("  FAILED: %s — %s", rec["file_name"], e)
+                    results.append(("unknown", "", rec["file_name"]))
+                finally:
+                    # Delete raw file after conversion to free disk space
+                    if not cfg.keep_raw and raw_filename in local_paths:
+                        local_paths[raw_filename].unlink(missing_ok=True)
 
     successful = sum(1 for _, zp, _ in results if zp)
     logger.info("Converted %d/%d files to EchoData", successful, total)
@@ -508,6 +524,10 @@ def run_echodata_combine(
 
     day_echodata: dict[str, dict[str, str]] = {}
 
+    # Parallel combine across all day×category pairs
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    combine_tasks = []
     for day_key, day_files in day_groups.items():
         by_category: dict[str, list[str]] = defaultdict(list)
         for _, rec in day_files:
@@ -515,35 +535,33 @@ def run_echodata_combine(
             if fn in file_info:
                 cat, zp = file_info[fn]
                 by_category[cat].append(zp)
+        for category, zarr_paths in by_category.items():
+            combine_tasks.append((day_key, category, zarr_paths))
 
-        day_echodata[day_key] = {}
+    max_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=8.0), len(combine_tasks))
+    logger.info("Combining %d day×category pairs with %d workers", len(combine_tasks), max_workers)
 
-        if cfg.category_parallel and len(by_category) > 1:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+    futures = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for day_key, category, zarr_paths in combine_tasks:
+            fut = pool.submit(
+                combine_echodata_day,
+                ed_zarr_paths=zarr_paths,
+                day_key=day_key,
+                category=category,
+                echodata_dir=echodata_dir,
+            )
+            futures[fut] = (day_key, category)
 
-            with ThreadPoolExecutor(max_workers=len(by_category)) as pool:
-                futures = {}
-                for category, zarr_paths in by_category.items():
-                    fut = pool.submit(
-                        combine_echodata_day,
-                        ed_zarr_paths=zarr_paths,
-                        day_key=day_key,
-                        category=category,
-                        echodata_dir=echodata_dir,
-                    )
-                    futures[fut] = category
-                for fut in as_completed(futures):
-                    cat = futures[fut]
-                    day_echodata[day_key][cat] = fut.result()
-        else:
-            for category, zarr_paths in by_category.items():
-                combined_zarr = combine_echodata_day(
-                    ed_zarr_paths=zarr_paths,
-                    day_key=day_key,
-                    category=category,
-                    echodata_dir=echodata_dir,
-                )
-                day_echodata[day_key][category] = combined_zarr
+        for fut in as_completed(futures):
+            day_key, cat = futures[fut]
+            try:
+                result = fut.result()
+                if day_key not in day_echodata:
+                    day_echodata[day_key] = {}
+                day_echodata[day_key][cat] = result
+            except Exception as e:
+                logger.error("Combine failed %s/%s: %s", day_key, cat, e)
 
     logger.info("EchoData combine complete: %d days", len(day_echodata))
     return day_echodata
@@ -836,11 +854,13 @@ def run_sv_computation(
     gps_df: pd.DataFrame | None = None,
 ) -> dict[str, dict[str, str]]:
     """Compute Sv for all day EchoData. Returns {day_key: {category: sv_zarr_path}}."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     sv_zarrs: dict[str, dict[str, str]] = {}
 
+    # Build list of all (day_key, category, ed_zarr_path, day_gps) tasks
+    sv_tasks = []
     for day_key, categories in day_echodata.items():
-        sv_zarrs[day_key] = {}
-
         # Filter GPS to this day ±1 hour buffer
         day_gps = None
         if gps_df is not None and not gps_df.empty:
@@ -855,36 +875,35 @@ def run_sv_computation(
             else:
                 logger.info("  GPS for %s: %d points", day_key, len(day_gps))
 
-        if cfg.category_parallel and len(categories) > 1:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+        for category, ed_zarr_path in categories.items():
+            sv_tasks.append((day_key, category, ed_zarr_path, day_gps))
 
-            with ThreadPoolExecutor(max_workers=len(categories)) as pool:
-                futures = {}
-                for category, ed_zarr_path in categories.items():
-                    fut = pool.submit(
-                        compute_sv_day,
-                        ed_zarr_path=ed_zarr_path,
-                        day_key=day_key,
-                        category=category,
-                        cfg=cfg,
-                        output_container=output_container,
-                        gps_df=day_gps,
-                    )
-                    futures[fut] = category
-                for fut in as_completed(futures):
-                    cat = futures[fut]
-                    sv_zarrs[day_key][cat] = fut.result()
-        else:
-            for category, ed_zarr_path in categories.items():
-                sv_path = compute_sv_day(
-                    ed_zarr_path=ed_zarr_path,
-                    day_key=day_key,
-                    category=category,
-                    cfg=cfg,
-                    output_container=output_container,
-                    gps_df=day_gps,
-                )
-                sv_zarrs[day_key][category] = sv_path
+    max_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=12.0), len(sv_tasks))
+    logger.info("Sv computation: %d tasks with %d workers", len(sv_tasks), max_workers)
+
+    futures = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for day_key, category, ed_zarr_path, day_gps in sv_tasks:
+            fut = pool.submit(
+                compute_sv_day,
+                ed_zarr_path=ed_zarr_path,
+                day_key=day_key,
+                category=category,
+                cfg=cfg,
+                output_container=output_container,
+                gps_df=day_gps,
+            )
+            futures[fut] = (day_key, category)
+
+        for fut in as_completed(futures):
+            day_key, cat = futures[fut]
+            try:
+                sv_path = fut.result()
+                if day_key not in sv_zarrs:
+                    sv_zarrs[day_key] = {}
+                sv_zarrs[day_key][cat] = sv_path
+            except Exception as e:
+                logger.error("Sv failed %s/%s: %s", day_key, cat, e)
 
     logger.info("Sv computation complete: %d days", len(sv_zarrs))
     return sv_zarrs
@@ -1218,6 +1237,11 @@ def parse_args() -> PipelineConfig:
     parser.add_argument("--scheduler", help="Dask scheduler address")
     parser.add_argument("--n-workers", type=int, default=2)
     parser.add_argument("--memory-limit", default="6GB")
+    parser.add_argument(
+        "--parallel-workers", type=int, default=0,
+        help="Max parallel stage workers (denoise, NASC, echograms). "
+             "0 = auto-detect from available RAM (default: 0).",
+    )
 
     # Processing toggles
     parser.add_argument("--skip-denoising", action="store_true")
@@ -1288,6 +1312,19 @@ def parse_args() -> PipelineConfig:
         action="store_true",
         help="Process locally for speed, then bulk-upload to Azure at the end. "
              "Uses --local-save dir (or /mnt/data/output) during processing.",
+    )
+    parser.add_argument(
+        "--background-sync",
+        action="store_true",
+        help="Continuously sync local output to Azure in the background while "
+             "processing. Implies --upload-after. Syncs every 120s by default.",
+    )
+    parser.add_argument(
+        "--sync-interval",
+        type=int,
+        default=120,
+        metavar="SECS",
+        help="Interval between background sync sweeps (default: 120s).",
     )
 
     # Surface exclusion
@@ -1362,8 +1399,10 @@ def parse_args() -> PipelineConfig:
     cfg.keep_raw = args.keep_raw
 
     # Local save mode
-    cfg.upload_after = args.upload_after
-    if args.upload_after and not args.local_save:
+    cfg.upload_after = args.upload_after or args.background_sync
+    cfg.background_sync = args.background_sync
+    cfg.sync_interval = args.sync_interval
+    if cfg.upload_after and not args.local_save:
         # Default to /mnt/data/output for fast local NVMe processing
         cfg.local_save_dir = Path("/mnt/data/output")
     else:
@@ -1375,6 +1414,9 @@ def parse_args() -> PipelineConfig:
 
     # Surface exclusion
     cfg.surface_exclusion_depth = args.surface_exclusion_depth
+
+    # Parallel stage workers (denoise, NASC, echograms)
+    cfg.parallel_workers = args.parallel_workers
 
     # Azure VM
     cfg.azure_vm.auto_deallocate = args.auto_deallocate
@@ -1506,6 +1548,10 @@ def main():
         "Dask: %d workers, %s each", cfg.dask.n_workers, cfg.dask.memory_limit
     )
     logger.info(
+        "Parallel stage workers: %d (0=auto → %d)",
+        cfg.parallel_workers, cfg.effective_parallel_workers(),
+    )
+    logger.info(
         "Denoise: %s", "enabled" if not cfg.skip_denoising else "disabled"
     )
     if not cfg.skip_denoising and cfg.denoise.use_frequency_specific:
@@ -1518,7 +1564,10 @@ def main():
         f"{cfg.gps_container}/{cfg.gps_blob_path or cfg.cruise_id + '/'}" if cfg.gps_container else "(none)",
     )
     if cfg.local_save_dir and cfg.upload_after:
-        logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
+        if cfg.background_sync:
+            logger.info("Storage: LOCAL → %s (background sync to Azure every %ds)", cfg.local_save_dir, cfg.sync_interval)
+        else:
+            logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
     elif cfg.local_save_dir:
         logger.info("Storage: LOCAL → %s", cfg.local_save_dir)
     else:
@@ -1530,6 +1579,17 @@ def main():
         from local_storage import patch_storage
         patch_storage(cfg.local_save_dir)
 
+    # Start background sync if requested
+    syncer = None
+    if cfg.background_sync and cfg.local_save_dir:
+        from background_sync import BackgroundSync
+        syncer = BackgroundSync(
+            local_dir=cfg.local_save_dir,
+            container=cfg.output_container,
+            interval=cfg.sync_interval,
+        )
+        syncer.start()
+
     try:
         run_pipeline(cfg)
     except KeyboardInterrupt:
@@ -1537,9 +1597,14 @@ def main():
     except Exception:
         logger.exception("Pipeline failed with error")
         raise
+    finally:
+        # Stop background sync and do final sweep
+        if syncer is not None:
+            syncer.stop()
+            syncer.join(timeout=300)
 
-    # Bulk upload to Azure after local processing
-    if cfg.upload_after and cfg.local_save_dir:
+    # Bulk upload to Azure after local processing (if not background-synced)
+    if cfg.upload_after and cfg.local_save_dir and not cfg.background_sync:
         _bulk_upload_to_azure(cfg.local_save_dir, cfg.output_container)
 
     if cfg.azure_vm.auto_deallocate:

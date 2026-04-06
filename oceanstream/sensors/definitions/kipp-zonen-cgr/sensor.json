@@ -1,0 +1,25 @@
+{
+  "id": "kipp-zonen-cgr",
+  "name": "Kipp & Zonen CGR Series Pyrgeometer",
+  "manufacturer": "Kipp & Zonen",
+  "model": "CGR Series",
+  "sensor_type": "radiation",
+  "description": "Pyrgeometer for downwelling and net longwave (infrared) radiation measurement",
+  "variables": [
+    "LW_IRRAD_MEAN",
+    "LW_NET_IRRAD_MEAN",
+    "TEMP_LW_MEAN",
+    "LW_NET_IRRAD_STDDEV",
+    "TEMP_LW_STDDEV",
+    "LW_QC"
+  ],
+  "specifications": {
+    "spectral_range": "4500-42000 nm",
+    "sensitivity": "5-15 µV/W/m²",
+    "response_time": "<18 s (95%)",
+    "field_of_view": "180° (hemispherical)"
+  },
+  "documentation_url": "https://www.kippzonen.com/Product/17/CGR-series",
+  "typical_depth": "0.2m above waterline",
+  "typical_mount": "mast or wing, upper side"
+}

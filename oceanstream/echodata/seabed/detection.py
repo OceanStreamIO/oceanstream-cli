@@ -940,7 +940,7 @@ def mask_seabed(
         else:
             bottom_depth = range_arr.isel({range_dim: -1})
     
-    seabed_safe = seabed_depth.fillna(float(bottom_depth.values) + 100)
+    seabed_safe = seabed_depth.fillna(float(bottom_depth.max().values) + 100)
     seabed_safe = seabed_safe - offset  # Apply offset (subtract to mask more)
     
     # Build mask

@@ -734,26 +734,43 @@ def run_denoising(
         logger.info("Skipping denoising (--skip-denoising)")
         return day_zarrs
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     denoise_config = cfg.denoise.to_denoise_config()
     chunks = cfg.chunks.as_dict()
     denoised_zarrs: dict[str, dict[str, str]] = {}
 
-    for day_key, categories in day_zarrs.items():
-        denoised_zarrs[day_key] = {}
-        for category, zarr_path in categories.items():
-            # Run in main process — Dask handles lazy array computation
-            # but orchestration stays here to avoid nested-task deadlock.
-            denoised_path = denoise_day(
-                zarr_path=zarr_path,
-                output_container=output_container,
-                denoise_config=denoise_config,
-                chunks=chunks,
-                day_key=day_key,
-                category=category,
-                cruise_id=cfg.cruise_id,
-                save_netcdf=cfg.save_to_netcdf,
-            )
-            denoised_zarrs[day_key][category] = denoised_path
+    # Each denoise task loads ~1–2 GB into memory.  Scale concurrency
+    # based on available RAM (auto-detected when parallel_workers=0).
+    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
+    logger.info("Denoising with %d parallel workers", max_workers)
+
+    # Collect all (day_key, category) jobs
+    futures: dict = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for day_key, categories in day_zarrs.items():
+            denoised_zarrs[day_key] = {}
+            for category, zarr_path in categories.items():
+                fut = pool.submit(
+                    denoise_day,
+                    zarr_path=zarr_path,
+                    output_container=output_container,
+                    denoise_config=denoise_config,
+                    chunks=chunks,
+                    day_key=day_key,
+                    category=category,
+                    cruise_id=cfg.cruise_id,
+                    save_netcdf=cfg.save_to_netcdf,
+                )
+                futures[fut] = (day_key, category)
+
+        for fut in as_completed(futures):
+            day_key, category = futures[fut]
+            try:
+                denoised_path = fut.result()
+                denoised_zarrs[day_key][category] = denoised_path
+            except Exception as e:
+                logger.warning("Denoise failed for %s/%s: %s", day_key, category, e)
 
     logger.info("Denoising complete")
     return denoised_zarrs
@@ -899,26 +916,42 @@ def run_mvbs_computation(
         logger.info("Skipping MVBS computation")
         return {}
 
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     chunks = cfg.chunks.as_dict()
     mvbs_zarrs: dict[str, dict[str, str]] = {}
 
-    for day_key, categories in day_zarrs.items():
-        mvbs_zarrs[day_key] = {}
-        for category, zarr_path in categories.items():
-            # Run in main process to avoid nested-task deadlock.
-            mvbs_path = compute_mvbs_day(
-                zarr_path=zarr_path,
-                output_container=output_container,
-                chunks=chunks,
-                range_bin=cfg.mvbs.range_bin,
-                ping_time_bin=cfg.mvbs.ping_time_bin,
-                day_key=day_key,
-                category=category,
-                cruise_id=cfg.cruise_id,
-                save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
-                surface_exclusion_depth=cfg.surface_exclusion_depth,
-            )
-            mvbs_zarrs[day_key][category] = mvbs_path
+    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
+    logger.info("MVBS computation with %d parallel workers (ProcessPool)", max_workers)
+
+    futures: dict = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        for day_key, categories in day_zarrs.items():
+            mvbs_zarrs[day_key] = {}
+            for category, zarr_path in categories.items():
+                fut = pool.submit(
+                    compute_mvbs_day,
+                    zarr_path=zarr_path,
+                    output_container=output_container,
+                    chunks=chunks,
+                    range_bin=cfg.mvbs.range_bin,
+                    ping_time_bin=cfg.mvbs.ping_time_bin,
+                    day_key=day_key,
+                    category=category,
+                    cruise_id=cfg.cruise_id,
+                    save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
+                    surface_exclusion_depth=cfg.surface_exclusion_depth,
+                )
+                futures[fut] = (day_key, category)
+
+        for fut in as_completed(futures):
+            day_key, category = futures[fut]
+            try:
+                mvbs_path = fut.result()
+                if mvbs_path:
+                    mvbs_zarrs[day_key][category] = mvbs_path
+            except Exception as e:
+                logger.warning("MVBS failed for %s/%s: %s", day_key, category, e)
 
     logger.info("MVBS computation complete")
     return mvbs_zarrs
@@ -1004,13 +1037,16 @@ def run_nasc_computation(
         logger.info("Skipping NASC computation")
         return {}
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
     chunks = cfg.chunks.as_dict()
     nasc_zarrs: dict[str, dict[str, str]] = {}
 
+    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
+    logger.info("NASC computation with %d parallel workers (ProcessPool)", max_workers)
+
     futures: dict = {}
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
         for day_key, categories in day_zarrs.items():
             nasc_zarrs[day_key] = {}
             for category, zarr_path in categories.items():
@@ -1352,7 +1388,7 @@ def run_echogram_generation(
 
     chunks = cfg.chunks.as_dict()
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
     # Build union of all day/category combos across source, denoised, and
     # MVBS zarrs so we don't skip combos that are missing a source zarr.
@@ -1362,14 +1398,26 @@ def run_echogram_generation(
             all_keys.setdefault(dk, set()).update(cats.keys())
 
     # Parallelize echogram generation — each day/category is independent.
-    # 2 workers overlap Azure I/O with matplotlib rendering (Agg backend
-    # is used throughout, safe for concurrent use).
+    # Use ProcessPoolExecutor: matplotlib rendering is CPU-bound C code
+    # that holds the GIL, making ThreadPoolExecutor ineffective.
+    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
+    logger.info("Echogram generation with %d parallel workers (ProcessPool)", max_workers)
+
+    # Check local output for existing echograms (skip Azure API calls)
+    local_save_dir = getattr(cfg, 'local_save_dir', None)
+
     futures: dict = {}
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
         for day_key in sorted(all_keys):
             for category in sorted(all_keys[day_key]):
-                # Skip if echograms already exist in Azure
-                existing = _count_existing_echograms(output_container, day_key, category)
+                # Skip if echograms already exist (local check or Azure)
+                if local_save_dir:
+                    from pathlib import Path
+                    local_day = Path(local_save_dir) / output_container / day_key
+                    prefix = f"{day_key}--{category}"
+                    existing = len(list(local_day.glob(f"{prefix}*.png"))) if local_day.exists() else 0
+                else:
+                    existing = _count_existing_echograms(output_container, day_key, category)
                 if existing > 0:
                     logger.info("  Skipping %s/%s — %d echograms already exist", day_key, category, existing)
                     continue
@@ -1412,7 +1460,7 @@ def run_echogram_generation(
     # ── NASC echograms (also parallelized) ────────────────────────
     if nasc_zarrs:
         futures = {}
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
             for day_key in sorted(nasc_zarrs):
                 for category, nasc_zarr in sorted(nasc_zarrs[day_key].items()):
                     fut = pool.submit(
@@ -1444,6 +1492,7 @@ def export_nasc_and_generate_pmtiles(
     output_container: str,
     cruise_id: str,
     local_output_dir: Path,
+    max_workers: int = 2,
 ) -> Path | None:
     """Export NASC to GeoParquet then generate track PMTiles.
 
@@ -1451,23 +1500,35 @@ def export_nasc_and_generate_pmtiles(
     """
     from oceanstream.echodata.storage import open_sv_from_azure
     from oceanstream.echodata.compute import export_nasc_to_geoparquet
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import dask
 
     geoparquet_dir = local_output_dir / "nasc_geoparquet"
     geoparquet_dir.mkdir(parents=True, exist_ok=True)
 
-    for day_key, categories in nasc_zarrs.items():
-        for category, zarr_path in categories.items():
+    def _export_one(day_key, category, zarr_path):
+        ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
+        with dask.config.set(scheduler="synchronous"):
+            export_nasc_to_geoparquet(
+                ds,
+                output_dir=geoparquet_dir,
+                campaign_id=cruise_id,
+                file_id=f"{day_key}_{category}",
+            )
+        ds.close()
+
+    futures = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for day_key, categories in nasc_zarrs.items():
+            for category, zarr_path in categories.items():
+                fut = pool.submit(_export_one, day_key, category, zarr_path)
+                futures[fut] = (day_key, category)
+        for fut in as_completed(futures):
+            dk, cat = futures[fut]
             try:
-                ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
-                export_nasc_to_geoparquet(
-                    ds,
-                    output_dir=geoparquet_dir,
-                    campaign_id=cruise_id,
-                    file_id=f"{day_key}_{category}",
-                )
-                ds.close()
+                fut.result()
             except Exception as e:
-                logger.warning("NASC export failed for %s/%s: %s", day_key, category, e)
+                logger.warning("NASC export failed for %s/%s: %s", dk, cat, e)
 
     # Generate PMTiles from the accumulated GeoParquet
     nasc_parquet_dir = geoparquet_dir / "nasc"
@@ -1521,12 +1582,14 @@ def generate_cog_heatmaps(
         return cog_files
 
     from oceanstream.echodata.storage import open_sv_from_azure
+    import dask
 
     for day_key, categories in mvbs_zarrs.items():
         for category, zarr_path in categories.items():
             try:
                 ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
-                ds = ds.compute()
+                with dask.config.set(scheduler="synchronous"):
+                    ds = ds.compute()
 
                 if "latitude" not in ds or "longitude" not in ds:
                     logger.warning("No lat/lon in MVBS for %s/%s — skipping COG", day_key, category)
@@ -1605,28 +1668,74 @@ def run_tiles_and_cog(
         logger.info("Skipping PMTiles/COG generation")
         return
 
-    # PMTiles from NASC
-    if nasc_zarrs:
-        export_nasc_and_generate_pmtiles(
-            nasc_zarrs=nasc_zarrs,
-            output_container=output_container,
-            cruise_id=cfg.cruise_id,
-            local_output_dir=cfg.local_output_dir,
-        )
+    from concurrent.futures import ThreadPoolExecutor
 
-    # COG from MVBS
-    if mvbs_zarrs:
-        generate_cog_heatmaps(
-            mvbs_zarrs=mvbs_zarrs,
-            output_container=output_container,
-            cruise_id=cfg.cruise_id,
-            local_output_dir=cfg.local_output_dir,
-        )
+    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
+
+    # Run NASC→GeoParquet→PMTiles and COG heatmaps concurrently
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        nasc_future = None
+        cog_future = None
+
+        if nasc_zarrs:
+            nasc_future = pool.submit(
+                export_nasc_and_generate_pmtiles,
+                nasc_zarrs=nasc_zarrs,
+                output_container=output_container,
+                cruise_id=cfg.cruise_id,
+                local_output_dir=cfg.local_output_dir,
+                max_workers=max_workers,
+            )
+
+        if mvbs_zarrs:
+            cog_future = pool.submit(
+                generate_cog_heatmaps,
+                mvbs_zarrs=mvbs_zarrs,
+                output_container=output_container,
+                cruise_id=cfg.cruise_id,
+                local_output_dir=cfg.local_output_dir,
+            )
+
+        if nasc_future:
+            try:
+                nasc_future.result()
+            except Exception as e:
+                logger.warning("PMTiles generation failed: %s", e)
+
+        if cog_future:
+            try:
+                cog_future.result()
+            except Exception as e:
+                logger.warning("COG generation failed: %s", e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE 10: Campaign-wide Zarr aggregation
 # ═══════════════════════════════════════════════════════════════════════════
+
+def _normalize_string_dtypes(ds) -> "xr.Dataset":
+    """Convert all object/StringDType variables and coords to fixed-length U strings.
+
+    Zarr v3 with numpy 2.0 introduces ``StringDType()`` which is incompatible
+    with the ``object`` dtype stored by earlier writes.  Normalizing both to
+    ``<U`` (fixed-length Unicode) prevents "Mismatched dtypes" errors when
+    appending to an existing zarr store.
+    """
+    import numpy as np
+    import xarray as xr
+
+    for name in list(ds.coords) + list(ds.data_vars):
+        arr = ds[name]
+        if arr.dtype == object or (hasattr(arr.dtype, 'kind') and arr.dtype.kind == 'T'):
+            vals = arr.values
+            if isinstance(vals, np.ndarray):
+                str_vals = vals.astype(str)
+                if name in ds.coords:
+                    ds = ds.assign_coords({name: (arr.dims, str_vals)})
+                else:
+                    ds[name] = xr.DataArray(str_vals, dims=arr.dims)
+    return ds
+
 
 def build_campaign_zarr(
     day_zarrs: dict[str, dict[str, str]],
@@ -1681,6 +1790,10 @@ def build_campaign_zarr(
                     ds[var].encoding.clear()
                 for coord in ds.coords:
                     ds[coord].encoding.clear()
+
+                # Normalize string/object dtypes to plain str to avoid
+                # zarr v3 StringDType vs object mismatch on append.
+                ds = _normalize_string_dtypes(ds)
 
                 if first:
                     store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="w")

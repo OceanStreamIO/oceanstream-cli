@@ -111,6 +111,7 @@ Currently registered instruments:
 | `airmar-150wx` | Airmar 150WX WeatherStation | Airmar Technology | Meteorological | Wind, Air temp, Humidity, Pressure |
 | `licor-li190r` | LI-COR LI-190R PAR Sensor | LI-COR Biosciences | Radiation | PAR |
 | `kipp-zonen-cmp` | Kipp & Zonen CMP Pyranometer | Kipp & Zonen | Radiation | Shortwave irradiance |
+| `kipp-zonen-cgr` | Kipp & Zonen CGR Pyrgeometer | Kipp & Zonen | Radiation | Longwave radiation |
 | `apogee-si111` | Apogee SI-111 IR Radiometer | Apogee Instruments | Radiation | IR sea surface temp |
 | `thermistor-0.5m` | Hull-Mounted Thermistor | Sea-Bird Scientific | Thermistor | Temperature at 0.5m |
 | `wave-imu` | IMU-Derived Wave Sensor | Saildrone | Wave | Wave height & period |
@@ -129,6 +130,7 @@ Standard sensor suite:
 - Weather station (Airmar 150WX)
 - PAR sensor (LI-COR LI-190R)
 - Pyranometer (Kipp & Zonen CMP)
+- Pyrgeometer / LWR (Kipp & Zonen CGR)
 - IR radiometer (Apogee SI-111)
 - Hull thermistor (0.5m)
 - Wave sensor (IMU-derived)
