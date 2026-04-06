@@ -1,16 +1,22 @@
 """ADCP processing module for Acoustic Doppler Current Profiler data."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from time import perf_counter
+from typing import TYPE_CHECKING
 
-from ..providers.base import ProviderBase
+if TYPE_CHECKING:
+    import pandas as pd
+    from ..providers.base import ProviderBase
+
+logger = logging.getLogger("oceanstream")
 
 
 class AdcpProcessor:
     """Processor for ADCP data."""
 
-    def __init__(self, provider: ProviderBase, verbose: bool = False):
+    def __init__(self, provider: "ProviderBase", verbose: bool = False):
         self.provider = provider
         self.verbose = verbose
         self._start_time = perf_counter()
@@ -26,7 +32,7 @@ class AdcpProcessor:
 
 
 def process(
-    provider: ProviderBase,
+    provider: "ProviderBase",
     input_dir: Path,
     output_dir: Path,
     verbose: bool = False,
@@ -117,3 +123,67 @@ def process(
         f"[adcp] Processed {len(raw_files)} file(s) → {output_dir} "
         f"({processor.elapsed_time():.1f}s)"
     )
+
+
+def process_file(
+    raw_path: Path | str,
+    transducer_depth: float = 7.0,
+    ensemble_interval: float = 120.0,
+    corr_threshold: int = 64,
+) -> pd.DataFrame:
+    """Process a single RDI ADCP ``.raw`` file into a flat DataFrame.
+
+    Full pipeline: read → beam→earth → ensemble average → flatten.
+
+    Parameters
+    ----------
+    raw_path : Path or str
+        Path to the ``.raw`` binary file.
+    transducer_depth : float
+        Transducer depth below surface in metres.
+    ensemble_interval : float
+        Averaging interval in seconds.
+    corr_threshold : int
+        Minimum beam-averaged correlation (0–255).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per (ensemble, depth cell) with columns: ``time``,
+        ``depth``, ``u``, ``v``, ``w``, ``amp``, ``heading``,
+        ``temperature``, ``num_pings``.
+    """
+    from .rdi_reader import read_rdi
+    from .transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+    raw_path = Path(raw_path)
+    raw_ds = read_rdi(raw_path)
+
+    n_pings = raw_ds.sizes["time"]
+    n_bins = raw_ds.sizes["range"]
+    freq = raw_ds.attrs.get("freq", "?")
+    logger.info(
+        "ADCP: %s — %d pings, %d bins, %s kHz, coord_sys=%s",
+        raw_path.name, n_pings, n_bins, freq,
+        raw_ds.attrs.get("coord_sys", "?"),
+    )
+
+    earth_ds = beam_to_earth(
+        raw_ds,
+        transducer_depth=transducer_depth,
+        corr_threshold=corr_threshold,
+    )
+
+    avg_ds = ensemble_average(earth_ds, interval_seconds=ensemble_interval)
+
+    logger.info(
+        "ADCP: %d ensembles at %ds interval",
+        avg_ds.sizes["time"], int(ensemble_interval),
+    )
+
+    df = adcp_to_dataframe(avg_ds)
+    logger.info(
+        "ADCP flattened: %d ensembles × %d depth cells = %d rows",
+        avg_ds.sizes["time"], avg_ds.sizes["depth_cell"], len(df),
+    )
+    return df

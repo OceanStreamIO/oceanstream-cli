@@ -323,3 +323,118 @@ class TestReferenceValidation:
                 f"Median velocity profile |correlation| {median_corr:.3f} "
                 "is too low — transform may be incorrect"
             )
+
+
+# ---------------------------------------------------------------------------
+# adcp_to_dataframe tests
+# ---------------------------------------------------------------------------
+class TestAdcpToDataframe:
+    """Tests for the adcp_to_dataframe flattening function."""
+
+    @requires_raw
+    def test_returns_dataframe(self):
+        import pandas as pd
+
+        from oceanstream.adcp.rdi_reader import read_rdi
+        from oceanstream.adcp.transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+        raw = read_rdi(_RAW_FILE)
+        earth = beam_to_earth(raw, transducer_depth=7.0)
+        avg = ensemble_average(earth, interval_seconds=120.0)
+
+        df = adcp_to_dataframe(avg)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+    @requires_raw
+    def test_row_count(self):
+        from oceanstream.adcp.rdi_reader import read_rdi
+        from oceanstream.adcp.transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+        raw = read_rdi(_RAW_FILE)
+        earth = beam_to_earth(raw, transducer_depth=7.0)
+        avg = ensemble_average(earth, interval_seconds=120.0)
+
+        df = adcp_to_dataframe(avg)
+        expected = avg.sizes["time"] * avg.sizes["depth_cell"]
+        assert len(df) == expected
+
+    @requires_raw
+    def test_has_required_columns(self):
+        from oceanstream.adcp.rdi_reader import read_rdi
+        from oceanstream.adcp.transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+        raw = read_rdi(_RAW_FILE)
+        earth = beam_to_earth(raw, transducer_depth=7.0)
+        avg = ensemble_average(earth, interval_seconds=120.0)
+
+        df = adcp_to_dataframe(avg)
+        for col in ("time", "depth", "u", "v", "w", "amp", "heading", "temperature", "num_pings"):
+            assert col in df.columns, f"Missing column: {col}"
+
+    @requires_raw
+    def test_depth_values_positive(self):
+        from oceanstream.adcp.rdi_reader import read_rdi
+        from oceanstream.adcp.transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+        raw = read_rdi(_RAW_FILE)
+        earth = beam_to_earth(raw, transducer_depth=7.0)
+        avg = ensemble_average(earth, interval_seconds=120.0)
+
+        df = adcp_to_dataframe(avg)
+        assert (df["depth"] > 0).all()
+
+    @requires_raw
+    def test_time_is_utc(self):
+        from oceanstream.adcp.rdi_reader import read_rdi
+        from oceanstream.adcp.transforms import adcp_to_dataframe, beam_to_earth, ensemble_average
+
+        raw = read_rdi(_RAW_FILE)
+        earth = beam_to_earth(raw, transducer_depth=7.0)
+        avg = ensemble_average(earth, interval_seconds=120.0)
+
+        df = adcp_to_dataframe(avg)
+        assert df["time"].dt.tz is not None
+
+
+# ---------------------------------------------------------------------------
+# process_file tests
+# ---------------------------------------------------------------------------
+class TestProcessFile:
+    """Tests for the high-level process_file function."""
+
+    @requires_raw
+    def test_returns_nonempty_dataframe(self):
+        import pandas as pd
+
+        from oceanstream.adcp.processor import process_file
+
+        df = process_file(_RAW_FILE)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+    @requires_raw
+    def test_velocity_range_sane(self):
+        from oceanstream.adcp.processor import process_file
+
+        df = process_file(_RAW_FILE)
+        for col in ("u", "v"):
+            valid = df[col].dropna()
+            assert len(valid) > 0, f"No valid {col} velocities"
+            assert valid.abs().max() < 30.0, f"{col} max velocity unreasonably high"
+
+    @requires_raw
+    def test_temperature_sane(self):
+        from oceanstream.adcp.processor import process_file
+
+        df = process_file(_RAW_FILE)
+        temp = df["temperature"].dropna()
+        assert 0 < temp.mean() < 35, f"Mean temp {temp.mean()} outside expected range"
+
+    @requires_raw
+    def test_depth_range(self):
+        from oceanstream.adcp.processor import process_file
+
+        df = process_file(_RAW_FILE)
+        assert df["depth"].max() > 100
+        assert df["depth"].min() > 0

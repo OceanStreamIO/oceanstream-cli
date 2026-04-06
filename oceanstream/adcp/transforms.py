@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    import pandas as pd
     import xarray as xr
 
 
@@ -67,7 +68,6 @@ def beam_to_earth(
 
     # Step 3: QC — mask bins with low correlation
     corr = ds["corr"].values  # (beam=4, range, time), uint8
-    mean_corr = corr.mean(axis=0)  # (range, time)
     good_beams = (corr >= corr_threshold).sum(axis=0)  # (range, time)
     n_beams = corr.shape[0]
     bad_mask = (good_beams / n_beams) < pg_threshold
@@ -203,6 +203,11 @@ def ensemble_average(
                 np.array(results["v"], dtype=np.float32).reshape(n_ens, n_range),
                 {"units": "meter second-1", "long_name": "Meridional velocity component"},
             ),
+            "w": (
+                ["time", "depth_cell"],
+                np.array(results["w"], dtype=np.float32).reshape(n_ens, n_range),
+                {"units": "meter second-1", "long_name": "Vertical velocity component"},
+            ),
             "amp": (
                 ["time", "depth_cell"],
                 np.array(results["amp_mean"], dtype=np.float32).reshape(n_ens, n_range),
@@ -238,3 +243,49 @@ def ensemble_average(
         },
     )
     return out
+
+
+def adcp_to_dataframe(avg_ds: xr.Dataset) -> "pd.DataFrame":
+    """Flatten an ensemble-averaged ADCP dataset to a tabular DataFrame.
+
+    One row per (time, depth_cell) combination.  Suitable for writing
+    as GeoParquet.
+
+    Parameters
+    ----------
+    avg_ds : xr.Dataset
+        Ensemble-averaged dataset from :func:`ensemble_average`.
+
+    Returns
+    -------
+    pd.DataFrame
+        Flat DataFrame with columns: ``time``, ``depth``, ``u``, ``v``,
+        ``w``, ``amp``, ``heading``, ``temperature``, ``num_pings``.
+    """
+    import pandas as pd
+
+    rows = []
+    times = avg_ds["time"].values
+    depths = avg_ds["depth"].values
+
+    for t_idx in range(avg_ds.sizes["time"]):
+        t_val = pd.Timestamp(times[t_idx], tz="UTC")
+        heading = float(avg_ds["heading"].values[t_idx])
+        temp = float(avg_ds["tr_temp"].values[t_idx])
+        n_pings = int(avg_ds["num_pings"].values[t_idx])
+
+        for d_idx in range(avg_ds.sizes["depth_cell"]):
+            depth_val = float(depths[t_idx, d_idx]) if depths.ndim == 2 else float(depths[d_idx])
+            rows.append({
+                "time": t_val,
+                "depth": depth_val,
+                "u": float(avg_ds["u"].values[t_idx, d_idx]),
+                "v": float(avg_ds["v"].values[t_idx, d_idx]),
+                "w": float(avg_ds["w"].values[t_idx, d_idx]),
+                "amp": float(avg_ds["amp"].values[t_idx, d_idx]),
+                "heading": heading,
+                "temperature": temp,
+                "num_pings": n_pings,
+            })
+
+    return pd.DataFrame(rows)
