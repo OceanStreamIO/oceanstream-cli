@@ -228,10 +228,13 @@ def _connection_string() -> str:
 
 
 def _open_azure_zarr(zarr_path: str, container: str) -> xr.Dataset:
-    """Open a zarr store from Azure Blob Storage (lazy)."""
-    conn_str = _connection_string()
-    store = f"az://{container}/{zarr_path}"
-    return xr.open_zarr(store, storage_options={"connection_string": conn_str}, chunks=CHUNKS)
+    """Open a zarr store — local disk if patched, otherwise Azure Blob.
+
+    Routes through ``oceanstream.echodata.storage.open_sv_from_azure``
+    so that ``local_storage.patch_storage()`` is respected.
+    """
+    from oceanstream.echodata.storage import open_sv_from_azure
+    return open_sv_from_azure(zarr_path, container=container, chunks=CHUNKS)
 
 
 def _save_to_azure(ds: xr.Dataset, zarr_path: str, container: str) -> None:
