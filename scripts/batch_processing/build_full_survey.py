@@ -1583,11 +1583,45 @@ def plot_combined_echogram(
 # List existing denoised zarrs (for --skip-denoise / --resume)
 # ---------------------------------------------------------------------------
 
+_DENOISED_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2})--(\w+)--denoised\.zarr$"
+)
+
+
+def _list_denoised_local(local_root: Path) -> list[tuple[str, str, str]]:
+    """Scan local disk for denoised zarr directories."""
+    results: list[tuple[str, str, str]] = []
+    for day_dir in sorted(local_root.iterdir()):
+        if not day_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}$", day_dir.name):
+            continue
+        for item in day_dir.iterdir():
+            m = _DENOISED_RE.match(item.name)
+            if m and item.is_dir():
+                day_key = m.group(1)
+                category = m.group(2)
+                zarr_path = f"{day_key}/{item.name}"
+                results.append((day_key, category, zarr_path))
+    results.sort()
+    return results
+
+
 def list_denoised_zarrs(container: str) -> list[tuple[str, str, str]]:
-    """List denoised zarr paths from the output container.
+    """List denoised zarr paths from local disk or Azure.
 
     Returns sorted list of (day_key, category, zarr_path).
+    Checks local disk first (if local_storage is patched), then falls
+    back to Azure Blob.
     """
+    # Try local disk first
+    try:
+        from local_storage import _OUTPUT_ROOT
+        local_root = _OUTPUT_ROOT / container
+        if local_root.exists():
+            return _list_denoised_local(local_root)
+    except ImportError:
+        pass
+
+    # Fall back to Azure Blob
     from azure.storage.blob import ContainerClient
 
     conn_str = _connection_string()
