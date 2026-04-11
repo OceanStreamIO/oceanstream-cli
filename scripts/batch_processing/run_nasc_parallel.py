@@ -132,10 +132,18 @@ def _compute_one_nasc(args: tuple[str, str, str, str, int]) -> tuple[str, str, b
 
         if not has_depth:
             ds.close()
-            return (day_key, category, False, "No depth variable")
+            return (day_key, category, False, "No depth variable — skipped")
         if not (has_lat and has_lon):
             ds.close()
-            return (day_key, category, False, "No lat/lon variables")
+            return (day_key, category, False, "No lat/lon variables — skipped")
+
+        # Check for all-NaN GPS (common in some pulse modes where GPS
+        # wasn't merged during denoising)
+        lat_var = ds["latitude"] if "latitude" in ds.data_vars else ds.coords["latitude"]
+        n_valid = int(np.count_nonzero(~np.isnan(lat_var.values.ravel())))
+        if n_valid == 0:
+            ds.close()
+            return (day_key, category, False, "All lat/lon are NaN — skipped")
 
         wlog.info("Computing NASC (range_bin=%s, dist_bin=%s)...", NASC_RANGE_BIN, NASC_DIST_BIN)
 
@@ -275,6 +283,7 @@ def main() -> None:
 
     completed = 0
     failed = 0
+    skipped = 0
     t_start = time.time()
 
     with ProcessPoolExecutor(max_workers=args.workers, mp_context=ctx) as executor:
@@ -289,17 +298,19 @@ def main() -> None:
                 rday, rcat, success, msg = future.result()
                 if success:
                     completed += 1
+                elif "skipped" in msg.lower():
+                    skipped += 1
                 else:
                     failed += 1
                 elapsed = time.time() - t_start
-                rate = completed / elapsed if elapsed > 0 else 0
-                remaining = len(tasks) - completed - failed
+                rate = (completed + skipped + failed) / elapsed if elapsed > 0 else 0
+                remaining = len(tasks) - completed - failed - skipped
                 eta_s = remaining / rate if rate > 0 else 0
                 eta_m = eta_s / 60
 
                 log.info(
-                    "[%d/%d done, %d failed] %s/%s: %s  (ETA: %.0f min)",
-                    completed, len(tasks), failed, rday, rcat, msg, eta_m,
+                    "[%d done, %d skip, %d fail / %d] %s/%s: %s  (ETA: %.0f min)",
+                    completed, skipped, failed, len(tasks), rday, rcat, msg, eta_m,
                 )
             except Exception as e:
                 failed += 1
@@ -307,8 +318,8 @@ def main() -> None:
 
     total_time = time.time() - t_start
     log.info(
-        "NASC parallel complete: %d/%d succeeded, %d failed in %.1f min",
-        completed, len(tasks), failed, total_time / 60,
+        "NASC parallel complete: %d succeeded, %d skipped, %d failed (of %d) in %.1f min",
+        completed, skipped, failed, len(tasks), total_time / 60,
     )
 
 
