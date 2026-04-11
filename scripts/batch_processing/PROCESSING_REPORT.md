@@ -374,10 +374,10 @@ azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
 |------|----------|-------|
 | Upload to Azure Blob | High | `azcopy sync` to `sd-tpos2023-full-v01` container |
 | 200 kHz campaign MVBS | Medium | Debug channel matching for short_pulse 200 kHz |
-| Per-day echograms | Low | `run_stages_9_to_13.py --stages 8` (was skipped) |
+| ~~Per-day echograms~~ | ~~Low~~ | ✅ 1,610 PNGs via `run_combine_daily.py` |
 | Fix 5 failed NASC zarrs | Low | Edge cases: NaN depth, zero distance, corrupt zarr |
 | Fix 34 NaN-GPS denoised | Low | Investigate GPS merge timing mismatch |
-| Deallocate VM | High | Auto-shutdown is OFF — deallocate when done to save costs |
+| ~~Deallocate VM~~ | ~~High~~ | ✅ Deallocated 11 Apr 2026 |
 
 ---
 
