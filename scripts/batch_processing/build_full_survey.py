@@ -1214,10 +1214,19 @@ def normalize_string_dtypes(ds: xr.Dataset) -> xr.Dataset:
     """Convert object / StringDType coords to fixed-length U strings."""
     for name in list(ds.coords) + list(ds.data_vars):
         arr = ds[name]
-        if arr.dtype == object or (hasattr(arr.dtype, "kind") and arr.dtype.kind == "T"):
+        dtype_kind = getattr(arr.dtype, "kind", "")
+        is_string = (
+            arr.dtype == object
+            or dtype_kind == "T"
+            or "string" in str(arr.dtype).lower()
+        )
+        if is_string:
             vals = arr.values
             if isinstance(vals, np.ndarray):
-                str_vals = vals.astype(str)
+                try:
+                    str_vals = vals.astype("U")
+                except (TypeError, ValueError):
+                    str_vals = np.array([str(v) for v in vals.flat], dtype="U").reshape(vals.shape)
                 if name in ds.coords:
                     ds = ds.assign_coords({name: (arr.dims, str_vals)})
                 else:
