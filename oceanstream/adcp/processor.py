@@ -4,7 +4,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -162,6 +164,74 @@ def process_ad2cp_file(
         ds.sizes["ping_time"],
         ds.sizes["range_sample"],
         ds.sizes["frequency"],
+    )
+    return df
+
+
+def process_ad2cp_velocity_file(
+    raw_path: Path | str,
+) -> pd.DataFrame:
+    """Process a Nortek AD2CP ``.ad2cp`` file with velocity data.
+
+    For files containing average-mode current velocity measurements
+    (no echosounder data).
+
+    Pipeline: read_ad2cp_velocity → flatten to DataFrame.
+
+    Parameters
+    ----------
+    raw_path : Path or str
+        Path to the ``.ad2cp`` binary file.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per (time, depth) with columns: ``time``, ``depth``,
+        ``velocity_beam0..N`` (m/s), ``amplitude_beam0..N``,
+        ``temperature``, ``pressure``, ``sound_speed``, ``heading``,
+        ``pitch``, ``roll``.
+    """
+    from .ad2cp_reader import read_ad2cp_velocity
+
+    import pandas as pd_
+
+    raw_path = Path(raw_path)
+    ds = read_ad2cp_velocity(raw_path)
+
+    n_times = ds.sizes["time"]
+    n_cells = ds.sizes["cell"]
+    n_beams = ds.sizes["beam"]
+
+    # Build time × cell grid using vectorized operations
+    times_rep = np.repeat(ds.time.values, n_cells)
+    depths_rep = np.tile(ds["depth"].values, n_times)
+
+    data: dict[str, Any] = {
+        "time": times_rep,
+        "depth": depths_rep,
+    }
+
+    # Per-ping scalars — repeat for each cell
+    for var in ("temperature", "pressure", "sound_speed", "heading", "pitch", "roll"):
+        data[var] = np.repeat(ds[var].values, n_cells)
+
+    # Velocity and amplitude per beam — reshape (time, cell, beam) → (time*cell, beam)
+    vel_flat = ds["velocity"].values.reshape(-1, n_beams)
+    amp_flat = ds["amplitude"].values.reshape(-1, n_beams)
+    for b in range(n_beams):
+        data[f"velocity_beam{b}"] = vel_flat[:, b]
+        data[f"amplitude_beam{b}"] = amp_flat[:, b]
+
+    df = pd_.DataFrame(data)
+    if "time" in df.columns:
+        df["time"] = pd_.to_datetime(df["time"], utc=True)
+
+    logger.info(
+        "AD2CP velocity processed: %s — %d rows (%d pings × %d cells)",
+        raw_path.name,
+        len(df),
+        ds.sizes["time"],
+        ds.sizes["cell"],
     )
     return df
 

@@ -73,6 +73,22 @@ class Ad2cpBottomTrack:
     beam_tilt_deg: float  # beam angle from vertical (°)
 
 
+@dataclass
+class Ad2cpAvgPing:
+    """A single average-mode velocity ping."""
+
+    time: np.datetime64
+    sound_speed: float
+    temperature: float
+    pressure: float
+    heading: float
+    pitch: float
+    roll: float
+    velocity: np.ndarray  # int16, shape (n_cells, n_beams), mm/s
+    amplitude: np.ndarray  # uint8, shape (n_cells, n_beams), counts
+    correlation: np.ndarray  # uint8, shape (n_cells, n_beams), %
+
+
 def _checksum(data: bytes) -> int:
     """Nortek AD2CP checksum: 0xB58C + sum of 16-bit LE words."""
     cs = 0xB58C
@@ -219,6 +235,216 @@ def _parse_bt_data_record(
         beam_tilt_deg=beam_tilt_deg,
     )
 
+def _parse_avg_data_record(data: bytes, n_cells: int, n_beams: int) -> Ad2cpAvgPing:
+    """Parse a single average-mode velocity data record payload.
+
+    Layout after the common header (``offset_of_data`` bytes):
+    - velocity: ``n_cells × n_beams`` int16 (mm/s)
+    - amplitude: ``n_cells × n_beams`` uint8 (counts × 0.5 dB)
+    - correlation: ``n_cells × n_beams`` uint8 (%)
+    """
+    offset_of_data = data[1]
+
+    year = data[8] + 1900
+    month = data[9] + 1
+    day = data[10]
+    hour = data[11]
+    minute = data[12]
+    sec = data[13]
+    microsec100 = struct.unpack_from("<H", data, 14)[0]
+    us = microsec100 * 100
+    time = np.datetime64(
+        f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{sec:02d}.{us:06d}"
+    )
+
+    sound_speed = struct.unpack_from("<H", data, 16)[0] * 0.1
+    temperature = struct.unpack_from("<h", data, 18)[0] * 0.01
+    pressure = struct.unpack_from("<I", data, 20)[0] * 0.001
+    heading = struct.unpack_from("<H", data, 24)[0] * 0.01
+    pitch = struct.unpack_from("<h", data, 26)[0] * 0.01
+    roll = struct.unpack_from("<h", data, 28)[0] * 0.01
+
+    payload = data[offset_of_data:]
+    vel_bytes = n_cells * n_beams * 2
+    amp_bytes = n_cells * n_beams
+
+    velocity = np.frombuffer(payload[:vel_bytes], dtype="<i2").reshape(n_cells, n_beams).copy()
+    amplitude = np.frombuffer(
+        payload[vel_bytes : vel_bytes + amp_bytes], dtype=np.uint8
+    ).reshape(n_cells, n_beams).copy()
+    correlation = np.frombuffer(
+        payload[vel_bytes + amp_bytes : vel_bytes + 2 * amp_bytes], dtype=np.uint8
+    ).reshape(n_cells, n_beams).copy()
+
+    return Ad2cpAvgPing(
+        time=time,
+        sound_speed=sound_speed,
+        temperature=temperature,
+        pressure=pressure,
+        heading=heading,
+        pitch=pitch,
+        roll=roll,
+        velocity=velocity,
+        amplitude=amplitude,
+        correlation=correlation,
+    )
+
+
+def read_ad2cp_velocity(path: Path | str) -> "xr.Dataset":
+    """Read average-mode velocity data from a Nortek ``.ad2cp`` file.
+
+    Parameters
+    ----------
+    path : Path or str
+        Path to the ``.ad2cp`` binary file.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with dimensions ``(time, cell, beam)`` and variables:
+
+        - ``velocity``: int16 (mm/s)
+        - ``amplitude``: uint8 (counts × 0.5 dB)
+        - ``correlation``: uint8 (%)
+        - ``sound_speed``, ``temperature``, ``pressure``: per-ping
+        - ``heading``, ``pitch``, ``roll``: per-ping orientation
+
+        Coordinates include ``depth`` (m) computed from blanking + cell_size.
+    """
+    import xarray as xr
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"AD2CP file not found: {path}")
+
+    config: Ad2cpConfig | None = None
+    avg_pings: list[Ad2cpAvgPing] = []
+    bt_records: list[Ad2cpBottomTrack] = []
+
+    # First pass: extract config to get n_cells, n_beams
+    n_cells = 0
+    n_beams = 4
+    cell_size = 0.0
+    blanking = 0.0
+
+    with open(path, "rb") as f:
+        file_size = f.seek(0, 2)
+        f.seek(0)
+
+        while f.tell() < file_size - 10:
+            pos = f.tell()
+            hdr = f.read(10)
+            if len(hdr) < 10 or hdr[0] != _SYNC_BYTE:
+                break
+
+            hdr_size = hdr[1]
+            id_byte = hdr[2]
+
+            if id_byte in (0x23, 0x24):
+                f.seek(pos)
+                hdr = f.read(12)
+                if len(hdr) < 12:
+                    break
+                data_size = struct.unpack_from("<I", hdr, 4)[0]
+            else:
+                data_size = struct.unpack_from("<H", hdr, 4)[0]
+
+            data = f.read(data_size)
+            if len(data) < data_size:
+                break
+
+            if id_byte == _ID_STRING:
+                text = data.decode("ascii", errors="replace")
+                config = _parse_config(text)
+                # Parse GETAVG line for n_cells, n_beams, cell_size, blanking
+                for line in text.split("\n"):
+                    line = line.strip("\r\n\x00 ")
+                    if line.startswith("GETAVG"):
+                        for token in line.split(","):
+                            if "=" not in token:
+                                continue
+                            k, v = token.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"')
+                            if k == "NC":
+                                n_cells = int(v)
+                            elif k == "NB":
+                                n_beams = int(v)
+                            elif k == "CS":
+                                cell_size = float(v)
+                            elif k == "BD":
+                                blanking = float(v)
+
+            elif id_byte == _ID_AVERAGE and n_cells > 0:
+                avg_pings.append(_parse_avg_data_record(data, n_cells, n_beams))
+
+            elif id_byte == _ID_BOTTOM_TRACK:
+                bt_records.append(_parse_bt_data_record(data))
+
+    if config is None:
+        config = Ad2cpConfig()
+
+    if not avg_pings:
+        raise ValueError(
+            f"No average velocity data found in {path.name}. "
+            "File may contain only echosounder data."
+        )
+
+    n_pings = len(avg_pings)
+
+    # Build depth coordinate
+    depth = blanking + np.arange(n_cells) * cell_size
+
+    # Assemble arrays
+    times = np.array([p.time for p in avg_pings])
+    velocity = np.stack([p.velocity for p in avg_pings])  # (n_pings, n_cells, n_beams)
+    amp = np.stack([p.amplitude for p in avg_pings])
+    corr = np.stack([p.correlation for p in avg_pings])
+    ss = np.array([p.sound_speed for p in avg_pings], dtype=np.float32)
+    temp = np.array([p.temperature for p in avg_pings], dtype=np.float32)
+    pres = np.array([p.pressure for p in avg_pings], dtype=np.float32)
+    hdg = np.array([p.heading for p in avg_pings], dtype=np.float32)
+    pit = np.array([p.pitch for p in avg_pings], dtype=np.float32)
+    rol = np.array([p.roll for p in avg_pings], dtype=np.float32)
+
+    ds = xr.Dataset(
+        {
+            "velocity": (["time", "cell", "beam"], velocity.astype(np.float32) / 1000.0,
+                         {"units": "m/s", "long_name": "Current velocity"}),
+            "amplitude": (["time", "cell", "beam"], amp,
+                          {"units": "counts", "long_name": "Echo amplitude (×0.5 dB)"}),
+            "correlation": (["time", "cell", "beam"], corr,
+                            {"units": "%", "long_name": "Signal correlation"}),
+            "sound_speed": ("time", ss, {"units": "m/s"}),
+            "temperature": ("time", temp, {"units": "°C"}),
+            "pressure": ("time", pres, {"units": "dbar"}),
+            "heading": ("time", hdg, {"units": "degrees"}),
+            "pitch": ("time", pit, {"units": "degrees"}),
+            "roll": ("time", rol, {"units": "degrees"}),
+        },
+        coords={
+            "time": times,
+            "depth": ("cell", depth),
+            "beam": np.arange(n_beams),
+        },
+        attrs={
+            "source_file": path.name,
+            "instrument_type": config.instrument_type,
+            "serial_number": config.serial_number,
+            "n_cells": n_cells,
+            "n_beams": n_beams,
+            "cell_size_m": cell_size,
+            "blanking_m": blanking,
+            "coord_sys": "beam",
+        },
+    )
+
+    logger.info(
+        "AD2CP velocity read: %s — %d pings, %d cells, %d beams",
+        path.name, n_pings, n_cells, n_beams,
+    )
+
+    return ds
 
 def read_ad2cp(path: Path | str) -> xr.Dataset:
     """Read a Nortek Signature ``.ad2cp`` file.
