@@ -271,10 +271,34 @@ def combine_mvbs_or_nasc(
         if len(items) == 1:
             freq_ds = items[0][1]
         else:
-            freq_ds = xr.concat(
-                [ds for _, ds in items], dim=concat_dim,
-                join="outer", fill_value=np.nan,
-            )
+            if concat_dim == "distance":
+                # NASC: each zarr has distance starting at 0.
+                # Sort items by their first ping_time, then offset distances
+                # so they form a continuous track.
+                sorted_items = sorted(
+                    items,
+                    key=lambda x: (
+                        x[1].ping_time.values[0]
+                        if "ping_time" in x[1].coords
+                        else x[0]  # mode_code as fallback
+                    ),
+                )
+                offset = 0.0
+                offset_datasets = []
+                for mc, ds_item in sorted_items:
+                    if offset > 0 and "distance" in ds_item.coords:
+                        ds_item = ds_item.assign_coords(
+                            distance=ds_item.distance.values + offset,
+                        )
+                    if "distance" in ds_item.coords:
+                        dvals = ds_item.distance.values
+                        offset = float(dvals.max()) + 0.5 if len(dvals) else offset
+                    offset_datasets.append(ds_item)
+                freq_ds = xr.concat(offset_datasets, dim=concat_dim)
+            else:
+                freq_ds = xr.concat(
+                    [ds for _, ds in items], dim=concat_dim,
+                )
         if concat_dim in freq_ds.coords:
             freq_ds = freq_ds.sortby(concat_dim)
 
