@@ -271,7 +271,10 @@ def combine_mvbs_or_nasc(
         if len(items) == 1:
             freq_ds = items[0][1]
         else:
-            freq_ds = xr.concat([ds for _, ds in items], dim=concat_dim)
+            freq_ds = xr.concat(
+                [ds for _, ds in items], dim=concat_dim,
+                join="outer", fill_value=np.nan,
+            )
         if concat_dim in freq_ds.coords:
             freq_ds = freq_ds.sortby(concat_dim)
 
@@ -289,7 +292,10 @@ def combine_mvbs_or_nasc(
     if len(freq_datasets) == 1:
         combined = freq_datasets[0]
     else:
-        combined = xr.concat(freq_datasets, dim="channel")
+        combined = xr.concat(
+            freq_datasets, dim="channel",
+            join="outer", fill_value=np.nan,
+        )
 
     # Build pulse_mode if we have ping_time
     if master_pulse and "ping_time" in combined.coords:
