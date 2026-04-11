@@ -313,6 +313,13 @@ def combine_mvbs_or_nasc(
 
         freq_datasets.append(freq_ds)
 
+    # Deduplicate ping_time (10s MVBS bins can overlap at pulse mode boundaries)
+    for i, fds in enumerate(freq_datasets):
+        if "ping_time" in fds.dims:
+            idx = fds.get_index("ping_time")
+            if idx.duplicated().any():
+                freq_datasets[i] = fds.sel(ping_time=~idx.duplicated())
+
     if len(freq_datasets) == 1:
         combined = freq_datasets[0]
     elif concat_dim == "distance":
