@@ -152,15 +152,41 @@ def _clear_encoding(ds: xr.Dataset) -> xr.Dataset:
 # Core: combine pulse modes for one day + one product
 # ---------------------------------------------------------------------------
 
+def _resolve_freq_label(freq_hz: float) -> str:
+    if np.isclose(freq_hz, FREQ_38KHZ, atol=100):
+        return "38kHz"
+    if np.isclose(freq_hz, FREQ_200KHZ, atol=100):
+        return "200kHz"
+    return f"{freq_hz/1000:.0f}kHz"
+
+
+def _channel_freq_label(ds: xr.Dataset, ch_idx: int) -> str:
+    """Get frequency label for a channel by index."""
+    if "frequency_nominal" in ds.coords or "frequency_nominal" in ds.data_vars:
+        return _resolve_freq_label(float(ds["frequency_nominal"].values[ch_idx]))
+    ch_name = str(ds.channel.values[ch_idx])
+    if "ES200" in ch_name or "200" in ch_name:
+        return "200kHz"
+    if "ES38" in ch_name or "38" in ch_name:
+        return "38kHz"
+    return ch_name
+
+
 def combine_mvbs_or_nasc(
     day: str,
     product: str,
     suffix: str,
     data_var: str,
 ) -> xr.Dataset | None:
-    """Combine MVBS or NASC zarrs (depth/distance already gridded)."""
+    """Combine MVBS or NASC zarrs (depth/distance already gridded).
+
+    Strategy: split each mode into per-frequency datasets, concat per-frequency
+    along ping_time, then merge frequencies back into one dataset.
+    """
     day_dir = BASE_DIR / day
-    datasets: list[xr.Dataset] = []
+
+    # Collect per-frequency data: freq_label → [(mode_code, ds_single_channel)]
+    per_freq: dict[str, list[tuple[int, xr.Dataset]]] = {}
 
     for mode in ["short_pulse", "long_pulse"]:
         zarr_path = day_dir / f"{day}--{mode}{suffix}.zarr"
@@ -176,61 +202,54 @@ def combine_mvbs_or_nasc(
                 ds.close()
                 continue
 
-            # Rename channels to frequency labels
-            if "frequency_nominal" in ds.coords or "frequency_nominal" in ds.data_vars:
-                freqs = ds["frequency_nominal"].values
-                new_labels = []
-                for f in freqs:
-                    if np.isclose(f, FREQ_38KHZ, atol=100):
-                        new_labels.append("38kHz")
-                    elif np.isclose(f, FREQ_200KHZ, atol=100):
-                        new_labels.append("200kHz")
-                    else:
-                        new_labels.append(f"{f/1000:.0f}kHz")
-                ds = ds.assign_coords(channel=("channel", new_labels))
-            else:
-                # Fallback: parse channel names
-                chans = ds.channel.values.astype(str)
-                new_labels = []
-                for ch in chans:
-                    if "ES200" in ch or "200" in ch:
-                        new_labels.append("200kHz")
-                    elif "ES38" in ch or "38" in ch:
-                        new_labels.append("38kHz")
-                    else:
-                        new_labels.append(ch)
-                ds = ds.assign_coords(channel=("channel", new_labels))
-
-            # Add pulse_mode variable
             n_pings = ds.sizes.get("ping_time", 0)
             if n_pings == 0:
                 ds.close()
                 continue
-            mode_code = 0 if mode == "long_pulse" else 1
-            ds["pulse_mode"] = xr.DataArray(
-                np.full(n_pings, mode_code, dtype=np.int8),
-                dims=["ping_time"],
-            )
 
-            datasets.append(ds)
+            mode_code = 0 if mode == "long_pulse" else 1
+            n_channels = ds.sizes.get("channel", 1)
+
+            for ch_idx in range(n_channels):
+                freq_label = _channel_freq_label(ds, ch_idx)
+                ds_ch = ds.isel(channel=[ch_idx])
+                ds_ch = ds_ch.assign_coords(channel=("channel", [freq_label]))
+                ds_ch["pulse_mode"] = xr.DataArray(
+                    np.full(n_pings, mode_code, dtype=np.int8),
+                    dims=["ping_time"],
+                )
+                ds_ch = _clear_encoding(ds_ch)
+                per_freq.setdefault(freq_label, []).append((mode_code, ds_ch))
+
         except Exception as e:
             log.warning("  %s/%s: error loading %s: %s", day, mode, product, e)
 
-    if not datasets:
+    if not per_freq:
         return None
 
-    if len(datasets) == 1:
-        combined = datasets[0]
-    else:
-        # Both pulse modes may have 38kHz channel — concat along ping_time
-        # 200kHz only exists in short_pulse — xarray auto-fills with NaN
-        combined = xr.concat(datasets, dim="ping_time")
+    # Concat per-frequency along ping_time, then merge across frequencies
+    freq_datasets: list[xr.Dataset] = []
 
-    combined = combined.sortby("ping_time")
+    for freq_label in sorted(per_freq.keys()):
+        items = per_freq[freq_label]
+        if len(items) == 1:
+            freq_ds = items[0][1]
+        else:
+            freq_ds = xr.concat([ds for _, ds in items], dim="ping_time")
+        freq_ds = freq_ds.sortby("ping_time")
+        freq_datasets.append(freq_ds)
+
+    if len(freq_datasets) == 1:
+        combined = freq_datasets[0]
+    else:
+        combined = xr.concat(freq_datasets, dim="channel")
+
     combined.attrs["combined_pulse_modes"] = "short_pulse+long_pulse"
 
-    for ds in datasets:
-        ds.close()
+    # Cleanup
+    for items in per_freq.values():
+        for _, ds_ch in items:
+            ds_ch.close()
     return combined
 
 

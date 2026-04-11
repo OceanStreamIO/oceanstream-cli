@@ -1,0 +1,373 @@
+# Saildrone TPOS 2023 — Full Survey Processing Report
+
+**Campaign**: Saildrone TPOS 2023 (Tropical Pacific Observing System)  
+**Date range**: 2023-05-30 to 2023-11-05 (160 days, 141 with EK80 data)  
+**Processed**: 11 April 2026  
+**Branch**: `feat/batch_processing`  
+
+---
+
+## 1. Infrastructure
+
+| Resource | Details |
+|----------|---------|
+| **VM** | `oceanstream-batch-spot` (Standard_E48ds_v6) |
+| **CPU** | 48 vCPU — Intel Xeon Platinum 8573C |
+| **RAM** | 384 GB |
+| **Data Disk** | 1 TB Premium SSD (`oceanstream-batch-spot-data-disk`) |
+| **Location** | North Europe (`northeurope`) |
+| **Resource Group** | `ne1-saildrone1-rg` |
+| **Public IP** | `20.223.137.44` |
+| **SSH** | `ssh oceanstream@20.223.137.44` |
+| **Storage Account** | `ne1osvmdevtest` |
+| **Raw Data Source** | Azure File Share `saildroneraw/DATA` |
+| **GPS Source** | Azure Blob container `gpsdata` |
+
+### Disk Usage (as of completion)
+
+| Area | Size |
+|------|------|
+| Raw Sv zarrs | 193 GB |
+| Denoised zarrs | 91 GB |
+| MVBS zarrs | 9 GB |
+| Campaign MVBS combined | 8.9 GB |
+| NASC zarrs | 44 MB |
+| Converted echodata | 5 GB |
+| Campaign echograms | 593 MB |
+| Tiles + GeoJSON + Heatmaps | 4 MB |
+| **Total used** | **314 GB / 1 TB** |
+
+---
+
+## 2. Processing Pipeline Overview
+
+The pipeline (`scripts/batch_processing/build_full_survey.py`) has **13 stages**:
+
+```
+Stage 1:  Discover raw EK80 files from Azure File Share
+Stage 2:  Download raw files to local disk
+Stage 3:  Convert raw EK80 → echopype EchoData (zarr)
+Stage 4:  Compute Sv (volume backscattering strength)
+Stage 5:  Calibrate + Enrich (env variables, GPS merge)
+Stage 6:  Denoise (4-stage: background, impulse, attenuation, transient)
+Stage 7:  Per-day MVBS + NASC
+Stage 8:  Per-day echograms (skipped — see notes)
+Stage 9:  Campaign combined MVBS zarr
+Stage 10: Campaign echograms (4 segments × 3 colormaps)
+Stage 11: Echodata PMTiles (vector tiles for map viz)
+Stage 12: NASC Biomass GeoJSON (depth-frequency merged points)
+Stage 13: NASC Heatmap COGs (raster overlays + PNG previews)
+```
+
+### Key Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `build_full_survey.py` | Main 13-stage pipeline (~2900 lines) |
+| `run_nasc_parallel.py` | Fast parallel NASC via numpy (replaced stage 7 NASC) |
+| `run_stages_9_to_13.py` | Standalone post-processing (stages 9–13 without re-running 1–8) |
+| `local_storage.py` | Monkey-patches Azure storage calls to local disk I/O |
+
+---
+
+## 3. Stage-by-Stage Results
+
+### Stage 1–2: Discovery & Download
+
+- **277 raw EK80 files** discovered on Azure File Share
+- Files grouped into **141 day directories** (2023-05-30 to 2023-11-05)
+- Two pulse modes per day: **short_pulse** (38+200 kHz) and **long_pulse** (38 kHz)
+
+### Stage 3: Convert Raw → EchoData
+
+- **141 converted echodata zarrs** (one per day)
+- Sonar model: EK80, CW waveform, complex encoding
+- Stored in `/mnt/data/output/echodata/`
+
+### Stage 4: Compute Sv
+
+- **277 raw Sv zarrs** (137 short_pulse + 140 long_pulse)
+- Typical shape: `(channels=2, ping_time=~15000-32000, range_sample=~3600-7200)`
+- Stored as `{day}/{day}--{pulse_mode}.zarr`
+
+### Stage 5–6: Calibrate + Enrich + Denoise
+
+- **268 denoised zarrs** (132 short_pulse + 136 long_pulse)
+- 9 raw zarrs had no matching GPS or failed calibration → skipped
+- 4-stage denoising: background noise removal → impulse noise → attenuation correction → transient removal
+- GPS (latitude/longitude) merged from `gpsdata` container into denoised datasets
+- Stored as `{day}/{day}--{pulse_mode}--denoised.zarr`
+
+**GPS coverage issue**: 34 denoised zarrs have all-NaN GPS coordinates. These are consistently one pulse mode per affected day — the GPS merge succeeded for one mode but not the other (likely timing mismatch between GPS timestamps and sonar ping times for the alternate pulse mode).
+
+### Stage 7: Per-day MVBS
+
+- **261 MVBS zarrs** (+ 261 NetCDF copies)
+- Bins: `range_bin=1m`, `ping_time_bin=10s`
+- Computed with `echopype.commongrid.compute_MVBS()`
+- Stored as `{day}/{day}--{pulse_mode}--mvbs.zarr` and `.nc`
+
+### Stage 7 (NASC): Per-day NASC — Fast Vectorized
+
+**Original approach** (echopype `compute_NASC`): ~90 GB RAM, 15–60 min per zarr. Only 5 zarrs completed before the pipeline was killed due to stalled computation.
+
+**Replacement** (`run_nasc_parallel.py`): Pure numpy + haversine + `np.bincount`. ~7 GB per worker, 1–17 seconds per zarr. **~600× faster.**
+
+- **229 NASC zarrs** (+ 229 NetCDF copies)
+  - 109 short_pulse + 120 long_pulse
+- Bins: `range_bin=10m`, `dist_bin=0.5nmi`
+- **222 computed in 2 minutes** (10 parallel workers)
+- 34 skipped (all-NaN GPS), 5 failed (see §4)
+- Stored as `{day}/{day}--{pulse_mode}--nasc.zarr` and `.nc`
+
+### Stage 8: Per-day Echograms — SKIPPED
+
+Skipped with `--skip-perday-echograms` to prioritise campaign-level products. Can be generated later with `run_stages_9_to_13.py`.
+
+### Stage 9: Campaign Combined MVBS
+
+- **1 combined zarr**: `campaign_mvbs_combined_38kHz.zarr` (8.9 GB)
+- 38 kHz frequency only (200 kHz was skipped — see §4)
+- Concatenates all per-day MVBS zarrs along `ping_time`
+- Stored at `/mnt/data/output/campaign_mvbs_combined_38kHz.zarr`
+
+### Stage 10: Campaign Echograms
+
+- **12 PNG files** (593 MB total)
+- 4 temporal segments × 3 colormaps (`jet`, `ocean_r`, `ek500`)
+- Segment breaks at gaps > 30 minutes
+- Coverage: full campaign at 38 kHz
+- Stored in `/mnt/data/output/campaign_echograms/`
+
+### Stage 11: Echodata PMTiles
+
+- **1 PMTiles file**: `saildrone_tpos_2023_echodata.pmtiles` (1.3 MB)
+- 141 track features (LineStrings), one per day
+- Built with tippecanoe v2.49 (zooms 0–14, no simplification)
+- Layer name: `echodata`
+- Also: source GeoJSON (690 KB)
+- Stored in `/mnt/data/output/tiles/`
+
+### Stage 12: NASC Biomass GeoJSON
+
+- **6,135 point features** in `saildrone_tpos_2023.geojson` (1.5 MB)
+- Coverage: 132 unique days (2023-05-30 to 2023-11-05)
+- Depth-frequency merge strategy:
+  - 200 kHz: sum NASC over 10–150 m (shallow, reliable)
+  - 38 kHz: sum NASC over 150–500 m (deep, where 200 kHz is noise)
+  - `nasc_combined` = shallow + deep
+- Outlier capping at P99 (61 values capped)
+- Orphan points in sparse 1° bins removed (4 points)
+- NASC combined range: 2 – 65,596,384 m² nmi⁻²
+- Stored in `/mnt/data/output/nasc_biomass/`
+
+### Stage 13: NASC Heatmap COGs
+
+- **3 Cloud-Optimised GeoTIFFs** + **3 PNG previews** + `manifest.json`
+- Variables: `nasc_combined` (YlOrRd), `nasc_38` (Blues), `nasc_200` (Greens)
+- Grid: 0.5° resolution, scipy griddata interpolation, cKDTree search radius 0.5°
+- Stored in `/mnt/data/output/heatmaps/`
+
+---
+
+## 4. Issues Found and Fixed
+
+### Issue 1: Disk Full at 256 GB
+
+**Problem**: The initial 256 GB data disk filled to 100% during stage 6 (denoising), triggering VM auto-shutdown at 01:10 UTC.
+
+**Fix**: Deallocated VM → resized data disk from 256 GB to **1 TB** (`az disk update --size-gb 1024`) → restarted VM → `sudo growpart /dev/nvme0n2 1 && sudo resize2fs /dev/nvme0n2p1`.
+
+### Issue 2: NASC Computation Prohibitively Slow
+
+**Problem**: `echopype.commongrid.compute_NASC` with `dist_bin=0.5nmi` consumed ~90 GB RAM and 15–60 minutes per zarr, even with `scheduler="synchronous"`. At 263 zarrs × 40 min = ~175 hours (7+ days).
+
+**Fix**: Wrote `run_nasc_parallel.py` using pure numpy vectorised operations:
+- Haversine cumulative distance for horizontal binning
+- `np.bincount` for (distance × depth) 2D aggregation
+- Eager loading (`chunks=None`) — no dask graph overhead
+- Result: **1–17 seconds per zarr, ~7 GB RAM** per worker. 222 zarrs in 2 minutes.
+
+**Commit**: `06b4fc9` — `feat(batch): fast vectorized NASC — numpy bincount replaces echopype`
+
+### Issue 3: numpy 2.x StringDType Crash
+
+**Problem**: Stage 9 (`normalize_string_dtypes`) failed with `TypeError: cannot cast dtype StringDType()` — numpy 2.x introduced `StringDType()` which doesn't support `.astype(str)`.
+
+**Fix**: Changed to `.astype("U")` with fallback `np.array([str(v) for v in vals.flat])`.
+
+**Commit**: `519c302` — `fix: normalize_string_dtypes — handle numpy 2.x StringDType`
+
+### Issue 4: GPS Not Found in Denoised Zarrs
+
+**Problem**: Stage 11 (PMTiles) found zero track features. `_extract_track_from_local_zarr()` checked `ds.coords` for lat/lon, but echopype stores GPS data in `ds.data_vars`, not `ds.coords`. Also, raw Sv zarrs don't have GPS merged — only denoised zarrs do.
+
+**Fix**: Check both `ds.data_vars` and `ds.coords`; prefer denoised zarrs (which have GPS).
+
+**Commit**: `dbb588f` — `fix(batch): stages 11-12 — look for lat/lon in data_vars, prefer denoised zarrs`
+
+### Issue 5: NASC Channel Name Parsing
+
+**Problem**: Stage 12 tried `float(channel_name)` on strings like `'EKA 266972-07 ES38-18|200-18C'`, causing failures. echopype uses full instrument serial/frequency strings, not numeric Hz values.
+
+**Fix**: Try `float()` first, fall back to substring parsing (`ES38` → 38 kHz, `ES200` → 200 kHz).
+
+**Commit**: `be0b8fc` — `fix(batch): NASC channel detection — handle string channel names`
+
+### Issue 6: `_open_azure_zarr` Bypassing Local Storage Patch
+
+**Problem**: Early pipeline runs called `xr.open_zarr()` directly instead of routing through `open_sv_from_azure()`, bypassing the `local_storage.patch_storage()` monkey-patch. Dataset loads silently fell back to Azure (which didn't have the data yet).
+
+**Fix**: Updated `_open_azure_zarr` to use `open_sv_from_azure()` from storage module.
+
+**Commit**: `a1e577e` — `fix: list_denoised_zarrs scans local disk when local_storage is patched`
+
+### Issue 7: 200 kHz Campaign MVBS — No Data
+
+**Status**: **Unresolved**. Stage 9 for 200 kHz reported "no data". 200 kHz is only present in short_pulse mode. The `select_frequency()` channel matching may not be handling the EK80 channel name format (`'EKA 266972-07 ES200-18C'` instead of `200000.0`). Does not affect 38 kHz products.
+
+### Issue 8: 34 Denoised Zarrs with All-NaN GPS
+
+**Status**: **Known limitation**. GPS merge during enrichment step fails for one pulse mode on certain days. The GPS timestamps don't align with the sonar ping times for the alternate pulse mode. These zarrs are excluded from NASC computation and PMTiles.
+
+**Affected**: Consistently alternates between `short_pulse` and `long_pulse` per day. Most common in June–August. 34 of 268 denoised zarrs (~13%).
+
+### Issue 9: 5 NASC Computation Failures
+
+| Day/Mode | Error | Root Cause |
+|----------|-------|------------|
+| 2023-06-26/long_pulse | `arange: cannot compute length` | NaN depth values → invalid depth edges |
+| 2023-07-16/short_pulse | `No valid distances` | GPS valid but all at same point → 0 distance |
+| 2023-07-27/short_pulse | `arange: cannot compute length` | Same as above |
+| 2023-07-31/short_pulse | `arange: cannot compute length` | Same as above |
+| 2023-10-02/long_pulse | `No variable named 'Sv'` | Corrupted denoised zarr (only metadata vars) |
+
+---
+
+## 5. Data Storage & Access
+
+### All data is currently on the VM local disk
+
+```
+/mnt/data/output/
+├── sd-tpos2023-full-v01/           # 300 GB — per-day products
+│   ├── 2023-05-30/
+│   │   ├── 2023-05-30--short_pulse.zarr          # raw Sv
+│   │   ├── 2023-05-30--short_pulse--denoised.zarr # denoised Sv
+│   │   ├── 2023-05-30--short_pulse--mvbs.zarr     # MVBS
+│   │   ├── 2023-05-30--short_pulse--mvbs.nc       # MVBS (NetCDF)
+│   │   ├── 2023-05-30--short_pulse--nasc.zarr     # NASC
+│   │   ├── 2023-05-30--short_pulse--nasc.nc       # NASC (NetCDF)
+│   │   ├── 2023-05-30--long_pulse.zarr
+│   │   ├── 2023-05-30--long_pulse--denoised.zarr
+│   │   ├── ... (same pattern)
+│   ├── 2023-05-31/
+│   ├── ... (141 day directories)
+│   └── 2023-11-05/
+├── echodata/                       # 5 GB — converted EchoData (intermediate)
+├── campaign_mvbs_combined_38kHz.zarr  # 8.9 GB — concat'd campaign MVBS
+├── campaign_echograms/             # 593 MB — 12 PNG echograms
+├── tiles/                          # 1.9 MB — PMTiles + source GeoJSON
+├── nasc_biomass/                   # 1.5 MB — NASC points GeoJSON
+├── heatmaps/                       # 656 KB — COGs + PNGs + manifest
+├── raw_downloads/                  # empty (cleaned up)
+└── *.log                           # pipeline logs
+```
+
+### Access via SSH
+
+```bash
+ssh oceanstream@20.223.137.44
+
+# Browse outputs
+ls /mnt/data/output/sd-tpos2023-full-v01/
+
+# Open a zarr in Python
+source ~/workspace/venv/bin/activate
+python3 -c "
+import xarray as xr
+ds = xr.open_zarr('/mnt/data/output/sd-tpos2023-full-v01/2023-07-15/2023-07-15--short_pulse--nasc.zarr')
+print(ds)
+"
+```
+
+### Copy Files Locally
+
+```bash
+# Download a specific product
+scp oceanstream@20.223.137.44:/mnt/data/output/nasc_biomass/saildrone_tpos_2023.geojson .
+scp oceanstream@20.223.137.44:/mnt/data/output/tiles/saildrone_tpos_2023_echodata.pmtiles .
+scp -r oceanstream@20.223.137.44:/mnt/data/output/heatmaps/ ./heatmaps/
+scp -r oceanstream@20.223.137.44:/mnt/data/output/campaign_echograms/ ./echograms/
+```
+
+### Upload to Azure Blob (not yet done)
+
+```bash
+# From the VM:
+azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
+  "https://ne1osvmdevtest.blob.core.windows.net/sd-tpos2023-full-v01" \
+  --recursive
+```
+
+---
+
+## 6. Data Products Summary
+
+| Product | Count | Size | Format | Location |
+|---------|-------|------|--------|----------|
+| Raw Sv (per-day) | 277 | 193 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| Denoised Sv | 268 | 91 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| MVBS (per-day) | 261 | 9 GB | zarr + nc | `sd-tpos2023-full-v01/{day}/` |
+| NASC (per-day) | 229 | 44 MB | zarr + nc | `sd-tpos2023-full-v01/{day}/` |
+| Campaign MVBS (38 kHz) | 1 | 8.9 GB | zarr | `campaign_mvbs_combined_38kHz.zarr` |
+| Campaign echograms | 12 | 593 MB | PNG | `campaign_echograms/` |
+| Echodata track tiles | 1 | 1.3 MB | PMTiles | `tiles/` |
+| NASC biomass points | 6,135 | 1.5 MB | GeoJSON | `nasc_biomass/` |
+| NASC heatmaps | 3+3 | 656 KB | COG + PNG | `heatmaps/` |
+
+---
+
+## 7. Pending Work
+
+| Item | Priority | Notes |
+|------|----------|-------|
+| Upload to Azure Blob | High | `azcopy sync` to `sd-tpos2023-full-v01` container |
+| 200 kHz campaign MVBS | Medium | Debug channel matching for short_pulse 200 kHz |
+| Per-day echograms | Low | `run_stages_9_to_13.py --stages 8` (was skipped) |
+| Fix 5 failed NASC zarrs | Low | Edge cases: NaN depth, zero distance, corrupt zarr |
+| Fix 34 NaN-GPS denoised | Low | Investigate GPS merge timing mismatch |
+| Deallocate VM | High | Auto-shutdown is OFF — deallocate when done to save costs |
+
+---
+
+## 8. Timing
+
+| Phase | Duration | Notes |
+|-------|----------|-------|
+| Stages 1–6 (raw → denoised) | ~12 hours | First run + resume after disk resize |
+| Stage 7 MVBS | ~70 min | 261 zarrs sequentially |
+| Stage 7 NASC (echopype) | ~3 hours | Only 5 zarrs completed, killed |
+| **Stage 7 NASC (fast numpy)** | **2 min** | 222 zarrs, 10 workers |
+| Stage 9 campaign MVBS | ~15 min | 38 kHz only |
+| Stage 10 campaign echograms | ~20 min | 4 segments × 3 colormaps |
+| Stage 11 PMTiles | ~10 sec | 141 tracks |
+| Stage 12 NASC GeoJSON | ~5 sec | 6,135 points |
+| Stage 13 NASC heatmaps | ~2 sec | 3 COGs + 3 PNGs |
+| **Total wall clock** | **~14 hours** | Including disk resize downtime |
+
+---
+
+## 9. Code Changes (feat/batch_processing)
+
+```
+06b4fc9 feat(batch): fast vectorized NASC — numpy bincount replaces echopype
+681274e fix(batch): NASC parallel — pre-check GPS validity + track skips
+be24434 feat(batch): parallel NASC computation script
+be0b8fc fix(batch): NASC channel detection — handle string channel names
+dbb588f fix(batch): stages 11-12 — look for lat/lon in data_vars, prefer denoised zarrs
+7841599 feat(batch): add run_stages_9_to_13.py — standalone for post-processing stages
+519c302 fix: normalize_string_dtypes — handle numpy 2.x StringDType
+0c18a89 feat(batch): add stages 11-13 — echodata PMTiles, NASC biomass GeoJSON, NASC heatmap COGs
+a1e577e fix: list_denoised_zarrs scans local disk when local_storage is patched
+```
