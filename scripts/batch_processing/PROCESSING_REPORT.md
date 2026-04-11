@@ -336,13 +336,30 @@ scp -r oceanstream@20.223.137.44:/mnt/data/output/heatmaps/ ./heatmaps/
 scp -r oceanstream@20.223.137.44:/mnt/data/output/campaign_echograms/ ./echograms/
 ```
 
-### Upload to Azure Blob (not yet done)
+### Upload to Azure Blob (completed 11 Apr 2026)
+
+All final products uploaded to container `sd-tpos2023-full-v01` on storage account `ne1osvmdevtest`.
+
+| Product | Blob prefix | Files | Size |
+|---------|-------------|-------|------|
+| Combined per-day zarrs | `2023-XX-XX/*--combined--*.zarr/` | 221,102 | ~82 GB |
+| Campaign MVBS | `campaign_mvbs_combined_38kHz.zarr/` | 2,681 | 9.5 GB |
+| Campaign echograms | `campaign_echograms/` | 12 | 593 MB |
+| Per-day echograms | `perday_echograms/` | 1,610 | 3.3 GB |
+| PMTiles + GeoJSON | `tiles/` | 2 | 2 MB |
+| NASC biomass | `nasc_biomass/` | 1 | 1.5 MB |
+| NASC heatmaps | `heatmaps/` | 7 | 656 KB |
+
+Per-pulse-mode intermediates (`*--short_pulse--*`, `*--long_pulse--*`) were **not** uploaded.
 
 ```bash
-# From the VM:
-azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
-  "https://ne1osvmdevtest.blob.core.windows.net/sd-tpos2023-full-v01" \
-  --recursive
+# Read a combined zarr from Azure (Python)
+import xarray as xr
+ds = xr.open_zarr(
+    "az://sd-tpos2023-full-v01/2023-07-15/2023-07-15--combined--mvbs.zarr",
+    storage_options={"account_name": "ne1osvmdevtest"}
+)
+print(ds)
 ```
 
 ---
@@ -384,7 +401,7 @@ azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| Upload to Azure Blob | High | `azcopy sync` to `sd-tpos2023-full-v01` container |
+| ~~Upload to Azure Blob~~ | ~~High~~ | ✅ All final products in `sd-tpos2023-full-v01` container |
 | 200 kHz campaign MVBS | Medium | Debug channel matching for short_pulse 200 kHz |
 | ~~Per-day echograms~~ | ~~Low~~ | ✅ 1,610 PNGs via `run_combine_daily.py` |
 | Fix 5 failed NASC zarrs | Low | Edge cases: NaN depth, zero distance, corrupt zarr |
