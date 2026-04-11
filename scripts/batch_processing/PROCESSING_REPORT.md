@@ -32,10 +32,12 @@
 | MVBS zarrs | 9 GB |
 | Campaign MVBS combined | 8.9 GB |
 | NASC zarrs | 44 MB |
+| Combined daily zarrs (new) | ~82 GB |
+| Per-day echograms (new) | 3.3 GB |
 | Converted echodata | 5 GB |
 | Campaign echograms | 593 MB |
 | Tiles + GeoJSON + Heatmaps | 4 MB |
-| **Total used** | **314 GB / 1 TB** |
+| **Total used** | **396 GB / 1 TB** |
 
 ---
 
@@ -57,6 +59,7 @@ Stage 10: Campaign echograms (4 segments × 3 colormaps)
 Stage 11: Echodata PMTiles (vector tiles for map viz)
 Stage 12: NASC Biomass GeoJSON (depth-frequency merged points)
 Stage 13: NASC Heatmap COGs (raster overlays + PNG previews)
+Stage 14: Combined daily products + per-day echograms (NEW)
 ```
 
 ### Key Scripts
@@ -66,6 +69,7 @@ Stage 13: NASC Heatmap COGs (raster overlays + PNG previews)
 | `build_full_survey.py` | Main 13-stage pipeline (~2900 lines) |
 | `run_nasc_parallel.py` | Fast parallel NASC via numpy (replaced stage 7 NASC) |
 | `run_stages_9_to_13.py` | Standalone post-processing (stages 9–13 without re-running 1–8) |
+| `run_combine_daily.py` | Merge pulse modes per day + generate echograms with pulse markings |
 | `local_storage.py` | Monkey-patches Azure storage calls to local disk I/O |
 
 ---
@@ -168,6 +172,31 @@ Skipped with `--skip-perday-echograms` to prioritise campaign-level products. Ca
 - Grid: 0.5° resolution, scipy griddata interpolation, cKDTree search radius 0.5°
 - Stored in `/mnt/data/output/heatmaps/`
 
+### Stage 14: Combined Daily Products + Per-day Echograms (NEW)
+
+Merges short_pulse + long_pulse into single per-day combined zarrs. Channels renamed from instrument IDs (`EKA 266972-07 ES38-18|200-18C`) to frequency labels (`38kHz`, `200kHz`). Each dataset includes a `pulse_mode` variable (0=long, 1=short) for provenance.
+
+**Products combined:**
+
+| Product | Count | Method |
+|---------|-------|--------|
+| Combined MVBS | 137 | Concat along `ping_time` (depth aligned at 1m) |
+| Combined denoised Sv | 140 | Interpolated to 0.5m common depth grid, concat along `ping_time` |
+| Combined raw Sv | 141 | Same interpolation as denoised |
+| Combined NASC | 216 | Per-frequency files, concat along `distance` (offset to avoid overlap) |
+
+Stored as `{day}/{day}--combined--{product}.zarr` (NASC: `{day}--combined--nasc--{freq}.zarr`).
+
+**Per-day echograms:**
+
+- **1,610 PNG files** (3.3 GB total)
+- 3 products (MVBS, denoised, raw Sv) × 2 frequencies (38kHz, 200kHz) × 2 colormaps (`ocean_r`, `EK500`)
+- Each echogram has a **pulse-mode colour bar** at the bottom: orange = Short pulse, blue = Long pulse
+- Time axis labelled with hourly ticks (UTC)
+- Stored in `/mnt/data/output/perday_echograms/`
+
+**Processing**: 141 days × 4 workers = **~62 minutes** (`run_combine_daily.py`)
+
 ---
 
 ## 4. Issues Found and Fixed
@@ -260,7 +289,12 @@ Skipped with `--skip-perday-echograms` to prioritise campaign-level products. Ca
 │   │   ├── 2023-05-30--short_pulse--nasc.nc       # NASC (NetCDF)
 │   │   ├── 2023-05-30--long_pulse.zarr
 │   │   ├── 2023-05-30--long_pulse--denoised.zarr
-│   │   ├── ... (same pattern)
+│   │   ├── ... (same pattern for long_pulse)
+│   │   ├── 2023-05-30--combined--mvbs.zarr        # ← NEW: combined daily
+│   │   ├── 2023-05-30--combined--denoised.zarr
+│   │   ├── 2023-05-30--combined--sv.zarr
+│   │   ├── 2023-05-30--combined--nasc--38kHz.zarr
+│   │   ├── 2023-05-30--combined--nasc--200kHz.zarr
 │   ├── 2023-05-31/
 │   ├── ... (141 day directories)
 │   └── 2023-11-05/
@@ -269,6 +303,7 @@ Skipped with `--skip-perday-echograms` to prioritise campaign-level products. Ca
 ├── campaign_echograms/             # 593 MB — 12 PNG echograms
 ├── tiles/                          # 1.9 MB — PMTiles + source GeoJSON
 ├── nasc_biomass/                   # 1.5 MB — NASC points GeoJSON
+├── perday_echograms/                # 3.3 GB — 1,610 daily echogram PNGs (NEW)
 ├── heatmaps/                       # 656 KB — COGs + PNGs + manifest
 ├── raw_downloads/                  # empty (cleaned up)
 └── *.log                           # pipeline logs
@@ -325,6 +360,11 @@ azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
 | Echodata track tiles | 1 | 1.3 MB | PMTiles | `tiles/` |
 | NASC biomass points | 6,135 | 1.5 MB | GeoJSON | `nasc_biomass/` |
 | NASC heatmaps | 3+3 | 656 KB | COG + PNG | `heatmaps/` |
+| Combined MVBS (per-day) | 137 | ~9 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| Combined denoised (per-day) | 140 | ~30 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| Combined raw Sv (per-day) | 141 | ~40 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| Combined NASC (per-day) | 216 | ~3 MB | zarr | `sd-tpos2023-full-v01/{day}/` |
+| Per-day echograms | 1,610 | 3.3 GB | PNG | `perday_echograms/` |
 
 ---
 
@@ -354,7 +394,8 @@ azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
 | Stage 11 PMTiles | ~10 sec | 141 tracks |
 | Stage 12 NASC GeoJSON | ~5 sec | 6,135 points |
 | Stage 13 NASC heatmaps | ~2 sec | 3 COGs + 3 PNGs |
-| **Total wall clock** | **~14 hours** | Including disk resize downtime |
+| **Stage 14 combined daily** | **~62 min** | 141 days, 4 workers, 661 zarrs + 1,610 PNGs |
+| **Total wall clock** | **~15 hours** | Including disk resize downtime |
 
 ---
 
@@ -370,4 +411,7 @@ dbb588f fix(batch): stages 11-12 — look for lat/lon in data_vars, prefer denoi
 519c302 fix: normalize_string_dtypes — handle numpy 2.x StringDType
 0c18a89 feat(batch): add stages 11-13 — echodata PMTiles, NASC biomass GeoJSON, NASC heatmap COGs
 a1e577e fix: list_denoised_zarrs scans local disk when local_storage is patched
+213047b fix(batch): deduplicate ping_time in MVBS/NASC combine too
+550c68d fix(batch): deduplicate ping_time + error handling for resilient parallel processing
+c8613b5 feat(batch): per-day pulse-mode merge + daily echograms with pulse markings
 ```
