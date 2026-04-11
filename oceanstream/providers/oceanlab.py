@@ -104,6 +104,11 @@ OCEANLAB_OBSERVATORIES: dict[str, dict[str, Any]] = {
                 "serial_number": "01908153",
                 "column_mapping": _SBE19PLUS_COLUMN_MAP,
             },
+            "adcp": {
+                "sensor_id": "nortek-ad2cp",
+                "model": "Signature",
+                "default_salinity": 35.0,
+            },
         },
     },
 }
@@ -187,6 +192,32 @@ def parse_ctd_latest(
     return record
 
 
+def get_adcp_defaults(observatory: str = "munkholmen") -> dict[str, Any]:
+    """Return ADCP processing defaults for an OceanLab observatory.
+
+    Parameters
+    ----------
+    observatory
+        Key into ``OCEANLAB_OBSERVATORIES`` (default ``"munkholmen"``).
+
+    Returns
+    -------
+    dict
+        Keys: ``salinity``, ``latitude``, ``longitude``.
+        Empty dict if the observatory has no ADCP instrument.
+    """
+    obs = OCEANLAB_OBSERVATORIES.get(observatory)
+    if obs is None or "adcp" not in obs.get("instruments", {}):
+        return {}
+    adcp = obs["instruments"]["adcp"]
+    site = obs["site"]
+    return {
+        "salinity": adcp.get("default_salinity", 35.0),
+        "latitude": site["latitude"],
+        "longitude": site["longitude"],
+    }
+
+
 class OceanlabProvider:
     """Provider for OceanLab Observatory (SINTEF Ocean / NTNU).
 
@@ -194,7 +225,7 @@ class OceanlabProvider:
     """
 
     name = "oceanlab"
-    supported_modules: list[ProcessingModule] = ["geotrack"]
+    supported_modules: list[ProcessingModule] = ["geotrack", "adcp"]
     is_stationary: bool = True
 
     def identify_platform(self, filename: str) -> str | None:
@@ -217,10 +248,17 @@ class OceanlabProvider:
         # Apply instrument column mappings
         obs = OCEANLAB_OBSERVATORIES.get(site_key) if site_key else None
         if obs is not None:
+            # Apply CTD column mappings if present
             ctd_map = obs["instruments"].get("ctd", {}).get("column_mapping", {})
             rename = {k: v for k, v in ctd_map.items() if k in out.columns and k != v}
             if rename:
                 out = out.rename(columns=rename)
+
+            # Apply ADCP column mappings if present
+            adcp_map = obs["instruments"].get("adcp", {}).get("column_mapping", {})
+            rename_adcp = {k: v for k, v in adcp_map.items() if k in out.columns and k != v}
+            if rename_adcp:
+                out = out.rename(columns=rename_adcp)
 
             # Inject fixed site coordinates if not already present
             site = obs["site"]
@@ -253,6 +291,11 @@ class OceanlabProvider:
         # Heuristic: SBE19plus CSV columns → Munkholmen
         sbe19_cols = {"Temperature", "Conductivity", "Pressure", "SBE63", "SBE63Temperature"}
         if sbe19_cols.issubset(set(df.columns)):
+            return "munkholmen"
+
+        # Heuristic: AD2CP-derived columns → Munkholmen
+        ad2cp_cols = {"Sv", "frequency_khz", "sound_speed"}
+        if ad2cp_cols.issubset(set(df.columns)):
             return "munkholmen"
 
         return None
@@ -299,6 +342,11 @@ class OceanlabProvider:
         if sbe19_cols.issubset(hdr_set):
             score += 0.3
 
+        # AD2CP-derived columns
+        ad2cp_cols = {"Sv", "frequency_khz", "sound_speed"}
+        if ad2cp_cols.issubset(hdr_set):
+            score += 0.3
+
         return min(score, 1.0)
 
     def parquet_metadata(
@@ -329,4 +377,6 @@ class OceanlabProvider:
             if site in lower:
                 score = max(score, 0.65)
                 break
+        if lower.endswith(".ad2cp") and any(site in lower for site in OCEANLAB_SITES):
+            score = max(score, 0.7)
         return score

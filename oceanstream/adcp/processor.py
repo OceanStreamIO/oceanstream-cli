@@ -125,6 +125,47 @@ def process(
     )
 
 
+def process_ad2cp_file(
+    raw_path: Path | str,
+    salinity: float = 35.0,
+) -> pd.DataFrame:
+    """Process a single Nortek AD2CP ``.ad2cp`` file into a flat DataFrame.
+
+    Pipeline: read → compute Sv → flatten.
+
+    Parameters
+    ----------
+    raw_path : Path or str
+        Path to the ``.ad2cp`` binary file.
+    salinity : float
+        Salinity in PSU for absorption estimation (default 35.0).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per (ping_time, range_sample, frequency) with columns:
+        ``time``, ``depth``, ``frequency_khz``, ``Sv``, ``temperature``,
+        ``sound_speed``, ``heading``.
+    """
+    from .ad2cp_reader import read_ad2cp
+    from .sv_computation import ad2cp_sv_to_dataframe, compute_sv
+
+    raw_path = Path(raw_path)
+    ds = read_ad2cp(raw_path)
+    ds_sv = compute_sv(ds, salinity=salinity)
+
+    df = ad2cp_sv_to_dataframe(ds_sv)
+    logger.info(
+        "AD2CP processed: %s — %d rows (%d pings × %d cells × %d freq)",
+        raw_path.name,
+        len(df),
+        ds.sizes["ping_time"],
+        ds.sizes["range_sample"],
+        ds.sizes["frequency"],
+    )
+    return df
+
+
 def process_file(
     raw_path: Path | str,
     transducer_depth: float = 7.0,

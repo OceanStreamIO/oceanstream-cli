@@ -1,0 +1,55 @@
+{
+  "id": "nortek-ad2cp",
+  "name": "Nortek Signature AD2CP",
+  "manufacturer": "Nortek",
+  "model": "Signature 100/250/500/1000",
+  "sensor_type": "current",
+  "description": "Acoustic Doppler Current Profiler with integrated echosounder. Measures current velocity profiles and acoustic backscatter (Sv). Binary .ad2cp file format.",
+  "variables": [
+    "echo_amplitude",
+    "velocity",
+    "sound_speed",
+    "temperature",
+    "pressure",
+    "heading",
+    "pitch",
+    "roll",
+    "Sv"
+  ],
+  "raw_variables": [
+    "EchoAmplitude",
+    "Velocity",
+    "SoundSpeed",
+    "Temperature",
+    "Pressure",
+    "Heading",
+    "Pitch",
+    "Roll"
+  ],
+  "column_mapping": {
+    "EchoAmplitude": "echo_amplitude",
+    "Velocity": "velocity",
+    "SoundSpeed": "sound_speed",
+    "Temperature": "temperature",
+    "Pressure": "pressure",
+    "Heading": "heading",
+    "Pitch": "pitch",
+    "Roll": "roll"
+  },
+  "default_parameters": {
+    "salinity": 35.0
+  },
+  "specifications": {
+    "frequency_range": "100 kHz to 1000 kHz (model-dependent)",
+    "velocity_range": "±10 m/s (horizontal), ±5 m/s (vertical)",
+    "velocity_accuracy": "±0.5 cm/s",
+    "profiling_range": "up to 200 m (model-dependent)",
+    "cell_size": "0.5 m to 4 m",
+    "sampling_rate": "up to 8 Hz (burst)",
+    "beam_configuration": "5-beam Janus + vertical"
+  },
+  "file_formats": {
+    "ad2cp": "Nortek binary data format"
+  },
+  "documentation_url": "https://www.nortekgroup.com/products/signature-1000"
+}
