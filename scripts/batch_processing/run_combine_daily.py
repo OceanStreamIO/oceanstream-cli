@@ -315,6 +315,19 @@ def combine_mvbs_or_nasc(
 
     if len(freq_datasets) == 1:
         combined = freq_datasets[0]
+    elif concat_dim == "distance":
+        # NASC: keep separate per-frequency (different distance grids,
+        # datetime fill issues across channels).
+        # Return as a dict: {freq_label: dataset}
+        result = {}
+        for freq_label, freq_ds in zip(sorted(per_freq.keys()), freq_datasets):
+            freq_ds.attrs["combined_pulse_modes"] = "short_pulse+long_pulse"
+            result[freq_label] = freq_ds
+
+        for items in per_freq.values():
+            for _, ds_ch in items:
+                ds_ch.close()
+        return result
     else:
         combined = xr.concat(
             freq_datasets, dim="channel",
@@ -531,7 +544,25 @@ def combine_one_day(
             log.info("  %s/%s: no data", day, product)
             continue
 
-        # Save
+        # NASC returns a dict of {freq_label: dataset} — save each separately
+        if isinstance(combined, dict):
+            dt = time.time() - t0
+            for freq_label, freq_ds in combined.items():
+                freq_path = BASE_DIR / day / f"{day}--combined--{product}--{freq_label}.zarr"
+                if skip_existing and freq_path.is_dir():
+                    log.info("  %s/%s/%s: already exists — skip", day, product, freq_label)
+                    results[f"{product}_{freq_label}"] = freq_path
+                    continue
+                freq_ds.to_zarr(str(freq_path), mode="w")
+                n = freq_ds.sizes.get("distance", freq_ds.sizes.get("ping_time", 0))
+                log.info("  %s/%s/%s: %d samples (%.1fs)", day, product, freq_label, n, dt)
+                results[f"{product}_{freq_label}"] = freq_path
+                freq_ds.close()
+            del combined
+            _release_memory()
+            continue
+
+        # Save single combined zarr
         combined.to_zarr(str(out_path), mode="w")
         dt = time.time() - t0
 
