@@ -1685,14 +1685,20 @@ def _extract_track_from_local_zarr(
     """
     try:
         ds = xr.open_zarr(str(zarr_path), chunks={})
-        if "latitude" not in ds.coords or "longitude" not in ds.coords:
+        has_lat = "latitude" in ds.coords or "latitude" in ds.data_vars
+        has_lon = "longitude" in ds.coords or "longitude" in ds.data_vars
+        if not (has_lat and has_lon):
             ds.close()
             return None
 
-        lat = ds.coords["latitude"].values
-        lon = ds.coords["longitude"].values
-        ping_time = ds.coords["ping_time"].values if "ping_time" in ds.coords else None
+        lat = ds["latitude"].values
+        lon = ds["longitude"].values
+        ping_time = ds["ping_time"].values if "ping_time" in ds else None
         ds.close()
+
+        # Flatten if multi-dimensional (e.g. latitude has (ping_time,) dim)
+        lat = lat.ravel()
+        lon = lon.ravel()
 
         # Sort by ping_time
         if ping_time is not None:
@@ -1791,15 +1797,16 @@ def build_echodata_pmtiles(
 
     for day_dir in day_dirs:
         day_key = day_dir.name
-        # Try short_pulse first, then long_pulse
-        for pulse in ("short_pulse", "long_pulse"):
-            zarr_path = day_dir / f"{day_key}--{pulse}.zarr"
+        # Try denoised zarrs first (have GPS merged), then raw Sv
+        for suffix in ("--short_pulse--denoised.zarr", "--long_pulse--denoised.zarr",
+                       "--short_pulse.zarr", "--long_pulse.zarr"):
+            zarr_path = day_dir / f"{day_key}{suffix}"
             if zarr_path.exists():
                 feature = _extract_track_from_local_zarr(zarr_path, day_key, sample_rate)
                 if feature:
                     feature["properties"]["campaign_id"] = campaign_id
                     features.append(feature)
-                    break  # one feature per day, prefer short_pulse
+                    break  # one feature per day
 
     if not features:
         log.error("No track features extracted from Sv zarrs")
