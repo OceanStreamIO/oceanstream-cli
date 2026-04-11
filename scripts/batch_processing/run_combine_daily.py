@@ -400,7 +400,7 @@ def combine_sv(
 
             ds_new = xr.Dataset(
                 {
-                    "Sv": (["ping_time", "depth"], sv_interp),
+                    "Sv": (["channel", "ping_time", "depth"], sv_interp[np.newaxis, :, :]),
                     "pulse_mode": (["ping_time"], np.full(n_pings, mode_code, dtype=np.int8)),
                 },
                 coords={
@@ -425,8 +425,6 @@ def combine_sv(
             freq_ds = xr.concat(mode_datasets, dim="ping_time")
 
         freq_ds = freq_ds.sortby("ping_time")
-        # Make channel a proper dimension
-        freq_ds = freq_ds.expand_dims("channel")
         freq_datasets.append(freq_ds)
 
         for m in mode_datasets:
@@ -444,7 +442,15 @@ def combine_sv(
     if len(freq_datasets) == 1:
         combined = freq_datasets[0]
     else:
+        # Drop pulse_mode before channel concat (it's per-ping, not per-channel)
+        # Re-add after concat
+        pulse_from = max(freq_datasets, key=lambda d: d.sizes["ping_time"])
+        pm = pulse_from["pulse_mode"].copy()
+        for i, fds in enumerate(freq_datasets):
+            if "pulse_mode" in fds:
+                freq_datasets[i] = fds.drop_vars("pulse_mode")
         combined = xr.concat(freq_datasets, dim="channel")
+        combined["pulse_mode"] = pm
 
     combined.attrs["combined_pulse_modes"] = "short_pulse+long_pulse"
     combined.attrs["depth_grid"] = f"interpolated at {COMMON_DEPTH_STEP}m spacing"
