@@ -1911,7 +1911,17 @@ def _extract_nasc_from_local_zarr(
         ch_38_idx = ch_200_idx = None
         if frequencies is not None:
             for i, freq in enumerate(frequencies):
-                f = float(freq)
+                freq_str = str(freq)
+                try:
+                    f = float(freq)
+                except (ValueError, TypeError):
+                    # Channel name like "EKA 266972-07 ES38-18|200-18C"
+                    f = None
+                    if "ES38" in freq_str or "38" in freq_str.split("|")[0].split("-")[-1]:
+                        ch_38_idx = i
+                    if "ES200" in freq_str or "200" in freq_str:
+                        ch_200_idx = i
+                    continue
                 if abs(f - 38000) < 1000:
                     ch_38_idx = i
                 elif abs(f - 200000) < 1000:
