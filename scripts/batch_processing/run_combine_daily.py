@@ -494,6 +494,13 @@ def combine_sv(
     if not freq_datasets:
         return None
 
+    # Deduplicate ping_time in each freq dataset (EK80 can fire simultaneously)
+    for i, fds in enumerate(freq_datasets):
+        if "ping_time" in fds.dims:
+            idx = fds.get_index("ping_time")
+            if idx.duplicated().any():
+                freq_datasets[i] = fds.sel(ping_time=~idx.duplicated())
+
     if len(freq_datasets) == 1:
         combined = freq_datasets[0]
     else:
@@ -504,7 +511,10 @@ def combine_sv(
         for i, fds in enumerate(freq_datasets):
             if "pulse_mode" in fds:
                 freq_datasets[i] = fds.drop_vars("pulse_mode")
-        combined = xr.concat(freq_datasets, dim="channel")
+        combined = xr.concat(
+            freq_datasets, dim="channel",
+            join="outer", fill_value=np.nan,
+        )
         combined["pulse_mode"] = pm
 
     combined.attrs["combined_pulse_modes"] = "short_pulse+long_pulse"
@@ -535,10 +545,14 @@ def combine_one_day(
 
         t0 = time.time()
 
-        if product in ("mvbs", "nasc"):
-            combined = combine_mvbs_or_nasc(day, product, suffix, data_var)
-        else:
-            combined = combine_sv(day, suffix)
+        try:
+            if product in ("mvbs", "nasc"):
+                combined = combine_mvbs_or_nasc(day, product, suffix, data_var)
+            else:
+                combined = combine_sv(day, suffix)
+        except Exception as e:
+            log.warning("  %s/%s: FAILED — %s", day, product, e)
+            continue
 
         if combined is None:
             log.info("  %s/%s: no data", day, product)
@@ -846,16 +860,21 @@ def process_one_day(args: tuple) -> tuple[str, int, int]:
     log.info("Processing %s ...", day)
     t0 = time.time()
 
-    # Populate frequency cache from denoised/raw zarrs
-    _CHANNEL_FREQ_CACHE.clear()
-    _populate_freq_cache(day)
+    try:
+        # Populate frequency cache from denoised/raw zarrs
+        _CHANNEL_FREQ_CACHE.clear()
+        _populate_freq_cache(day)
 
-    combined_zarrs = combine_one_day(day, products, skip_existing=skip_existing)
+        combined_zarrs = combine_one_day(day, products, skip_existing=skip_existing)
 
-    n_echograms = 0
-    if not skip_echograms and combined_zarrs:
-        echogram_files = generate_echograms_for_day(day, combined_zarrs, ECHOGRAM_DIR)
-        n_echograms = len(echogram_files)
+        n_echograms = 0
+        if not skip_echograms and combined_zarrs:
+            echogram_files = generate_echograms_for_day(day, combined_zarrs, ECHOGRAM_DIR)
+            n_echograms = len(echogram_files)
+    except Exception as e:
+        log.error("  %s FAILED: %s", day, e)
+        _release_memory()
+        return day, 0, 0
 
     dt = time.time() - t0
     log.info(
