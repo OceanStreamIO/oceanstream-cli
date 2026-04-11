@@ -190,8 +190,11 @@ def background_noise_mask(
     if depth_stat == "min":
         noise_1d_db = binned_db.min(dim=range_dim, skipna=True)
     elif depth_stat == "quantile":
+        # Use numpy directly — xarray's skipna=True path calls
+        # np.nanquantile with the deprecated ``interpolation`` kwarg
+        # which was removed in numpy 2.x.
         noise_1d_db = binned_db.quantile(
-            depth_quantile, dim=range_dim, skipna=True
+            depth_quantile, dim=range_dim, method="linear"
         )
         if "quantile" in noise_1d_db.dims:
             noise_1d_db = noise_1d_db.squeeze("quantile", drop=True)
