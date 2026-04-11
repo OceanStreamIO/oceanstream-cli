@@ -797,6 +797,9 @@ def generate_echograms_for_day(
     files: list[Path] = []
 
     for product, zarr_path in combined_zarrs.items():
+        # Skip NASC-type products (they use 'distance' not 'ping_time')
+        if "nasc" in product:
+            continue
         if not zarr_path.is_dir():
             continue
 
