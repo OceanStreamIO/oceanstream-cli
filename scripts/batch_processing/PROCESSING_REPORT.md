@@ -92,7 +92,7 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 
 - **277 raw Sv zarrs** (137 short_pulse + 140 long_pulse)
 - Typical shape: `(channels=2, ping_time=~15000-32000, range_sample=~3600-7200)`
-- Stored as `{day}/{day}--{pulse_mode}.zarr`
+- Stored as e.g. `2023-07-15/2023-07-15--short_pulse.zarr`
 
 ### Stage 5–6: Calibrate + Enrich + Denoise
 
@@ -100,7 +100,7 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 - 9 raw zarrs had no matching GPS or failed calibration → skipped
 - 4-stage denoising: background noise removal → impulse noise → attenuation correction → transient removal
 - GPS (latitude/longitude) merged from `gpsdata` container into denoised datasets
-- Stored as `{day}/{day}--{pulse_mode}--denoised.zarr`
+- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--denoised.zarr`
 
 **GPS coverage issue**: 34 denoised zarrs have all-NaN GPS coordinates. These are consistently one pulse mode per affected day — the GPS merge succeeded for one mode but not the other (likely timing mismatch between GPS timestamps and sonar ping times for the alternate pulse mode).
 
@@ -109,7 +109,7 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 - **261 MVBS zarrs** (+ 261 NetCDF copies)
 - Bins: `range_bin=1m`, `ping_time_bin=10s`
 - Computed with `echopype.commongrid.compute_MVBS()`
-- Stored as `{day}/{day}--{pulse_mode}--mvbs.zarr` and `.nc`
+- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--mvbs.zarr` and `.nc`
 
 ### Stage 7 (NASC): Per-day NASC — Fast Vectorized
 
@@ -122,7 +122,7 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 - Bins: `range_bin=10m`, `dist_bin=0.5nmi`
 - **222 computed in 2 minutes** (10 parallel workers)
 - 34 skipped (all-NaN GPS), 5 failed (see §4)
-- Stored as `{day}/{day}--{pulse_mode}--nasc.zarr` and `.nc`
+- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--nasc.zarr` and `.nc`
 
 ### Stage 8: Per-day Echograms — SKIPPED
 
@@ -185,7 +185,7 @@ Merges short_pulse + long_pulse into single per-day combined zarrs. Channels ren
 | Combined raw Sv | 141 | Same interpolation as denoised |
 | Combined NASC | 216 | Per-frequency files, concat along `distance` (offset to avoid overlap) |
 
-Stored as `{day}/{day}--combined--{product}.zarr` (NASC: `{day}--combined--nasc--{freq}.zarr`).
+Stored as e.g. `2023-07-15/2023-07-15--combined--mvbs.zarr` (NASC: `2023-07-15--combined--nasc--38kHz.zarr`).
 
 **Per-day echograms:**
 
