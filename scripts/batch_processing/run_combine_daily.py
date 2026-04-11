@@ -232,8 +232,10 @@ def combine_mvbs_or_nasc(
                 ds.close()
                 continue
 
-            n_pings = ds.sizes.get("ping_time", 0)
-            if n_pings == 0:
+            # For NASC, the concat dim is 'distance' (or 'ping_time' for MVBS)
+            concat_dim = "distance" if "distance" in ds.dims else "ping_time"
+            n_samples = ds.sizes.get(concat_dim, 0)
+            if n_samples == 0:
                 ds.close()
                 continue
 
@@ -256,22 +258,31 @@ def combine_mvbs_or_nasc(
 
     # Concat per-frequency along ping_time, track pulse_mode per ping
     freq_datasets: list[xr.Dataset] = []
-    # Use the frequency with most pings to build the master pulse_mode
-    master_pulse: list[tuple[np.ndarray, int]] = []  # (ping_times, mode_code)
+    # Determine concat dimension — 'distance' for NASC, 'ping_time' for MVBS
+    sample_ds = next(iter(per_freq.values()))[0][1]
+    concat_dim = "distance" if "distance" in sample_ds.dims else "ping_time"
+    has_ping_time = "ping_time" in sample_ds.dims or "ping_time" in sample_ds.coords
+
+    # Use the frequency with most samples to build the master pulse_mode
+    master_pulse: list[tuple[np.ndarray, int]] = []  # (time_values, mode_code)
 
     for freq_label in sorted(per_freq.keys()):
         items = per_freq[freq_label]
         if len(items) == 1:
             freq_ds = items[0][1]
         else:
-            freq_ds = xr.concat([ds for _, ds in items], dim="ping_time")
-        freq_ds = freq_ds.sortby("ping_time")
+            freq_ds = xr.concat([ds for _, ds in items], dim=concat_dim)
+        if concat_dim in freq_ds.coords:
+            freq_ds = freq_ds.sortby(concat_dim)
 
-        # Track pulse modes for this frequency (use the one with most pings for master)
-        if freq_ds.sizes["ping_time"] > sum(pt.shape[0] for pt, _ in master_pulse):
-            master_pulse = [
-                (item[1].ping_time.values, item[0]) for item in items
-            ]
+        # Track pulse modes (use frequency with most samples for master)
+        if has_ping_time:
+            n = freq_ds.sizes.get("ping_time", freq_ds.sizes.get(concat_dim, 0))
+            if n > sum(pt.shape[0] for pt, _ in master_pulse):
+                if "ping_time" in freq_ds.coords:
+                    master_pulse = [(item[1].ping_time.values, item[0]) for item in items]
+                else:
+                    master_pulse = []
 
         freq_datasets.append(freq_ds)
 
@@ -280,22 +291,23 @@ def combine_mvbs_or_nasc(
     else:
         combined = xr.concat(freq_datasets, dim="channel")
 
-    # Build pulse_mode from master (the frequency with the most coverage)
-    all_pings = combined.ping_time.values
-    pulse_mode = np.full(len(all_pings), -1, dtype=np.int8)
-    for mode_pings, mode_code in master_pulse:
-        mask = np.isin(all_pings, mode_pings)
-        pulse_mode[mask] = mode_code
-    # Fill any remaining with nearest neighbour
-    if (pulse_mode == -1).any():
-        unfilled = np.where(pulse_mode == -1)[0]
-        filled = np.where(pulse_mode != -1)[0]
-        if len(filled) > 0:
-            nearest = np.searchsorted(filled, unfilled).clip(0, len(filled) - 1)
-            pulse_mode[unfilled] = pulse_mode[filled[nearest]]
+    # Build pulse_mode if we have ping_time
+    if master_pulse and "ping_time" in combined.coords:
+        all_pings = combined.ping_time.values
+        pulse_arr = np.full(len(all_pings), -1, dtype=np.int8)
+        for mode_pings, mode_code in master_pulse:
+            mask = np.isin(all_pings, mode_pings)
+            pulse_arr[mask] = mode_code
+        # Fill any remaining with nearest neighbour
+        if (pulse_arr == -1).any():
+            unfilled = np.where(pulse_arr == -1)[0]
+            filled = np.where(pulse_arr != -1)[0]
+            if len(filled) > 0:
+                nearest = np.searchsorted(filled, unfilled).clip(0, len(filled) - 1)
+                pulse_arr[unfilled] = pulse_arr[filled[nearest]]
+        combined["pulse_mode"] = xr.DataArray(pulse_arr, dims=["ping_time"])
+        combined["pulse_mode"].attrs["long_name"] = "Pulse mode (0=long, 1=short)"
 
-    combined["pulse_mode"] = xr.DataArray(pulse_mode, dims=["ping_time"])
-    combined["pulse_mode"].attrs["long_name"] = "Pulse mode (0=long, 1=short)"
     combined.attrs["combined_pulse_modes"] = "short_pulse+long_pulse"
 
     # Cleanup
