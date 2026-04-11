@@ -4,7 +4,7 @@ and generate per-day echograms with pulse-mode markings.
 
 Input:  {day}/{day}--{pulse_mode}--{product}.zarr  (separate per pulse mode)
 Output: {day}/{day}--combined--{product}.zarr       (merged per day)
-        perday_echograms/{day}--{product}--{freq}--{cmap}.png
+        {day}/{day}--{product}--{freq}--{cmap}.png          (echograms)
 
 Products handled:
   - MVBS: concat along ping_time (depth already aligned at 1m bins)
@@ -51,7 +51,6 @@ import xarray as xr
 
 BASE_DIR = Path("/mnt/data/output/sd-tpos2023-full-v01")
 OUTPUT_DIR = Path("/mnt/data/output")
-ECHOGRAM_DIR = OUTPUT_DIR / "perday_echograms"
 
 FREQ_38KHZ = 38000.0
 FREQ_200KHZ = 200000.0
@@ -876,7 +875,7 @@ def process_one_day(args: tuple) -> tuple[str, int, int]:
 
         n_echograms = 0
         if not skip_echograms and combined_zarrs:
-            echogram_files = generate_echograms_for_day(day, combined_zarrs, ECHOGRAM_DIR)
+            echogram_files = generate_echograms_for_day(day, combined_zarrs, BASE_DIR / day)
             n_echograms = len(echogram_files)
     except Exception as e:
         log.error("  %s FAILED: %s", day, e)
@@ -914,8 +913,6 @@ def main() -> None:
 
     if args.force:
         args.skip_existing = False
-
-    ECHOGRAM_DIR.mkdir(parents=True, exist_ok=True)
 
     # Discover days
     if args.day:

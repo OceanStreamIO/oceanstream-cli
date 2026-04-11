@@ -196,7 +196,7 @@ The per-pulse-mode zarrs (`*--short_pulse--*.zarr`, `*--long_pulse--*.zarr`) rem
 - 3 products (MVBS, denoised, raw Sv) × 2 frequencies (38kHz, 200kHz) × 2 colormaps (`ocean_r`, `EK500`)
 - Each echogram has a **pulse-mode colour bar** at the bottom: orange = Short pulse, blue = Long pulse
 - Time axis labelled with hourly ticks (UTC)
-- Stored in `/mnt/data/output/perday_echograms/`
+- Stored alongside combined zarrs in each day directory
 
 **Processing**: 141 days × 4 workers = **~62 minutes** (`run_combine_daily.py`)
 
@@ -289,6 +289,9 @@ The per-pulse-mode zarrs (`*--short_pulse--*.zarr`, `*--long_pulse--*.zarr`) rem
 │   │   ├── 2023-05-30--combined--mvbs.zarr          # ← FINAL: MVBS
 │   │   ├── 2023-05-30--combined--nasc--38kHz.zarr   # ← FINAL: NASC 38 kHz
 │   │   ├── 2023-05-30--combined--nasc--200kHz.zarr  # ← FINAL: NASC 200 kHz
+│   │   ├── 2023-05-30--mvbs--38kHz--ek500.png       # ← echogram
+│   │   ├── 2023-05-30--denoised--200kHz--ocean_r.png # ← echogram
+│   │   ├── ... (more echogram PNGs)
 │   │   ├── 2023-05-30--short_pulse.zarr             # intermediate
 │   │   ├── 2023-05-30--short_pulse--denoised.zarr   # intermediate
 │   │   ├── 2023-05-30--short_pulse--mvbs.zarr       # intermediate
@@ -303,7 +306,6 @@ The per-pulse-mode zarrs (`*--short_pulse--*.zarr`, `*--long_pulse--*.zarr`) rem
 ├── campaign_echograms/             # 593 MB — 12 PNG echograms
 ├── tiles/                          # 1.9 MB — PMTiles + source GeoJSON
 ├── nasc_biomass/                   # 1.5 MB — NASC points GeoJSON
-├── perday_echograms/                # 3.3 GB — 1,610 daily echogram PNGs (NEW)
 ├── heatmaps/                       # 656 KB — COGs + PNGs + manifest
 ├── raw_downloads/                  # empty (cleaned up)
 └── *.log                           # pipeline logs
@@ -345,7 +347,7 @@ All final products uploaded to container `sd-tpos2023-full-v01` on storage accou
 | Combined per-day zarrs | `2023-XX-XX/*--combined--*.zarr/` | 221,102 | ~82 GB |
 | Campaign MVBS | `campaign_mvbs_combined_38kHz.zarr/` | 2,681 | 9.5 GB |
 | Campaign echograms | `campaign_echograms/` | 12 | 593 MB |
-| Per-day echograms | `perday_echograms/` | 1,610 | 3.3 GB |
+| Per-day echograms | `2023-XX-XX/*.png` | 1,610 | 3.3 GB |
 | PMTiles + GeoJSON | `tiles/` | 2 | 2 MB |
 | NASC biomass | `nasc_biomass/` | 1 | 1.5 MB |
 | NASC heatmaps | `heatmaps/` | 7 | 656 KB |
@@ -374,7 +376,7 @@ print(ds)
 | Denoised Sv | 140 | ~30 GB | zarr | `*--combined--denoised.zarr` |
 | MVBS | 137 | ~9 GB | zarr | `*--combined--mvbs.zarr` |
 | NASC (per-freq) | 216 | ~3 MB | zarr | `*--combined--nasc--{38kHz,200kHz}.zarr` |
-| Per-day echograms | 1,610 | 3.3 GB | PNG | `perday_echograms/` |
+| Per-day echograms | 1,610 | 3.3 GB | PNG | `{day}/{day}--{product}--{freq}--{cmap}.png` |
 
 **Campaign-level products:**
 
