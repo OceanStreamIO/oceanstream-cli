@@ -19,6 +19,10 @@ Products per day:
 Campaign products:
   - ``campaign_mvbs_combined_{freq}.zarr``  — full-survey MVBS
   - ``campaign_mvbs_combined_{freq}_{cmap}.png`` — full-survey echograms
+  - ``tiles/{campaign}_echodata.pmtiles``   — acoustic track vector tiles
+  - ``nasc_biomass/{campaign}.geojson``     — NASC biomass points
+  - ``heatmaps/{campaign}_nasc_*.tif``      — NASC spatial heatmap COGs
+  - ``heatmaps/{campaign}_nasc_*.png``      — NASC heatmap PNG overlays
 
 Frequencies:
   - **38 kHz** — from both short_pulse and long_pulse (full coverage)
@@ -1586,6 +1590,9 @@ def plot_combined_echogram(
 _DENOISED_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})--(\w+)--denoised\.zarr$"
 )
+_NASC_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2})--(\w+)--nasc\.zarr$"
+)
 
 
 def _list_denoised_local(local_root: Path) -> list[tuple[str, str, str]]:
@@ -1652,6 +1659,612 @@ def list_already_denoised_days(container: str) -> set[str]:
     """Return set of 'day_key/category' that already have denoised zarrs."""
     entries = list_denoised_zarrs(container)
     return {f"{day}/{cat}" for day, cat, _ in entries}
+
+
+# ---------------------------------------------------------------------------
+# Stage 11: Echodata PMTiles (track from Sv zarr lat/lon)
+# ---------------------------------------------------------------------------
+
+def _extract_track_from_local_zarr(
+    zarr_path: Path,
+    day_key: str,
+    sample_rate: int = 100,
+) -> Optional[dict]:
+    """Extract lat/lon track from a local Sv zarr for one day.
+
+    Returns a GeoJSON Feature (LineString) or None.
+    """
+    try:
+        ds = xr.open_zarr(str(zarr_path), chunks={})
+        if "latitude" not in ds.coords or "longitude" not in ds.coords:
+            ds.close()
+            return None
+
+        lat = ds.coords["latitude"].values
+        lon = ds.coords["longitude"].values
+        ping_time = ds.coords["ping_time"].values if "ping_time" in ds.coords else None
+        ds.close()
+
+        # Sort by ping_time
+        if ping_time is not None:
+            sort_idx = np.argsort(ping_time)
+            lat, lon, ping_time = lat[sort_idx], lon[sort_idx], ping_time[sort_idx]
+
+        # Sample
+        indices = np.arange(0, len(lat), sample_rate)
+        lat_s, lon_s = lat[indices], lon[indices]
+
+        # Filter NaN
+        valid = ~(np.isnan(lat_s) | np.isnan(lon_s))
+        lat_s, lon_s = lat_s[valid], lon_s[valid]
+        if len(lat_s) < 2:
+            return None
+
+        # Remove outlier jumps (> 0.5° from median of 4 nearest neighbors)
+        keep = np.ones(len(lat_s), dtype=bool)
+        for i in range(len(lat_s)):
+            lo, hi = max(0, i - 4), min(len(lat_s), i + 5)
+            nb_lat = np.concatenate([lat_s[lo:i], lat_s[i + 1 : hi]])
+            nb_lon = np.concatenate([lon_s[lo:i], lon_s[i + 1 : hi]])
+            if len(nb_lat) == 0:
+                continue
+            if abs(lat_s[i] - np.median(nb_lat)) > 0.5 or abs(lon_s[i] - np.median(nb_lon)) > 0.5:
+                keep[i] = False
+        lat_s, lon_s = lat_s[keep], lon_s[keep]
+        if len(lat_s) < 2:
+            return None
+
+        coords = [[float(lon_s[i]), float(lat_s[i])] for i in range(len(lat_s))]
+
+        time_start = time_end = None
+        if ping_time is not None:
+            vt = ping_time[indices][valid]
+            if len(vt) > 0:
+                time_start = str(np.datetime_as_string(vt[0], unit="s"))
+                time_end = str(np.datetime_as_string(vt[-1], unit="s"))
+
+        feature = {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": {
+                "date": day_key,
+                "point_count": len(coords),
+                "feature_type": "echodata_track",
+            },
+        }
+        if time_start:
+            feature["properties"]["time_start"] = time_start
+        if time_end:
+            feature["properties"]["time_end"] = time_end
+
+        return feature
+    except Exception as e:
+        log.warning("  Track extraction failed for %s: %s", zarr_path.name, e)
+        return None
+
+
+def build_echodata_pmtiles(
+    output_dir: Path,
+    container_dir: Path,
+    campaign_id: str = "saildrone_tpos_2023",
+    sample_rate: int = 100,
+    layer_name: str = "echodata",
+    minzoom: int = 0,
+    maxzoom: int = 14,
+) -> Optional[Path]:
+    """Build PMTiles for echodata acoustic track from local Sv zarrs.
+
+    Reads lat/lon from each day's Sv zarrs, builds a GeoJSON
+    FeatureCollection of LineStrings, then runs tippecanoe to produce
+    a PMTiles file.
+
+    Args:
+        output_dir: Directory for output files.
+        container_dir: Local directory mirroring the output container
+                       (contains day folders with Sv zarrs).
+        campaign_id: Campaign identifier for naming.
+        sample_rate: Take every Nth point from the Sv zarr.
+        layer_name: Name of the vector tile layer.
+        minzoom: Minimum zoom level.
+        maxzoom: Maximum zoom level.
+
+    Returns:
+        Path to the generated PMTiles file, or None on failure.
+    """
+    import json as json_mod
+    import subprocess
+
+    features = []
+    day_dirs = sorted(
+        d for d in container_dir.iterdir()
+        if d.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}$", d.name)
+    )
+
+    for day_dir in day_dirs:
+        day_key = day_dir.name
+        # Try short_pulse first, then long_pulse
+        for pulse in ("short_pulse", "long_pulse"):
+            zarr_path = day_dir / f"{day_key}--{pulse}.zarr"
+            if zarr_path.exists():
+                feature = _extract_track_from_local_zarr(zarr_path, day_key, sample_rate)
+                if feature:
+                    feature["properties"]["campaign_id"] = campaign_id
+                    features.append(feature)
+                    break  # one feature per day, prefer short_pulse
+
+    if not features:
+        log.error("No track features extracted from Sv zarrs")
+        return None
+
+    log.info("Extracted %d track features from %d day dirs", len(features), len(day_dirs))
+
+    geojson = {"type": "FeatureCollection", "features": features}
+    tiles_dir = output_dir / "tiles"
+    tiles_dir.mkdir(parents=True, exist_ok=True)
+
+    geojson_path = tiles_dir / f"{campaign_id}_echodata.geojson"
+    with open(geojson_path, "w") as f:
+        json_mod.dump(geojson, f)
+    log.info("Wrote GeoJSON: %s (%.1f KB)", geojson_path, geojson_path.stat().st_size / 1024)
+
+    # Run tippecanoe
+    pmtiles_path = tiles_dir / f"{campaign_id}_echodata.pmtiles"
+    cmd = [
+        "tippecanoe",
+        "-o", str(pmtiles_path),
+        f"--layer={layer_name}",
+        f"--minimum-zoom={minzoom}",
+        f"--maximum-zoom={maxzoom}",
+        "--force",
+        "--no-feature-limit",
+        "--no-tile-size-limit",
+        "--no-line-simplification",
+        "--no-tile-compression",
+        str(geojson_path),
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        log.info(
+            "Generated PMTiles: %s (%.1f MB)",
+            pmtiles_path, pmtiles_path.stat().st_size / 1e6,
+        )
+        return pmtiles_path
+    except FileNotFoundError:
+        log.error("tippecanoe not found — install with: sudo apt install tippecanoe  "
+                  "or  brew install tippecanoe")
+        log.info("GeoJSON still available at: %s", geojson_path)
+        return None
+    except subprocess.CalledProcessError as e:
+        log.error("tippecanoe failed: %s", e.stderr)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Stage 12: NASC Biomass GeoJSON
+# ---------------------------------------------------------------------------
+
+def _extract_nasc_from_local_zarr(
+    zarr_path: Path,
+    day_key: str,
+) -> list[dict]:
+    """Extract depth-integrated NASC from a local day NASC zarr.
+
+    Depth-frequency merge strategy (matching os-webapp):
+      - 200 kHz: sum NASC over 10–150m depth (shallow, reliable)
+      - 38 kHz:  sum NASC over 150–500m depth (deep, where 200 kHz is noise)
+      - combined = shallow (200 kHz) + deep (38 kHz)
+
+    Returns a list of GeoJSON Feature dicts (Points).
+    """
+    try:
+        ds = xr.open_zarr(str(zarr_path), consolidated=False)
+    except Exception:
+        try:
+            ds = xr.open_zarr(str(zarr_path))
+        except Exception as e:
+            log.warning("  Failed to open NASC zarr %s: %s", zarr_path.name, e)
+            return []
+
+    try:
+        if "NASC" not in ds:
+            ds.close()
+            return []
+
+        nasc = ds["NASC"]
+        depths = ds["depth"].values if "depth" in ds else None
+        if depths is None:
+            ds.close()
+            return []
+
+        frequencies = (
+            ds["frequency"].values if "frequency" in ds
+            else ds["channel"].values if "channel" in ds
+            else None
+        )
+
+        lats = ds["latitude"].values if "latitude" in ds else None
+        lons = ds["longitude"].values if "longitude" in ds else None
+        ping_times = ds["ping_time"].values if "ping_time" in ds else None
+
+        if lats is None or lons is None:
+            ds.close()
+            return []
+
+        # Identify channel indices
+        ch_38_idx = ch_200_idx = None
+        if frequencies is not None:
+            for i, freq in enumerate(frequencies):
+                f = float(freq)
+                if abs(f - 38000) < 1000:
+                    ch_38_idx = i
+                elif abs(f - 200000) < 1000:
+                    ch_200_idx = i
+
+        if ch_38_idx is None and ch_200_idx is None:
+            ds.close()
+            return []
+
+        # Depth masks
+        shallow_mask = (depths >= 10) & (depths <= 150)
+        deep_mask = (depths > 150) & (depths <= 500)
+        full_38_mask = (depths >= 10) & (depths <= 500)
+        full_200_mask = (depths >= 10) & (depths <= 150)
+
+        nasc_values = nasc.values  # (channel, distance, depth)
+        n_dist = nasc_values.shape[1]
+
+        features = []
+        for i in range(n_dist):
+            lat, lon = float(lats[i]), float(lons[i])
+            if np.isnan(lat) or np.isnan(lon):
+                continue
+
+            nasc_shallow = 0.0
+            if ch_200_idx is not None:
+                vals = nasc_values[ch_200_idx, i, shallow_mask]
+                vals = vals[~np.isnan(vals)]
+                nasc_shallow = float(np.sum(vals))
+
+            nasc_deep = 0.0
+            if ch_38_idx is not None:
+                vals = nasc_values[ch_38_idx, i, deep_mask]
+                vals = vals[~np.isnan(vals)]
+                nasc_deep = float(np.sum(vals))
+
+            nasc_combined = nasc_shallow + nasc_deep
+            if nasc_combined < 0.1:
+                continue
+
+            nasc_38_total = 0.0
+            if ch_38_idx is not None:
+                vals = nasc_values[ch_38_idx, i, full_38_mask]
+                nasc_38_total = float(np.sum(vals[~np.isnan(vals)]))
+
+            nasc_200_total = 0.0
+            if ch_200_idx is not None:
+                vals = nasc_values[ch_200_idx, i, full_200_mask]
+                nasc_200_total = float(np.sum(vals[~np.isnan(vals)]))
+
+            time_str = ""
+            if ping_times is not None:
+                t = ping_times[i]
+                if not np.isnat(t):
+                    time_str = str(np.datetime_as_string(t, unit="s")) + "Z"
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [round(lon, 6), round(lat, 6)],
+                },
+                "properties": {
+                    "nasc_combined": round(nasc_combined, 1),
+                    "nasc_38": round(nasc_38_total, 1),
+                    "nasc_200": round(nasc_200_total, 1),
+                    "date": day_key,
+                    "time": time_str,
+                    "distance_bin": i,
+                },
+            })
+
+        ds.close()
+        return features
+
+    except Exception as e:
+        log.warning("  NASC extraction failed for %s: %s", zarr_path.name, e)
+        try:
+            ds.close()
+        except Exception:
+            pass
+        return []
+
+
+def build_nasc_biomass_geojson(
+    output_dir: Path,
+    container_dir: Path,
+    campaign_id: str = "saildrone_tpos_2023",
+) -> Optional[Path]:
+    """Build NASC Biomass GeoJSON from local per-day NASC zarrs.
+
+    Reads all ``{day}--{pulse}--nasc.zarr`` files, applies the
+    merged-frequency depth integration (200 kHz 10–150m + 38 kHz
+    150–500m), removes sparse outlier bins, caps P99, and writes
+    a GeoJSON FeatureCollection.
+
+    Args:
+        output_dir: Directory for output files.
+        container_dir: Local directory containing day folders.
+        campaign_id: Campaign identifier for naming.
+
+    Returns:
+        Path to the generated GeoJSON file, or None.
+    """
+    import json as json_mod
+    from collections import Counter
+
+    all_features: list[dict] = []
+    day_dirs = sorted(
+        d for d in container_dir.iterdir()
+        if d.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}$", d.name)
+    )
+
+    processed = skipped = 0
+    for day_dir in day_dirs:
+        day_key = day_dir.name
+        day_features: list[dict] = []
+        for item in day_dir.iterdir():
+            if _NASC_RE.match(item.name) and item.is_dir():
+                feats = _extract_nasc_from_local_zarr(item, day_key)
+                day_features.extend(feats)
+        if day_features:
+            all_features.extend(day_features)
+            processed += 1
+        else:
+            skipped += 1
+
+    log.info(
+        "Extracted %d NASC points from %d days (%d skipped)",
+        len(all_features), processed, skipped,
+    )
+
+    if not all_features:
+        log.error("No NASC features extracted")
+        return None
+
+    # Remove orphan points in sparse 1° bins (≤ 2 points)
+    bin_counts = Counter(
+        (round(f["geometry"]["coordinates"][1]),
+         round(f["geometry"]["coordinates"][0]))
+        for f in all_features
+    )
+    sparse_bins = {k for k, v in bin_counts.items() if v <= 2}
+    if sparse_bins:
+        before = len(all_features)
+        all_features = [
+            f for f in all_features
+            if (round(f["geometry"]["coordinates"][1]),
+                round(f["geometry"]["coordinates"][0])) not in sparse_bins
+        ]
+        log.info("Removed %d orphan points from %d sparse bins", before - len(all_features), len(sparse_bins))
+
+    # Cap extreme outliers at P99
+    nasc_vals = sorted(f["properties"]["nasc_combined"] for f in all_features)
+    if nasc_vals:
+        p99 = nasc_vals[int(len(nasc_vals) * 0.99)]
+        capped = 0
+        for f in all_features:
+            if f["properties"]["nasc_combined"] > p99:
+                f["properties"]["nasc_combined"] = round(p99, 1)
+                capped += 1
+        if capped:
+            log.info("Capped %d values to P99=%.1f", capped, p99)
+
+    # Stats
+    vals = [f["properties"]["nasc_combined"] for f in all_features]
+    log.info(
+        "NASC stats — count=%d, min=%.0f, max=%.0f, mean=%.0f, median=%.0f",
+        len(vals), min(vals), max(vals),
+        sum(vals) / len(vals),
+        vals[len(vals) // 2],
+    )
+
+    geojson = {"type": "FeatureCollection", "features": all_features}
+
+    nasc_dir = output_dir / "nasc_biomass"
+    nasc_dir.mkdir(parents=True, exist_ok=True)
+    out_path = nasc_dir / f"{campaign_id}.geojson"
+    with open(out_path, "w") as f:
+        json_mod.dump(geojson, f)
+    log.info("Wrote NASC GeoJSON: %s (%.1f KB)", out_path, out_path.stat().st_size / 1024)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Stage 13: NASC Heatmap COGs
+# ---------------------------------------------------------------------------
+
+def build_nasc_heatmap_cogs(
+    geojson_path: Path,
+    output_dir: Path,
+    campaign_id: str = "saildrone_tpos_2023",
+    resolution_deg: float = 0.05,
+    search_radius_deg: float = 0.5,
+    nodata: float = -9999.0,
+) -> list[Path]:
+    """Rasterize NASC points to Cloud-Optimized GeoTIFF heatmaps.
+
+    Generates COGs + PNG overlays for nasc_combined, nasc_38, and nasc_200
+    using scipy interpolation and rasterio, matching the os-webapp heatmap
+    pattern.
+
+    Args:
+        geojson_path: Path to NASC biomass GeoJSON.
+        output_dir: Directory for output COG/PNG files.
+        campaign_id: Campaign identifier.
+        resolution_deg: Spatial resolution in degrees.
+        search_radius_deg: Maximum distance from track for valid cells.
+        nodata: NoData value for the GeoTIFF.
+
+    Returns:
+        List of generated file paths.
+    """
+    import json as json_mod
+
+    try:
+        import rasterio
+        from rasterio.transform import from_bounds
+        from scipy.interpolate import griddata
+        from scipy.spatial import cKDTree
+    except ImportError as e:
+        log.error("Missing dependency for heatmaps: %s — install rasterio + scipy", e)
+        return []
+
+    with open(geojson_path) as f:
+        geojson = json_mod.load(f)
+
+    features = geojson.get("features", [])
+    if not features:
+        log.error("No features in GeoJSON")
+        return []
+
+    lons = np.array([f["geometry"]["coordinates"][0] for f in features])
+    lats = np.array([f["geometry"]["coordinates"][1] for f in features])
+
+    heatmap_dir = output_dir / "heatmaps"
+    heatmap_dir.mkdir(parents=True, exist_ok=True)
+
+    variables = {
+        "nasc_combined": {"cmap": "YlOrRd", "label": "NASC Combined (m² nmi⁻²)"},
+        "nasc_38":       {"cmap": "Blues",   "label": "NASC 38 kHz (m² nmi⁻²)"},
+        "nasc_200":      {"cmap": "Greens",  "label": "NASC 200 kHz (m² nmi⁻²)"},
+    }
+
+    generated: list[Path] = []
+    manifest_entries = []
+
+    for var_name, var_cfg in variables.items():
+        values = np.array([f["properties"].get(var_name, 0) for f in features], dtype=np.float64)
+        valid = ~np.isnan(values) & (values > 0)
+        if valid.sum() < 3:
+            log.warning("  %s: not enough valid points (%d)", var_name, valid.sum())
+            continue
+
+        vlon, vlat, vval = lons[valid], lats[valid], values[valid]
+        log.info("  %s: %d valid points", var_name, len(vval))
+
+        # Grid bounds with buffer
+        buf = resolution_deg * 2
+        lon_min, lon_max = vlon.min() - buf, vlon.max() + buf
+        lat_min, lat_max = vlat.min() - buf, vlat.max() + buf
+        n_cols = int(np.ceil((lon_max - lon_min) / resolution_deg))
+        n_rows = int(np.ceil((lat_max - lat_min) / resolution_deg))
+
+        grid_lon = np.linspace(lon_min, lon_max, n_cols)
+        grid_lat = np.linspace(lat_min, lat_max, n_rows)
+        grid_lon_2d, grid_lat_2d = np.meshgrid(grid_lon, grid_lat)
+
+        # Interpolate
+        grid_values = griddata(
+            np.column_stack([vlon, vlat]),
+            vval,
+            (grid_lon_2d, grid_lat_2d),
+            method="linear",
+            fill_value=np.nan,
+        )
+
+        # Mask cells too far from any data point
+        tree = cKDTree(np.column_stack([vlon, vlat]))
+        grid_pts = np.column_stack([grid_lon_2d.ravel(), grid_lat_2d.ravel()])
+        dists, _ = tree.query(grid_pts)
+        mask = dists.reshape(grid_values.shape) > search_radius_deg
+        grid_values[mask] = np.nan
+
+        # Write GeoTIFF
+        transform = from_bounds(lon_min, lat_min, lon_max, lat_max, n_cols, n_rows)
+        tif_path = heatmap_dir / f"{campaign_id}_{var_name}.tif"
+        data_out = np.where(np.isnan(grid_values), nodata, grid_values).astype(np.float32)
+        # Flip rows for north-up raster
+        data_out = np.flipud(data_out)
+
+        with rasterio.open(
+            str(tif_path), "w", driver="GTiff",
+            height=n_rows, width=n_cols, count=1, dtype="float32",
+            crs="EPSG:4326", transform=transform, nodata=nodata,
+        ) as dst:
+            dst.write(data_out, 1)
+
+        # Convert to COG
+        cog_path = heatmap_dir / f"{campaign_id}_{var_name}_cog.tif"
+        try:
+            import subprocess
+            subprocess.run(
+                [
+                    "gdal_translate", "-of", "COG",
+                    "-co", "COMPRESS=DEFLATE",
+                    str(tif_path), str(cog_path),
+                ],
+                capture_output=True, text=True, check=True,
+            )
+            tif_path.unlink()
+            log.info("  COG: %s (%.1f KB)", cog_path.name, cog_path.stat().st_size / 1024)
+            generated.append(cog_path)
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            log.warning("  gdal_translate not available (%s), keeping raw GeoTIFF", e)
+            cog_path = tif_path
+            generated.append(tif_path)
+
+        # Render PNG overlay
+        png_path = heatmap_dir / f"{campaign_id}_{var_name}.png"
+        valid_data = grid_values[~np.isnan(grid_values)]
+        if len(valid_data) > 0:
+            vmin, vmax = np.percentile(valid_data, [2, 98])
+            cmap_obj = plt.get_cmap(var_cfg["cmap"])
+            norm = mcolors.Normalize(vmin=max(vmin, 0.1), vmax=vmax)
+
+            rgba = cmap_obj(norm(grid_values))
+            rgba[np.isnan(grid_values), 3] = 0  # transparent where no data
+
+            fig, ax = plt.subplots(figsize=(12, 8))
+            ax.imshow(
+                rgba,
+                extent=[lon_min, lon_max, lat_min, lat_max],
+                origin="lower", aspect="auto",
+            )
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+            ax.set_title(f"{var_cfg['label']} — {campaign_id}")
+            sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
+            sm.set_array([])
+            fig.colorbar(sm, ax=ax, label=var_cfg["label"], shrink=0.8)
+            fig.savefig(png_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            generated.append(png_path)
+            log.info("  PNG: %s (%.1f KB)", png_path.name, png_path.stat().st_size / 1024)
+
+        # Manifest entry
+        manifest_entries.append({
+            "variable": var_name,
+            "label": var_cfg["label"],
+            "cog": cog_path.name,
+            "png": png_path.name if png_path.exists() else None,
+            "bounds": [lon_min, lat_min, lon_max, lat_max],
+            "resolution_deg": resolution_deg,
+            "point_count": int(valid.sum()),
+        })
+
+    # Write manifest
+    manifest_path = heatmap_dir / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json_mod.dump({
+            "campaign_id": campaign_id,
+            "type": "nasc_heatmaps",
+            "heatmaps": manifest_entries,
+        }, f, indent=2)
+    generated.append(manifest_path)
+    log.info("Manifest: %s", manifest_path)
+
+    return generated
 
 
 # ---------------------------------------------------------------------------
@@ -2100,6 +2713,62 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
         campaign_ds.close()
         del campaign_ds
         gc.collect()
+
+    # ── Stage 11: Echodata PMTiles ─────────────────────────────
+    log.info("=" * 70)
+    log.info("STAGE 11: Echodata PMTiles (acoustic track)")
+    log.info("=" * 70)
+    t0 = time.time()
+
+    container_dir = getattr(args, '_local_save_dir', None)
+    if container_dir is not None:
+        container_dir = container_dir / output_container
+    else:
+        container_dir = OUTPUT_DIR / output_container
+    if not container_dir.exists():
+        container_dir = OUTPUT_DIR
+
+    pmtiles_path = build_echodata_pmtiles(
+        output_dir=OUTPUT_DIR,
+        container_dir=container_dir,
+        campaign_id="saildrone_tpos_2023",
+        sample_rate=100,
+    )
+    if pmtiles_path:
+        log.info("Stage 11 complete: %s (%.1fs)", pmtiles_path, time.time() - t0)
+    else:
+        log.warning("Stage 11: PMTiles generation failed or tippecanoe not installed (%.1fs)", time.time() - t0)
+
+    # ── Stage 12: NASC Biomass GeoJSON ─────────────────────────
+    if not args.skip_nasc:
+        log.info("=" * 70)
+        log.info("STAGE 12: NASC Biomass GeoJSON")
+        log.info("=" * 70)
+        t0 = time.time()
+
+        nasc_geojson_path = build_nasc_biomass_geojson(
+            output_dir=OUTPUT_DIR,
+            container_dir=container_dir,
+            campaign_id="saildrone_tpos_2023",
+        )
+        if nasc_geojson_path:
+            log.info("Stage 12 complete: %s (%.1fs)", nasc_geojson_path, time.time() - t0)
+        else:
+            log.warning("Stage 12: No NASC GeoJSON produced (%.1fs)", time.time() - t0)
+
+        # ── Stage 13: NASC Heatmap COGs ────────────────────────
+        if nasc_geojson_path:
+            log.info("=" * 70)
+            log.info("STAGE 13: NASC Heatmap COGs")
+            log.info("=" * 70)
+            t0 = time.time()
+
+            heatmap_files = build_nasc_heatmap_cogs(
+                geojson_path=nasc_geojson_path,
+                output_dir=OUTPUT_DIR,
+                campaign_id="saildrone_tpos_2023",
+            )
+            log.info("Stage 13 complete: %d files (%.1fs)", len(heatmap_files), time.time() - t0)
 
     total = time.time() - pipeline_start
     log.info("=" * 70)
