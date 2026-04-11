@@ -90,26 +90,26 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 
 ### Stage 4: Compute Sv
 
-- **277 raw Sv zarrs** (137 short_pulse + 140 long_pulse)
+- **277 per-pulse-mode Sv zarrs** (137 short_pulse + 140 long_pulse) — intermediates
 - Typical shape: `(channels=2, ping_time=~15000-32000, range_sample=~3600-7200)`
-- Stored as e.g. `2023-07-15/2023-07-15--short_pulse.zarr`
+- **Final per-day products**: 141 combined Sv zarrs (both pulse modes merged, channels: `38kHz`, `200kHz`)
 
 ### Stage 5–6: Calibrate + Enrich + Denoise
 
-- **268 denoised zarrs** (132 short_pulse + 136 long_pulse)
+- **268 per-pulse-mode denoised zarrs** (132 short_pulse + 136 long_pulse) — intermediates
 - 9 raw zarrs had no matching GPS or failed calibration → skipped
 - 4-stage denoising: background noise removal → impulse noise → attenuation correction → transient removal
 - GPS (latitude/longitude) merged from `gpsdata` container into denoised datasets
-- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--denoised.zarr`
+- **Final per-day products**: 140 combined denoised zarrs (both pulse modes merged)
 
 **GPS coverage issue**: 34 denoised zarrs have all-NaN GPS coordinates. These are consistently one pulse mode per affected day — the GPS merge succeeded for one mode but not the other (likely timing mismatch between GPS timestamps and sonar ping times for the alternate pulse mode).
 
 ### Stage 7: Per-day MVBS
 
-- **261 MVBS zarrs** (+ 261 NetCDF copies)
+- **261 per-pulse-mode MVBS zarrs** (+ 261 NetCDF copies) — intermediates
 - Bins: `range_bin=1m`, `ping_time_bin=10s`
 - Computed with `echopype.commongrid.compute_MVBS()`
-- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--mvbs.zarr` and `.nc`
+- **Final per-day products**: 137 combined MVBS zarrs (both pulse modes merged)
 
 ### Stage 7 (NASC): Per-day NASC — Fast Vectorized
 
@@ -117,12 +117,12 @@ Stage 14: Combined daily products + per-day echograms (NEW)
 
 **Replacement** (`run_nasc_parallel.py`): Pure numpy + haversine + `np.bincount`. ~7 GB per worker, 1–17 seconds per zarr. **~600× faster.**
 
-- **229 NASC zarrs** (+ 229 NetCDF copies)
+- **229 per-pulse-mode NASC zarrs** (+ 229 NetCDF copies) — intermediates
   - 109 short_pulse + 120 long_pulse
 - Bins: `range_bin=10m`, `dist_bin=0.5nmi`
 - **222 computed in 2 minutes** (10 parallel workers)
 - 34 skipped (all-NaN GPS), 5 failed (see §4)
-- Stored as e.g. `2023-07-15/2023-07-15--short_pulse--nasc.zarr` and `.nc`
+- **Final per-day products**: 216 combined NASC zarrs (per-frequency: 38kHz + 200kHz)
 
 ### Stage 8: Per-day Echograms — SKIPPED
 
@@ -172,24 +172,27 @@ Skipped with `--skip-perday-echograms` to prioritise campaign-level products. Ca
 - Grid: 0.5° resolution, scipy griddata interpolation, cKDTree search radius 0.5°
 - Stored in `/mnt/data/output/heatmaps/`
 
-### Stage 14: Combined Daily Products + Per-day Echograms (NEW)
+### Stage 14: Pulse-Mode Merge + Per-day Echograms
 
-Merges short_pulse + long_pulse into single per-day combined zarrs. Channels renamed from instrument IDs (`EKA 266972-07 ES38-18|200-18C`) to frequency labels (`38kHz`, `200kHz`). Each dataset includes a `pulse_mode` variable (0=long, 1=short) for provenance.
+The raw pipeline (stages 4–7) processes each pulse mode separately, producing per-pulse-mode intermediate zarrs. Stage 14 merges these into the **final per-day products** — one zarr per day per product level, with both pulse modes combined.
 
-**Products combined:**
+Channels renamed from instrument IDs (`EKA 266972-07 ES38-18|200-18C`) to frequency labels (`38kHz`, `200kHz`). Each dataset includes a `pulse_mode` variable (0=long, 1=short) for provenance.
 
-| Product | Count | Method |
-|---------|-------|--------|
-| Combined MVBS | 137 | Concat along `ping_time` (depth aligned at 1m) |
-| Combined denoised Sv | 140 | Interpolated to 0.5m common depth grid, concat along `ping_time` |
-| Combined raw Sv | 141 | Same interpolation as denoised |
-| Combined NASC | 216 | Per-frequency files, concat along `distance` (offset to avoid overlap) |
+**Final per-day products:**
 
-Stored as e.g. `2023-07-15/2023-07-15--combined--mvbs.zarr` (NASC: `2023-07-15--combined--nasc--38kHz.zarr`).
+| Product | Count | Merge method | Example filename |
+|---------|-------|-------------|------------------|
+| Sv (raw) | 141 | Interpolated to 0.5m common depth grid, concat along `ping_time` | `2023-07-15--combined--sv.zarr` |
+| Denoised Sv | 140 | Same interpolation as raw Sv | `2023-07-15--combined--denoised.zarr` |
+| MVBS | 137 | Concat along `ping_time` (depth already aligned at 1m) | `2023-07-15--combined--mvbs.zarr` |
+| NASC (per-freq) | 216 | Concat along `distance` (offset to avoid overlap) | `2023-07-15--combined--nasc--38kHz.zarr` |
+
+The per-pulse-mode zarrs (`*--short_pulse--*.zarr`, `*--long_pulse--*.zarr`) remain on disk as intermediates but are **not the deliverable products**.
 
 **Per-day echograms:**
 
 - **1,610 PNG files** (3.3 GB total)
+- Generated from the combined zarrs (not per-pulse-mode)
 - 3 products (MVBS, denoised, raw Sv) × 2 frequencies (38kHz, 200kHz) × 2 colormaps (`ocean_r`, `EK500`)
 - Each echogram has a **pulse-mode colour bar** at the bottom: orange = Short pulse, blue = Long pulse
 - Time axis labelled with hourly ticks (UTC)
@@ -279,22 +282,19 @@ Stored as e.g. `2023-07-15/2023-07-15--combined--mvbs.zarr` (NASC: `2023-07-15--
 
 ```
 /mnt/data/output/
-├── sd-tpos2023-full-v01/           # 300 GB — per-day products
+├── sd-tpos2023-full-v01/           # ~380 GB — per-day products
 │   ├── 2023-05-30/
-│   │   ├── 2023-05-30--short_pulse.zarr          # raw Sv
-│   │   ├── 2023-05-30--short_pulse--denoised.zarr # denoised Sv
-│   │   ├── 2023-05-30--short_pulse--mvbs.zarr     # MVBS
-│   │   ├── 2023-05-30--short_pulse--mvbs.nc       # MVBS (NetCDF)
-│   │   ├── 2023-05-30--short_pulse--nasc.zarr     # NASC
-│   │   ├── 2023-05-30--short_pulse--nasc.nc       # NASC (NetCDF)
-│   │   ├── 2023-05-30--long_pulse.zarr
-│   │   ├── 2023-05-30--long_pulse--denoised.zarr
-│   │   ├── ... (same pattern for long_pulse)
-│   │   ├── 2023-05-30--combined--mvbs.zarr        # ← NEW: combined daily
-│   │   ├── 2023-05-30--combined--denoised.zarr
-│   │   ├── 2023-05-30--combined--sv.zarr
-│   │   ├── 2023-05-30--combined--nasc--38kHz.zarr
-│   │   ├── 2023-05-30--combined--nasc--200kHz.zarr
+│   │   ├── 2023-05-30--combined--sv.zarr           # ← FINAL: raw Sv (both pulse modes)
+│   │   ├── 2023-05-30--combined--denoised.zarr     # ← FINAL: denoised Sv
+│   │   ├── 2023-05-30--combined--mvbs.zarr          # ← FINAL: MVBS
+│   │   ├── 2023-05-30--combined--nasc--38kHz.zarr   # ← FINAL: NASC 38 kHz
+│   │   ├── 2023-05-30--combined--nasc--200kHz.zarr  # ← FINAL: NASC 200 kHz
+│   │   ├── 2023-05-30--short_pulse.zarr             # intermediate
+│   │   ├── 2023-05-30--short_pulse--denoised.zarr   # intermediate
+│   │   ├── 2023-05-30--short_pulse--mvbs.zarr       # intermediate
+│   │   ├── 2023-05-30--long_pulse.zarr              # intermediate
+│   │   ├── 2023-05-30--long_pulse--denoised.zarr    # intermediate
+│   │   └── ... (+ .nc copies, long_pulse mvbs/nasc)
 │   ├── 2023-05-31/
 │   ├── ... (141 day directories)
 │   └── 2023-11-05/
@@ -321,7 +321,7 @@ ls /mnt/data/output/sd-tpos2023-full-v01/
 source ~/workspace/venv/bin/activate
 python3 -c "
 import xarray as xr
-ds = xr.open_zarr('/mnt/data/output/sd-tpos2023-full-v01/2023-07-15/2023-07-15--short_pulse--nasc.zarr')
+ds = xr.open_zarr('/mnt/data/output/sd-tpos2023-full-v01/2023-07-15/2023-07-15--combined--mvbs.zarr')
 print(ds)
 "
 ```
@@ -349,22 +349,34 @@ azcopy sync "/mnt/data/output/sd-tpos2023-full-v01" \
 
 ## 6. Data Products Summary
 
+**Final per-day products** (combined pulse modes — the deliverables):
+
+| Product | Count | Size | Format | Filename pattern |
+|---------|-------|------|--------|------------------|
+| Sv (raw) | 141 | ~40 GB | zarr | `*--combined--sv.zarr` |
+| Denoised Sv | 140 | ~30 GB | zarr | `*--combined--denoised.zarr` |
+| MVBS | 137 | ~9 GB | zarr | `*--combined--mvbs.zarr` |
+| NASC (per-freq) | 216 | ~3 MB | zarr | `*--combined--nasc--{38kHz,200kHz}.zarr` |
+| Per-day echograms | 1,610 | 3.3 GB | PNG | `perday_echograms/` |
+
+**Campaign-level products:**
+
 | Product | Count | Size | Format | Location |
 |---------|-------|------|--------|----------|
-| Raw Sv (per-day) | 277 | 193 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| Denoised Sv | 268 | 91 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| MVBS (per-day) | 261 | 9 GB | zarr + nc | `sd-tpos2023-full-v01/{day}/` |
-| NASC (per-day) | 229 | 44 MB | zarr + nc | `sd-tpos2023-full-v01/{day}/` |
 | Campaign MVBS (38 kHz) | 1 | 8.9 GB | zarr | `campaign_mvbs_combined_38kHz.zarr` |
 | Campaign echograms | 12 | 593 MB | PNG | `campaign_echograms/` |
 | Echodata track tiles | 1 | 1.3 MB | PMTiles | `tiles/` |
 | NASC biomass points | 6,135 | 1.5 MB | GeoJSON | `nasc_biomass/` |
 | NASC heatmaps | 3+3 | 656 KB | COG + PNG | `heatmaps/` |
-| Combined MVBS (per-day) | 137 | ~9 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| Combined denoised (per-day) | 140 | ~30 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| Combined raw Sv (per-day) | 141 | ~40 GB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| Combined NASC (per-day) | 216 | ~3 MB | zarr | `sd-tpos2023-full-v01/{day}/` |
-| Per-day echograms | 1,610 | 3.3 GB | PNG | `perday_echograms/` |
+
+**Intermediate per-pulse-mode products** (on disk but not deliverables):
+
+| Product | Count | Size | Format |
+|---------|-------|------|--------|
+| Raw Sv | 277 | 193 GB | zarr |
+| Denoised Sv | 268 | 91 GB | zarr |
+| MVBS | 261 | 9 GB | zarr + nc |
+| NASC | 229 | 44 MB | zarr + nc |
 
 ---
 
