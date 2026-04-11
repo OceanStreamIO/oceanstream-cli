@@ -165,11 +165,41 @@ def _channel_freq_label(ds: xr.Dataset, ch_idx: int) -> str:
     if "frequency_nominal" in ds.coords or "frequency_nominal" in ds.data_vars:
         return _resolve_freq_label(float(ds["frequency_nominal"].values[ch_idx]))
     ch_name = str(ds.channel.values[ch_idx])
-    if "ES200" in ch_name or "200" in ch_name:
-        return "200kHz"
-    if "ES38" in ch_name or "38" in ch_name:
-        return "38kHz"
+    return _freq_from_channel_name(ch_name)
+
+
+# Cache: channel_name → frequency_label, populated from denoised/raw zarrs
+_CHANNEL_FREQ_CACHE: dict[str, str] = {}
+
+
+def _freq_from_channel_name(ch_name: str) -> str:
+    """Resolve frequency from channel name, using cache populated from denoised zarrs."""
+    if ch_name in _CHANNEL_FREQ_CACHE:
+        return _CHANNEL_FREQ_CACHE[ch_name]
+    # Can't determine — return channel name as-is
     return ch_name
+
+
+def _populate_freq_cache(day: str) -> None:
+    """Read frequency_nominal from denoised (or raw Sv) zarrs to build
+    channel_name → freq_label mapping."""
+    day_dir = BASE_DIR / day
+    for mode in ["short_pulse", "long_pulse"]:
+        for suffix in ["--denoised", ""]:
+            path = day_dir / f"{day}--{mode}{suffix}.zarr"
+            if not path.is_dir():
+                continue
+            try:
+                ds = xr.open_zarr(str(path), consolidated=False)
+                if "frequency_nominal" in ds.coords or "frequency_nominal" in ds.data_vars:
+                    chans = ds.channel.values
+                    freqs = ds["frequency_nominal"].values
+                    for ch, f in zip(chans, freqs):
+                        _CHANNEL_FREQ_CACHE[str(ch)] = _resolve_freq_label(float(f))
+                ds.close()
+                break  # Got what we need for this mode
+            except Exception:
+                continue
 
 
 def combine_mvbs_or_nasc(
@@ -711,6 +741,10 @@ def process_one_day(args: tuple) -> tuple[str, int, int]:
 
     log.info("Processing %s ...", day)
     t0 = time.time()
+
+    # Populate frequency cache from denoised/raw zarrs
+    _CHANNEL_FREQ_CACHE.clear()
+    _populate_freq_cache(day)
 
     combined_zarrs = combine_one_day(day, products, skip_existing=skip_existing)
 
