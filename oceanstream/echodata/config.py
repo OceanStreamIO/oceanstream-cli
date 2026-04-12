@@ -105,7 +105,7 @@ FREQUENCY_PRESETS: dict[int, dict[str, dict]] = {
             "range_window": 15,
             "ping_window": 40,
             "SNR_threshold": "3.0dB",
-            "background_noise_max": "-110.0dB",
+            "background_noise_max": "-115.0dB",
         },
         "transient": {
             "exclude_above": 100.0,

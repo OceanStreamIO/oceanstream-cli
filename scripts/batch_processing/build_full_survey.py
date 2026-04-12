@@ -648,7 +648,8 @@ def denoise_day_zarr(
 ) -> str:
     """Apply 4-stage denoising to a day zarr.
 
-    Pattern from process_campaign.py:denoise_day().
+    Uses frequency-specific parameters from FREQUENCY_PRESETS so that
+    38 kHz and 200 kHz channels get appropriately tuned thresholds.
 
     The transient noise mask uses ``dask.array.map_overlap`` which
     re-chunks the data even after ``.load()``.  Using the threaded
@@ -658,7 +659,7 @@ def denoise_day_zarr(
     """
     import dask
     from oceanstream.echodata.denoise import apply_denoising
-    from oceanstream.echodata.config import DenoiseConfig
+    from oceanstream.echodata.config import DenoiseConfig, FREQUENCY_PRESETS
 
     log.info("Denoising %s/%s", day_key, category)
 
@@ -674,7 +675,10 @@ def denoise_day_zarr(
     # dask.array.map_overlap (used by transient_noise_mask) can
     # parallelise the kernel across CPU cores.
     with dask.config.set(scheduler=dask_scheduler):
-        denoise_config = DenoiseConfig(methods=DENOISE_METHODS)
+        denoise_config = DenoiseConfig(
+            methods=DENOISE_METHODS,
+            use_frequency_specific=True,
+        )
 
         # Step 1: Mask-based denoising (impulse, transient, attenuation)
         mask_methods = [m for m in DENOISE_METHODS if m != "background"]
@@ -686,6 +690,7 @@ def denoise_day_zarr(
             ds_denoised = ds
 
         # Step 2: echopype background noise removal per channel
+        #   Uses frequency-specific params from FREQUENCY_PRESETS.
         if "background" in DENOISE_METHODS:
             from echopype.clean import remove_background_noise as ep_remove_bgn
 
@@ -693,21 +698,54 @@ def denoise_day_zarr(
             parent_attrs.setdefault("processing_level", "Level 2A")
             parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
 
+            # Pre-compute per-channel BGN params
+            bgn_params_by_ch: dict[int, dict] = {}
+            for ch_idx in range(ds_denoised.sizes.get("channel", 1)):
+                freq = float(
+                    ds_denoised["frequency_nominal"].isel(channel=ch_idx).compute().item()
+                )
+                freq_int = int(round(freq))
+                if freq_int in FREQUENCY_PRESETS and "background" in FREQUENCY_PRESETS[freq_int]:
+                    fp = FREQUENCY_PRESETS[freq_int]["background"]
+                else:
+                    fp = FREQUENCY_PRESETS[38000]["background"]  # fallback
+                bgn_params_by_ch[ch_idx] = {
+                    "ping_num": fp.get("ping_window", 50),
+                    "range_sample_num": fp.get("range_window", 20),
+                    "SNR_threshold": fp.get("SNR_threshold", "3.0dB"),
+                    "background_noise_max": fp.get("background_noise_max", "-125.0dB"),
+                }
+                log.info(
+                    "  BGN params for ch %d (%d Hz): SNR=%s, noise_max=%s",
+                    ch_idx, freq_int,
+                    bgn_params_by_ch[ch_idx]["SNR_threshold"],
+                    bgn_params_by_ch[ch_idx]["background_noise_max"],
+                )
+
             def _remove_bgn_one_channel(ch_ds):
                 ch_ds.attrs.update(parent_attrs)
-                result = ep_remove_bgn(
-                    ch_ds,
-                    ping_num=50,
-                    range_sample_num=20,
-                    SNR_threshold="3.0dB",
-                    background_noise_max="-125.0dB",
-                )
+                # Look up params by frequency
+                freq = float(ch_ds["frequency_nominal"].compute().item())
+                freq_int = int(round(freq))
+                # Find matching ch_idx
+                params = None
+                for ci, bp in bgn_params_by_ch.items():
+                    ch_freq = int(round(float(
+                        ds_denoised["frequency_nominal"].isel(channel=ci).compute().item()
+                    )))
+                    if ch_freq == freq_int:
+                        params = bp
+                        break
+                if params is None:
+                    params = bgn_params_by_ch[0]
+
+                result = ep_remove_bgn(ch_ds, **params)
                 return result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
 
             sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
             sv_clean.name = "Sv"
             ds_denoised["Sv"] = sv_clean
-            log.info("  Background noise removal applied")
+            log.info("  Background noise removal applied (frequency-specific)")
 
         # Rechunk and save
         output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
