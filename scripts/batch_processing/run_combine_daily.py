@@ -132,11 +132,11 @@ def normalize_string_dtypes(ds: xr.Dataset) -> xr.Dataset:
 
 
 def _get_freq_channel_map(ds: xr.Dataset) -> dict[float, int]:
-    """Map frequency_nominal → channel index."""
+    """Map frequency_nominal → channel index. Skips NaN frequencies."""
     if "frequency_nominal" not in ds.coords and "frequency_nominal" not in ds.data_vars:
         return {}
     freqs = ds["frequency_nominal"].values
-    return {float(f): i for i, f in enumerate(freqs)}
+    return {float(f): i for i, f in enumerate(freqs) if not np.isnan(f)}
 
 
 def _clear_encoding(ds: xr.Dataset) -> xr.Dataset:
@@ -824,7 +824,8 @@ def generate_echograms_for_day(
 
         # Determine which frequencies are available
         if "channel" in ds.coords:
-            freq_labels = [str(c) for c in ds.channel.values]
+            freq_labels = [str(c) for c in ds.channel.values
+                           if "nan" not in str(c).lower()]
         else:
             freq_labels = ["38kHz"]
 
