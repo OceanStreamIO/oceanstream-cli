@@ -624,8 +624,8 @@ def _draw_pulse_axis(
     """Draw pulse-mode colour bar (blue=Long, orange=Short) using time-proportional x."""
     from matplotlib.patches import Rectangle
 
-    colors = {0: "#2196F3", 1: "#FF9800"}
-    labels_map = {0: "Long pulse", 1: "Short pulse"}
+    colors = {0: "#2196F3", 1: "#FF9800", -1: "#9E9E9E"}
+    labels_map = {0: "Long pulse", 1: "Short pulse", -1: "Unknown"}
 
     x_min, x_max = x_hours[0], x_hours[-1]
     total_span = x_max - x_min
@@ -738,7 +738,11 @@ def render_echogram(
 
     pulse_mode = None
     if "pulse_mode" in ds:
-        pulse_mode = ds["pulse_mode"].values
+        pm = ds["pulse_mode"].values
+        # Replace NaN with -1 (unknown) so int conversion works
+        if np.issubdtype(pm.dtype, np.floating):
+            pm = np.where(np.isnan(pm), -1, pm).astype(np.int8)
+        pulse_mode = pm
 
     has_pulse = pulse_mode is not None
 
