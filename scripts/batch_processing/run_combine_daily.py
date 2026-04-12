@@ -606,66 +606,56 @@ def combine_one_day(
 # ---------------------------------------------------------------------------
 
 def _build_hourly_ticks(
-    ping_time: np.ndarray,
-    n_pings: int,
-) -> tuple[list[int], list[str], list[int], list[str]]:
-    """Build hourly tick positions for a single-day echogram."""
-    major_ticks: list[int] = []
-    major_labels: list[str] = []
-
-    pt_hours = (
-        (ping_time - ping_time[0]).astype("timedelta64[s]").astype(float) / 3600
-    )
-
-    for h in range(0, 25):
-        after = pt_hours >= h
-        if after.any():
-            idx = int(np.argmax(after))
-            if idx < n_pings:
-                major_ticks.append(idx)
-                # Label as HH:00
-                ts = ping_time[idx]
-                hh = int((ts - ts.astype("datetime64[D]")).astype("timedelta64[h]").astype(int))
-                major_labels.append(f"{hh:02d}:00")
-
-    return major_ticks, major_labels, [], []
+    x_hours: np.ndarray,
+) -> tuple[list[float], list[str]]:
+    """Build hourly tick positions for a time-proportional x-axis (hours since midnight)."""
+    h_min = int(np.floor(x_hours[0]))
+    h_max = int(np.ceil(x_hours[-1]))
+    ticks = [float(h) for h in range(h_min, h_max + 1)]
+    labels = [f"{int(h) % 24:02d}:00" for h in ticks]
+    return ticks, labels
 
 
 def _draw_pulse_axis(
     ax_pulse: plt.Axes,
     pulse_mode: np.ndarray,
-    n_pings: int,
+    x_hours: np.ndarray,
 ) -> None:
-    """Draw pulse-mode colour bar (blue=Long, orange=Short)."""
+    """Draw pulse-mode colour bar (blue=Long, orange=Short) using time-proportional x."""
     from matplotlib.patches import Rectangle
 
     colors = {0: "#2196F3", 1: "#FF9800"}
     labels_map = {0: "Long pulse", 1: "Short pulse"}
 
+    x_min, x_max = x_hours[0], x_hours[-1]
+    total_span = x_max - x_min
+
     changes = np.where(np.diff(pulse_mode))[0] + 1
     starts = np.concatenate([[0], changes])
-    ends = np.concatenate([changes, [n_pings]])
+    ends = np.concatenate([changes, [len(pulse_mode)]])
 
     drawn_labels: set[int] = set()
     for s, e in zip(starts, ends):
         mode = int(pulse_mode[s])
+        x0 = x_hours[s]
+        x1 = x_hours[min(e, len(x_hours)) - 1]
+        w = x1 - x0
         lbl = labels_map[mode] if mode not in drawn_labels else None
         rect = Rectangle(
-            (s, 0), e - s, 1,
+            (x0, 0), w, 1,
             facecolor=colors[mode], alpha=0.85, edgecolor="none",
             label=lbl,
         )
         ax_pulse.add_patch(rect)
-        seg_width = e - s
-        if seg_width > n_pings * 0.008:
+        if w > total_span * 0.008:
             ax_pulse.text(
-                s + seg_width / 2, 0.5, labels_map[mode],
+                x0 + w / 2, 0.5, labels_map[mode],
                 ha="center", va="center", fontsize=7,
                 fontweight="bold", color="white",
             )
         drawn_labels.add(mode)
 
-    ax_pulse.set_xlim(0, n_pings)
+    ax_pulse.set_xlim(x_min, x_max)
     ax_pulse.set_ylim(0, 1)
     ax_pulse.set_yticks([])
     ax_pulse.set_ylabel("Pulse", fontsize=9, rotation=0, labelpad=30, va="center")
@@ -684,7 +674,11 @@ def render_echogram(
     cmap,
     output_dir: Path,
 ) -> Path | None:
-    """Render one echogram from a combined daily dataset."""
+    """Render one echogram from a combined daily dataset.
+
+    Uses time-proportional x-axis so gaps appear as blank regions
+    instead of being collapsed.
+    """
     # Select frequency channel
     if "channel" in ds.coords:
         chans = [str(c) for c in ds.channel.values]
@@ -730,23 +724,27 @@ def render_echogram(
     depth_plot = depth_vals[depth_mask]
     sv_data = sv_raw[:, :len(depth_plot)]
 
-    # Remove fully-NaN pings
+    # Count valid (non-NaN) pings for the title
     valid_pings = ~np.isnan(sv_data).all(axis=1)
-    sv_data = sv_data[valid_pings]
-    ping_time = ping_time[valid_pings]
+    n_valid = int(valid_pings.sum())
+    if n_valid == 0:
+        return None
 
     n_pings = len(ping_time)
-    if n_pings == 0:
-        return None
+
+    # Time-proportional x-axis: hours since midnight UTC
+    day_start = np.datetime64(day, "D")
+    x_hours = (ping_time - day_start).astype("timedelta64[s]").astype(float) / 3600.0
 
     pulse_mode = None
     if "pulse_mode" in ds:
-        pulse_mode = ds["pulse_mode"].values[valid_pings]
+        pulse_mode = ds["pulse_mode"].values
 
     has_pulse = pulse_mode is not None
 
-    # Figure sizing
-    width = min(30, max(12, n_pings * 0.003))
+    # Figure sizing — proportional to time span (hours)
+    time_span = x_hours[-1] - x_hours[0]
+    width = min(30, max(12, time_span * 1.2))
 
     if has_pulse:
         from matplotlib.gridspec import GridSpec
@@ -765,10 +763,9 @@ def render_echogram(
         fig, ax = plt.subplots(figsize=(width, 6))
         cax = None
 
-    x = np.arange(n_pings)
     vmin, vmax = (SV_VMIN, SV_VMAX) if data_var == "Sv" else (0, None)
     im = ax.pcolormesh(
-        x, depth_plot, sv_data.T,
+        x_hours, depth_plot, sv_data.T,
         shading="auto", cmap=cmap, vmin=vmin, vmax=vmax, rasterized=True,
     )
     ax.invert_yaxis()
@@ -777,21 +774,21 @@ def render_echogram(
     product_label = {"sv": "Sv", "denoised": "Denoised Sv", "mvbs": "MVBS", "nasc": "NASC"}
     ax.set_title(
         f"{day} — {product_label.get(product, product)} {freq_label} (combined)\n"
-        f"{n_pings} pings | {cmap_name}",
+        f"{n_valid} pings | {cmap_name}",
         fontsize=12, fontweight="bold",
     )
 
-    # Time ticks
-    major_ticks, major_labels, _, _ = _build_hourly_ticks(ping_time, n_pings)
+    # Time ticks — proportional hourly
+    major_ticks, major_labels = _build_hourly_ticks(x_hours)
     tick_ax = ax_pulse if has_pulse else ax
     tick_ax.set_xticks(major_ticks)
     tick_ax.set_xticklabels(major_labels, rotation=45, ha="right", fontsize=9)
     tick_ax.set_xlabel("Time (UTC)", fontsize=11)
-    ax.set_xlim(0, n_pings)
+    ax.set_xlim(x_hours[0] - 0.1, x_hours[-1] + 0.1)
 
     if has_pulse:
         ax.tick_params(axis="x", labelbottom=False, which="both")
-        _draw_pulse_axis(ax_pulse, pulse_mode, n_pings)
+        _draw_pulse_axis(ax_pulse, pulse_mode, x_hours)
         cbar = fig.colorbar(im, cax=cax)
     else:
         cbar = fig.colorbar(im, ax=ax, fraction=0.015, pad=0.01)
