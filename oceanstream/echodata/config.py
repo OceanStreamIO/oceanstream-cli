@@ -260,7 +260,7 @@ class DenoiseConfig:
     impulse_ping_lags: list[int] = field(default_factory=lambda: [1])
     
     # Attenuation
-    attenuation_threshold: float = 0.8  # Correlation threshold
+    attenuation_threshold: float = 6.0  # dB below block median to flag
     attenuation_upper_limit: float = 180.0  # m
     attenuation_lower_limit: float = 280.0  # m
     attenuation_side_pings: int = 15

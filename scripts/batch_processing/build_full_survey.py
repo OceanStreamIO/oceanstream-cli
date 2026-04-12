@@ -49,6 +49,9 @@ Usage (on Azure batch VM):
     # Skip raw→Sv stages; use existing Sv zarrs from output container
     python build_full_survey.py --skip-raw
 
+    # Re-denoise from existing Sv zarrs (skip raw→Sv, re-run denoise→products)
+    python build_full_survey.py --skip-sv
+
     # 38 kHz only (skip 200 kHz)
     python build_full_survey.py --freq 38
 
@@ -1593,15 +1596,84 @@ def plot_combined_echogram(
 
 
 # ---------------------------------------------------------------------------
-# List existing denoised zarrs (for --skip-denoise / --resume)
+# List existing Sv / denoised zarrs
 # ---------------------------------------------------------------------------
 
+_SV_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2})--(\w+)\.zarr$"
+)
 _DENOISED_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})--(\w+)--denoised\.zarr$"
 )
 _NASC_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})--(\w+)--nasc\.zarr$"
 )
+
+
+def _list_sv_local(local_root: Path) -> list[tuple[str, str, str]]:
+    """Scan local disk for Sv zarr directories (not denoised/mvbs/nasc)."""
+    results: list[tuple[str, str, str]] = []
+    for day_dir in sorted(local_root.iterdir()):
+        if not day_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}$", day_dir.name):
+            continue
+        for item in day_dir.iterdir():
+            # Match {day}--{category}.zarr but NOT {day}--{category}--denoised.zarr etc.
+            if "--denoised" in item.name or "--mvbs" in item.name or "--nasc" in item.name:
+                continue
+            m = _SV_RE.match(item.name)
+            if m and item.is_dir():
+                day_key = m.group(1)
+                category = m.group(2)
+                zarr_path = f"{day_key}/{item.name}"
+                results.append((day_key, category, zarr_path))
+    results.sort()
+    return results
+
+
+def list_sv_zarrs(container: str) -> list[tuple[str, str, str]]:
+    """List Sv zarr paths from local disk or Azure.
+
+    Returns sorted list of (day_key, category, zarr_path).
+    Only returns raw Sv zarrs, not denoised/mvbs/nasc variants.
+    """
+    # Try local disk first
+    try:
+        from local_storage import _OUTPUT_ROOT
+        local_root = _OUTPUT_ROOT / container
+        if local_root.exists():
+            return _list_sv_local(local_root)
+    except ImportError:
+        pass
+
+    # Fall back to Azure Blob
+    from azure.storage.blob import ContainerClient
+
+    conn_str = _connection_string()
+    client = ContainerClient.from_connection_string(conn_str, container)
+
+    # Match {day}/{day}--{category}.zarr/ but exclude denoised/mvbs/nasc
+    pattern = re.compile(
+        r"(\d{4}-\d{2}-\d{2})/\d{4}-\d{2}-\d{2}--(\w+)\.zarr/(zarr\.json|\.zmetadata|\.zattrs)$"
+    )
+
+    results: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for blob in client.list_blobs(name_starts_with="2023-"):
+        # Skip denoised / mvbs / nasc
+        if "--denoised" in blob.name or "--mvbs" in blob.name or "--nasc" in blob.name:
+            continue
+        m = pattern.search(blob.name)
+        if m:
+            day_key = m.group(1)
+            category = m.group(2)
+            zarr_path = blob.name.rsplit("/", 1)[0]
+            key = f"{day_key}/{category}"
+            if key not in seen:
+                seen.add(key)
+                results.append((day_key, category, zarr_path))
+
+    results.sort()
+    return results
 
 
 def _list_denoised_local(local_root: Path) -> list[tuple[str, str, str]]:
@@ -2442,29 +2514,33 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     # ── Stage 1: Discover raw EK80 files ────────────────────────
-    log.info("=" * 70)
-    log.info("STAGE 1: Discover raw EK80 files")
-    log.info("=" * 70)
-    t0 = time.time()
+    day_files: dict = {}
+    if not args.skip_sv and not args.skip_raw:
+        log.info("=" * 70)
+        log.info("STAGE 1: Discover raw EK80 files")
+        log.info("=" * 70)
+        t0 = time.time()
 
-    raw_files = discover_raw_files(
-        start_date, end_date,
-        file_share_name=args.file_share,
-        file_share_path=args.file_share_path,
-    )
-    if not raw_files:
-        log.error("No raw files found — check file share")
-        sys.exit(1)
+        raw_files = discover_raw_files(
+            start_date, end_date,
+            file_share_name=args.file_share,
+            file_share_path=args.file_share_path,
+        )
+        if not raw_files:
+            log.error("No raw files found — check file share")
+            sys.exit(1)
 
-    day_files = group_raw_by_day(raw_files)
-    log.info(
-        "Stage 1 complete: %d raw files across %d days (%.1fs)",
-        len(raw_files), len(day_files), time.time() - t0,
-    )
+        day_files = group_raw_by_day(raw_files)
+        log.info(
+            "Stage 1 complete: %d raw files across %d days (%.1fs)",
+            len(raw_files), len(day_files), time.time() - t0,
+        )
+    else:
+        log.info("Skipping Stage 1 (raw file discovery) — using existing zarrs")
 
     # ── Stage 2: Download GPS GeoParquet ────────────────────────
     gps_df = None
-    if not args.skip_gps:
+    if not args.skip_gps and not args.skip_sv:
         log.info("=" * 70)
         log.info("STAGE 2: Download GPS GeoParquet")
         log.info("=" * 70)
@@ -2514,6 +2590,32 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
             day_denoised_zarrs.setdefault(day_key, {})[category] = zarr_path
             sv_path = f"{day_key}/{day_key}--{category}.zarr"
             day_sv_zarrs.setdefault(day_key, {})[category] = sv_path
+    elif args.skip_sv:
+        log.info("--skip-sv: loading existing Sv zarrs, re-running denoise → products")
+        sv_entries = list_sv_zarrs(output_container)
+        if start_date or end_date:
+            sv_entries = [
+                (d, c, p) for d, c, p in sv_entries
+                if (not start_date or datetime.fromisoformat(d) >= start_date)
+                and (not end_date or datetime.fromisoformat(d) <= end_date)
+            ]
+        log.info("  Found %d Sv zarrs to re-denoise", len(sv_entries))
+        for day_key, category, sv_path in sv_entries:
+            day_sv_zarrs.setdefault(day_key, {})[category] = sv_path
+
+        # Re-denoise each Sv zarr
+        for day_key, categories in sorted(day_sv_zarrs.items()):
+            for category, sv_path in categories.items():
+                try:
+                    denoised_path = denoise_day_zarr(
+                        sv_path, output_container, day_key, category,
+                    )
+                    day_denoised_zarrs.setdefault(day_key, {})[category] = denoised_path
+                    all_denoised.append((day_key, category, denoised_path))
+                except Exception as e:
+                    log.error("  Denoise failed %s/%s: %s", day_key, category, e)
+                _release_memory()
+        log.info("  Re-denoised %d zarrs across %d days", len(all_denoised), len(day_denoised_zarrs))
     else:
         # Filter days for --resume
         days_to_process = []
@@ -2860,6 +2962,10 @@ def main() -> None:
     parser.add_argument(
         "--skip-raw", action="store_true",
         help="Skip raw→Sv stages; use existing Sv + denoised zarrs from output container.",
+    )
+    parser.add_argument(
+        "--skip-sv", action="store_true",
+        help="Skip raw→Sv stages; re-run denoising from existing Sv zarrs, then MVBS/NASC/echograms.",
     )
     parser.add_argument(
         "--skip-gps", action="store_true",
