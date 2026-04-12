@@ -27,7 +27,7 @@ def compute_sv(
 
     The Nortek Signature echosounder applies TVG (Time-Varied Gain)
     internally before recording.  The raw ``echo_amplitude`` values
-    are proportional to signal level in 0.01 dB units, with geometric
+    are signed int16 counts at 0.01 dB per count, with geometric
     spreading and a nominal absorption already compensated.
 
     This function converts raw counts to Sv by applying the per-channel
@@ -55,7 +55,7 @@ def compute_sv(
     """
     import xarray as xr
 
-    amp = ds["echo_amplitude"].values  # (freq, ping, range) uint16
+    amp = ds["echo_amplitude"].values  # (freq, ping, range) int16
     cal_offsets = ds.attrs.get("cal_offsets_db", [0.0] * amp.shape[0])
     range_m = ds["range_sample"].values  # (range,)
 
@@ -63,7 +63,7 @@ def compute_sv(
     sv = np.full_like(amp, np.nan, dtype=np.float32)
 
     for fi in range(n_freqs):
-        # Convert raw counts to dB echo level
+        # Convert signed int16 counts to dB echo level (0.01 dB per count)
         el = amp[fi].astype(np.float32) * 0.01
 
         cal = cal_offsets[fi] if fi < len(cal_offsets) else 0.0

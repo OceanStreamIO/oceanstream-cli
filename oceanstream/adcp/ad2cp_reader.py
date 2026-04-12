@@ -181,7 +181,7 @@ def _parse_echo_data_record(data: bytes) -> Ad2cpEchoPing:
     roll = struct.unpack_from("<h", data, 28)[0] * 0.01
 
     echo_bytes = data[offset_of_data:]
-    amplitude = np.frombuffer(echo_bytes, dtype="<u2")
+    amplitude = np.frombuffer(echo_bytes, dtype="<i2")
 
     return Ad2cpEchoPing(
         time=time,
@@ -544,7 +544,7 @@ def read_ad2cp(path: Path | str) -> xr.Dataset:
     range_m = blanking + np.arange(n_cells) * cell_size
 
     # Separate pings by frequency (they alternate: freq0, freq1, freq0, ...)
-    amplitude = np.zeros((n_freqs, n_pings, n_cells), dtype=np.uint16)
+    amplitude = np.zeros((n_freqs, n_pings, n_cells), dtype=np.int16)
     times = np.empty(n_pings, dtype="datetime64[us]")
     sound_speed = np.empty(n_pings, dtype=np.float32)
     temperature = np.empty(n_pings, dtype=np.float32)
@@ -620,7 +620,7 @@ def read_ad2cp(path: Path | str) -> xr.Dataset:
                 {
                     "long_name": "Echo amplitude",
                     "units": "count",
-                    "comment": "Raw uint16 echo intensity with instrument TVG applied",
+                    "comment": "Raw int16 echo level (0.01 dB per count) with instrument TVG applied",
                 },
             ),
             "sound_speed": (
