@@ -122,8 +122,7 @@ def plot_campaign_echogram(
     ax.set_ylabel("Depth (m)", fontsize=14)
     ax.set_xlabel("Date", fontsize=14)
     ax.set_title(
-        f"Campaign MVBS — {category} | {freq_label}\n"
-        f"Colormap: {cmap_name} | {str(ping_time[0])[:10]} to {str(ping_time[-1])[:10]}",
+        f"Campaign MVBS — {category} | {freq_label}",
         fontsize=16,
         fontweight="bold",
     )

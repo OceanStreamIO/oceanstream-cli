@@ -777,8 +777,7 @@ def render_echogram(
 
     product_label = {"sv": "Sv", "denoised": "Denoised Sv", "mvbs": "MVBS", "nasc": "NASC"}
     ax.set_title(
-        f"{day} — {product_label.get(product, product)} {freq_label} (combined)\n"
-        f"{n_valid} pings | {cmap_name}",
+        f"{day} — {product_label.get(product, product)} {freq_label}",
         fontsize=12, fontweight="bold",
     )
 

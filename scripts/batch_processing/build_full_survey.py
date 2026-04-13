@@ -156,6 +156,14 @@ FREQ_38KHZ: float = 38000.0
 FREQ_200KHZ: float = 200000.0
 MAX_PLOT_DEPTH: float = 1200.0
 
+# Per-frequency max echogram depth (metres) and minimum pings to plot.
+# 200 kHz physically can't penetrate beyond ~250 m; showing deeper is just noise.
+FREQ_MAX_DEPTH: dict[float, float] = {
+    FREQ_38KHZ: 1200.0,
+    FREQ_200KHZ: 300.0,
+}
+MIN_PINGS_FOR_ECHOGRAM: int = 500  # skip near-empty echograms
+
 # Frequency configs: (freq_hz, label, zarr_stem, categories_to_include)
 # 200 kHz is only present in short_pulse mode.
 FREQUENCY_CONFIGS: list[tuple[float, str, str, list[str] | None]] = [
@@ -1068,6 +1076,7 @@ def _plot_perday_echogram(
     cmap_name: str,
     cmap: str | mcolors.Colormap,
     output_dir: Path,
+    freq_hz: float = 0.0,
 ) -> Path | None:
     """Render a single per-day echogram for one data_type and frequency."""
     da = ds["Sv"]
@@ -1083,9 +1092,10 @@ def _plot_perday_echogram(
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
 
+    freq_max = FREQ_MAX_DEPTH.get(freq_hz, MAX_PLOT_DEPTH)
     has_data = (~np.isnan(sv_raw)).any(axis=0)
     last_valid = int(np.where(has_data)[0][-1]) if has_data.any() else 0
-    max_depth = min(MAX_PLOT_DEPTH, depth_vals[last_valid] + 10)
+    max_depth = min(freq_max, depth_vals[last_valid] + 10)
     depth_mask = depth_vals <= max_depth
     depth_plot = depth_vals[depth_mask]
     sv_data = sv_raw[:, depth_mask]
@@ -1129,8 +1139,7 @@ def _plot_perday_echogram(
     ax.invert_yaxis()
     ax.set_ylabel("Depth (m)", fontsize=11)
     ax.set_title(
-        f"{day_key} \u2014 {data_type} {freq_label} (combined)\n"
-        f"Colormap: {cmap_name} | {n_pings} pings",
+        f"{day_key} \u2014 {data_type} {freq_label}",
         fontsize=12, fontweight="bold",
     )
 
@@ -1225,17 +1234,43 @@ def generate_perday_echograms(
             if not datasets:
                 continue
 
-            combined = xr.concat(datasets, dim="ping_time")
-            combined = combined.sortby("ping_time")
+            if len(datasets) == 1:
+                combined = datasets[0]
+                # Single pulse mode — drop pulse_mode so no pulse bar is drawn
+                if "pulse_mode" in combined:
+                    combined = combined.drop_vars("pulse_mode")
+            else:
+                combined = xr.concat(datasets, dim="ping_time")
+                combined = combined.sortby("ping_time")
+                # If all pings are the same mode, drop pulse_mode
+                if "pulse_mode" in combined:
+                    modes = np.unique(combined["pulse_mode"].values)
+                    if len(modes) == 1:
+                        combined = combined.drop_vars("pulse_mode")
 
             for ds in datasets:
                 ds.close()
             del datasets
 
+            # Skip near-empty echograms (e.g. 200 kHz on a mostly-long_pulse day).
+            # Check: if non-NaN data covers less than 20% of pings, skip.
+            n_combined = combined.sizes.get("ping_time", 0)
+            if n_combined > 0:
+                sv_vals = combined["Sv"].isel(channel=0).values
+                frac_valid = float((~np.isnan(sv_vals)).any(axis=1).sum()) / n_combined
+            else:
+                frac_valid = 0.0
+            if n_combined < MIN_PINGS_FOR_ECHOGRAM or frac_valid < 0.2:
+                log.info("  Skip %s/%s @ %s: %d pings, %.0f%% valid",
+                         day_key, data_type, freq_label, n_combined, frac_valid * 100)
+                combined.close()
+                del combined
+                continue
+
             for cmap_name, cmap_val in COLORMAPS[:1]:  # Use first colormap for per-day
                 p = _plot_perday_echogram(
                     combined, day_key, data_type, freq_label, freq_stem,
-                    cmap_name, cmap_val, echogram_dir,
+                    cmap_name, cmap_val, echogram_dir, freq_hz=freq_hz,
                 )
                 if p:
                     all_files.append(p)
@@ -1472,6 +1507,7 @@ def _build_hourly_ticks(
 
 def _prepare_echogram_data(
     ds: xr.Dataset,
+    freq_hz: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray | None]:
     da = ds["Sv"].isel(channel=0)
     ping_time = da.ping_time.values
@@ -1482,9 +1518,10 @@ def _prepare_echogram_data(
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
 
+    freq_max = FREQ_MAX_DEPTH.get(freq_hz, MAX_PLOT_DEPTH)
     has_data = (~np.isnan(sv_raw)).any(axis=0)
     last_valid = int(np.where(has_data)[0][-1]) if has_data.any() else 0
-    max_depth = min(MAX_PLOT_DEPTH, depth_vals[last_valid] + 10)
+    max_depth = min(freq_max, depth_vals[last_valid] + 10)
     depth_mask = depth_vals <= max_depth
     depth_plot = depth_vals[depth_mask]
     sv_data = sv_raw[:, depth_mask]
@@ -1552,8 +1589,9 @@ def plot_combined_echogram(
     freq_label: str = "38 kHz",
     freq_stem: str = "38kHz",
     segment_label: str | None = None,
+    freq_hz: float = 0.0,
 ) -> Path:
-    sv_data, depth_plot, ping_time, _max_depth, pulse_mode = _prepare_echogram_data(ds)
+    sv_data, depth_plot, ping_time, _max_depth, pulse_mode = _prepare_echogram_data(ds, freq_hz=freq_hz)
 
     n_pings = len(ping_time)
     log.info("  %d pings", n_pings)
@@ -1591,9 +1629,7 @@ def plot_combined_echogram(
     ax.invert_yaxis()
     ax.set_ylabel("Depth (m)", fontsize=14)
     ax.set_title(
-        f"Campaign MVBS — Combined {freq_label} ({pulse_desc}){segment_title}\n"
-        f"Colormap: {cmap_name} | {t0} to {t1} "
-        f"({n_pings} pings) | transducer depth: {TRANSDUCER_DEPTH}m",
+        f"Campaign MVBS — Combined {freq_label} ({pulse_desc}){segment_title}",
         fontsize=16, fontweight="bold",
     )
 
@@ -2871,7 +2907,7 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
                 plot_combined_echogram(
                     seg_ds, cmap_name, cmap,
                     freq_label=freq_label, freq_stem=freq_stem,
-                    segment_label=seg_label,
+                    segment_label=seg_label, freq_hz=freq_hz,
                 )
 
         log.info("Stage 10 (%s) complete (%.1fs)", freq_label, time.time() - t0)
@@ -2973,6 +3009,7 @@ def run_echogram_only(args: argparse.Namespace) -> None:
             plot_combined_echogram(
                 campaign_ds, cmap_name, cmap,
                 freq_label=freq_label, freq_stem=freq_stem,
+                freq_hz=freq_hz,
             )
 
         campaign_ds.close()
