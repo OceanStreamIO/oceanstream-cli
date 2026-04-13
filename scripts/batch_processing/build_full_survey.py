@@ -1089,6 +1089,9 @@ def _plot_perday_echogram(
 
     range_var = "depth" if "depth" in ds.coords or "depth" in ds.dims else "echo_range"
     depth_vals = ds[range_var].values
+    # echo_range may be 2D (channel, range_sample) — flatten to 1D
+    if depth_vals.ndim == 2:
+        depth_vals = depth_vals[0]
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
 
@@ -1515,6 +1518,9 @@ def _prepare_echogram_data(
 
     range_var = "depth" if "depth" in ds.coords or "depth" in ds.dims else "echo_range"
     depth_vals = ds[range_var].values
+    # echo_range may be 2D (channel, range_sample) — flatten to 1D
+    if depth_vals.ndim == 2:
+        depth_vals = depth_vals[0]
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
 
