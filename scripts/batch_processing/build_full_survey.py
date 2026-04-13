@@ -1089,8 +1089,10 @@ def _plot_perday_echogram(
 
     range_var = "depth" if "depth" in ds.coords or "depth" in ds.dims else "echo_range"
     depth_vals = ds[range_var].values
-    # echo_range may be 2D (channel, range_sample) — flatten to 1D
-    if depth_vals.ndim == 2:
+    # depth/echo_range may be 2D or 3D — reduce to 1D depth profile
+    if depth_vals.ndim == 3:  # (channel, ping_time, range_sample)
+        depth_vals = np.nanmedian(depth_vals[0], axis=0)  # median across pings for ch 0
+    elif depth_vals.ndim == 2:  # (channel, range_sample)
         depth_vals = depth_vals[0]
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
@@ -1518,8 +1520,10 @@ def _prepare_echogram_data(
 
     range_var = "depth" if "depth" in ds.coords or "depth" in ds.dims else "echo_range"
     depth_vals = ds[range_var].values
-    # echo_range may be 2D (channel, range_sample) — flatten to 1D
-    if depth_vals.ndim == 2:
+    # depth/echo_range may be 2D or 3D — reduce to 1D depth profile
+    if depth_vals.ndim == 3:  # (channel, ping_time, range_sample)
+        depth_vals = np.nanmedian(depth_vals[0], axis=0)  # median across pings for ch 0
+    elif depth_vals.ndim == 2:  # (channel, range_sample)
         depth_vals = depth_vals[0]
     if range_var == "echo_range":
         depth_vals = depth_vals + TRANSDUCER_DEPTH
