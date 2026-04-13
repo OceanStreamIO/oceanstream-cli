@@ -2852,7 +2852,7 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
                 total_echograms += len(files)
                 log.info("  %s: %d echogram files", day_key, len(files))
             except Exception as e:
-                log.error("  Per-day echograms failed %s: %s", day_key, e)
+                log.error("  Per-day echograms failed %s: %s", day_key, e, exc_info=True)
             _release_memory()
 
         log.info("Stage 8 complete: %d echogram files (%.1fs)", total_echograms, time.time() - t0)
