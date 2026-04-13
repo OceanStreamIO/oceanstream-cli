@@ -1143,8 +1143,9 @@ def _plot_perday_echogram(
     )
     ax.invert_yaxis()
     ax.set_ylabel("Depth (m)", fontsize=11)
+    ch_name = str(ds.channel.values[0])
     ax.set_title(
-        f"{day_key} \u2014 {data_type} {freq_label}",
+        f"{day_key} \u2014 {data_type} {freq_label} ({ch_name})",
         fontsize=12, fontweight="bold",
     )
 
