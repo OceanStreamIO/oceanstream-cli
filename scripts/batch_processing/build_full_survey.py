@@ -1118,7 +1118,7 @@ def _plot_perday_echogram(
         pulse_mode = ds["pulse_mode"].values[valid_pings]
 
     has_pulse = pulse_mode is not None
-    width = min(60, max(12, n_pings * 0.003))
+    width = min(30, max(12, n_pings * 0.001))
 
     if has_pulse:
         from matplotlib.gridspec import GridSpec
