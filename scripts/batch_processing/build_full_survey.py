@@ -1176,6 +1176,86 @@ def _plot_perday_echogram(
     return out_path
 
 
+def _regrid_to_common_depth(
+    datasets: list[xr.Dataset],
+    depth_step: float = 0.5,
+) -> list[xr.Dataset]:
+    """Regrid datasets with different range_sample grids onto a common 1D depth axis.
+
+    Each dataset may have a 3D depth variable (channel, ping_time, range_sample).
+    We compute a median depth profile per dataset, build a union depth grid,
+    then interpolate Sv onto that grid — replacing range_sample with depth.
+    """
+    # 1. Determine global depth range from all datasets
+    max_depth = 0.0
+    for ds in datasets:
+        if "depth" in ds:
+            d = ds["depth"].values
+        elif "echo_range" in ds:
+            d = ds["echo_range"].values + TRANSDUCER_DEPTH
+        else:
+            continue
+        max_depth = max(max_depth, float(np.nanmax(d)))
+
+    common_depth = np.arange(0, max_depth + depth_step, depth_step)
+
+    # 2. Regrid each dataset
+    result: list[xr.Dataset] = []
+    for ds in datasets:
+        # Get 1D depth profile (median across pings, channel 0)
+        if "depth" in ds:
+            d = ds["depth"].values
+        elif "echo_range" in ds:
+            d = ds["echo_range"].values + TRANSDUCER_DEPTH
+        else:
+            result.append(ds)
+            continue
+
+        if d.ndim == 3:
+            depth_1d = np.nanmedian(d[0], axis=0)
+        elif d.ndim == 2:
+            depth_1d = d[0]
+        else:
+            depth_1d = d
+
+        # Interpolate Sv from native depth to common depth grid
+        sv = ds["Sv"].isel(channel=0).values  # (ping_time, range_sample)
+        n_pings = sv.shape[0]
+        sv_regridded = np.full((n_pings, len(common_depth)), np.nan, dtype=np.float32)
+        for i in range(n_pings):
+            valid = ~np.isnan(sv[i]) & ~np.isnan(depth_1d)
+            if valid.any():
+                sv_regridded[i] = np.interp(
+                    common_depth, depth_1d[valid], sv[i][valid],
+                    left=np.nan, right=np.nan,
+                )
+
+        # Build new dataset with depth dimension
+        new_ds = xr.Dataset(
+            {
+                "Sv": xr.DataArray(
+                    sv_regridded[np.newaxis, :, :],  # (1, ping_time, depth)
+                    dims=["channel", "ping_time", "depth"],
+                    coords={
+                        "channel": ds.channel.values[:1],
+                        "ping_time": ds.ping_time.values,
+                        "depth": common_depth,
+                    },
+                ),
+            },
+        )
+        # Carry over pulse_mode and other 1D vars
+        if "pulse_mode" in ds:
+            new_ds["pulse_mode"] = ds["pulse_mode"]
+        if "frequency_nominal" in ds.coords:
+            new_ds = new_ds.assign_coords(
+                frequency_nominal=("channel", ds.frequency_nominal.values[:1]),
+            )
+        result.append(new_ds)
+
+    return result
+
+
 def generate_perday_echograms(
     day_key: str,
     concat_zarrs: dict[str, str],
@@ -1245,7 +1325,10 @@ def generate_perday_echograms(
                 if "pulse_mode" in combined:
                     combined = combined.drop_vars("pulse_mode")
             else:
-                combined = xr.concat(datasets, dim="ping_time")
+                # Different pulse modes may have different range_sample grids.
+                # Regrid all to a common 1D depth axis before concatenation.
+                regridded = _regrid_to_common_depth(datasets)
+                combined = xr.concat(regridded, dim="ping_time")
                 combined = combined.sortby("ping_time")
                 # If all pings are the same mode, drop pulse_mode
                 if "pulse_mode" in combined:
