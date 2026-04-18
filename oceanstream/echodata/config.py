@@ -393,6 +393,42 @@ class DenoiseConfig:
 
 
 @dataclass
+class ShoalConfig:
+    """Configuration for shoal/school detection."""
+
+    method: str = "weill"
+    thr: float = -70.0
+    # Weill-specific
+    maxvgap: int = 5
+    maxhgap: int = 0
+    minvlen: int = 0
+    minhlen: int = 0
+    # Echoview-specific
+    mincan: tuple[float, float] = (3.0, 10.0)
+    maxlink: tuple[float, float] = (3.0, 15.0)
+    minsho: tuple[float, float] = (3.0, 15.0)
+
+    def to_kwargs(self) -> dict:
+        """Return kwargs for detect_shoals()."""
+        if self.method == "weill":
+            return {
+                "method": "weill",
+                "thr": self.thr,
+                "maxvgap": self.maxvgap,
+                "maxhgap": self.maxhgap,
+                "minvlen": self.minvlen,
+                "minhlen": self.minhlen,
+            }
+        return {
+            "method": "echoview",
+            "thr": self.thr,
+            "mincan": self.mincan,
+            "maxlink": self.maxlink,
+            "minsho": self.minsho,
+        }
+
+
+@dataclass
 class MVBSConfig:
     """Configuration for MVBS (Mean Volume Backscattering Strength) computation."""
     
@@ -449,6 +485,7 @@ class EchodataConfig:
     
     # Sub-configurations
     denoise: DenoiseConfig = field(default_factory=DenoiseConfig)
+    shoal: ShoalConfig = field(default_factory=ShoalConfig)
     mvbs: MVBSConfig = field(default_factory=MVBSConfig)
     nasc: NASCConfig = field(default_factory=NASCConfig)
     

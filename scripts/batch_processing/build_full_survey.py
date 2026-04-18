@@ -1271,9 +1271,6 @@ def generate_perday_echograms(
     For each frequency, loads all pulse-mode categories, adds a pulse_mode
     variable, concatenates, and renders echograms.
     """
-    echogram_dir = output_dir / "perday_echograms"
-    echogram_dir.mkdir(parents=True, exist_ok=True)
-
     all_files: list[Path] = []
 
     # Pairs: (data_type, zarrs_dict)
@@ -1356,10 +1353,14 @@ def generate_perday_echograms(
                 del combined
                 continue
 
+            # Save echograms into the day's own folder (alongside zarrs).
+            day_echogram_dir = output_dir / output_container / day_key
+            day_echogram_dir.mkdir(parents=True, exist_ok=True)
+
             for cmap_name, cmap_val in COLORMAPS[:1]:  # Use first colormap for per-day
                 p = _plot_perday_echogram(
                     combined, day_key, data_type, freq_label, freq_stem,
-                    cmap_name, cmap_val, echogram_dir, freq_hz=freq_hz,
+                    cmap_name, cmap_val, day_echogram_dir, freq_hz=freq_hz,
                 )
                 if p:
                     all_files.append(p)
@@ -3114,6 +3115,138 @@ def run_echogram_only(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Upload all products to Azure Blob Storage via azcopy
+# ---------------------------------------------------------------------------
+
+def upload_all_to_azure(
+    local_save_dir: Path,
+    output_container: str,
+    output_dir: Path | None = None,
+) -> None:
+    """Upload all pipeline products to Azure Blob using azcopy.
+
+    Uploads are done using ``azcopy copy SRC/* DEST --recursive`` to
+    avoid double-nesting the source directory name inside the blob path.
+
+    Requires:
+        - ``azcopy`` on PATH
+        - ``AZURE_STORAGE_CONNECTION_STRING`` env var
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("azcopy") is None:
+        log.error("azcopy not found on PATH — cannot upload")
+        return
+
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+    if not conn_str:
+        log.error("AZURE_STORAGE_CONNECTION_STRING not set — cannot upload")
+        return
+
+    # Parse account name + key from connection string for SAS generation
+    parts = dict(p.split("=", 1) for p in conn_str.split(";") if "=" in p)
+    account_name = parts.get("AccountName", "")
+    account_key = parts.get("AccountKey", "")
+    if not account_name or not account_key:
+        log.error("Cannot parse AccountName/AccountKey from connection string")
+        return
+
+    # Generate SAS token (valid 2 days)
+    from datetime import timedelta
+    from azure.storage.blob import (
+        BlobServiceClient,
+        ContainerSasPermissions,
+        generate_container_sas,
+    )
+    sas = generate_container_sas(
+        account_name=account_name,
+        container_name=output_container,
+        account_key=account_key,
+        permission=ContainerSasPermissions(
+            read=True, write=True, delete=True, list=True,
+        ),
+        expiry=datetime.utcnow() + timedelta(days=2),
+    )
+    base_url = f"https://{account_name}.blob.core.windows.net/{output_container}"
+
+    if output_dir is None:
+        output_dir = local_save_dir
+
+    # Define upload mappings: (local_source, blob_prefix, recursive)
+    # recursive=True for zarr trees, False for flat directories (PNGs, GeoJSON).
+    # Flat dirs MUST NOT use --recursive to prevent nested subdirectory uploads
+    # (e.g. campaign_echograms/campaign_echograms/campaign_echograms/ bug).
+    upload_map: list[tuple[Path, str, bool]] = [
+        # Main zarrs (container subdirectory) — recursive for zarr trees
+        (local_save_dir / output_container, "", True),
+        # Campaign echograms — flat PNGs only
+        (output_dir / "campaign_echograms", "campaign_echograms", False),
+        # Tiles — flat files
+        (output_dir / "tiles", "tiles", False),
+        # NASC biomass GeoJSON — flat files
+        (output_dir / "nasc_biomass", "nasc_biomass", False),
+        # Heatmaps — flat files
+        (output_dir / "heatmaps", "heatmaps", False),
+    ]
+
+    # Also pick up campaign_mvbs_combined_*.zarr directories (recursive)
+    for p in output_dir.glob("campaign_mvbs_combined_*.zarr"):
+        if p.is_dir():
+            upload_map.append((p, p.name, True))
+
+    t0 = time.time()
+    total_ok = 0
+    total_fail = 0
+
+    for src_dir, blob_prefix, recursive in upload_map:
+        if not src_dir.exists():
+            log.info("  Skip %s (not found)", src_dir)
+            continue
+
+        if blob_prefix:
+            dest = f"{base_url}/{blob_prefix}?{sas}"
+        else:
+            dest = f"{base_url}?{sas}"
+
+        # Use "SRC/*" to copy contents without nesting the directory name.
+        src_glob = str(src_dir) + "/*"
+        label = blob_prefix or output_container
+        log.info("Uploading %s → %s ...", src_dir.name, label)
+
+        cmd = ["azcopy", "copy", src_glob, dest, "--overwrite=ifSourceNewer"]
+        if recursive:
+            cmd.append("--recursive")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=7200,
+        )
+
+        # Parse azcopy summary
+        for line in result.stdout.splitlines():
+            if "Final Job Status" in line:
+                log.info("  %s: %s", label, line.strip())
+            if "Failed" in line and "Done" in line:
+                log.info("  %s: %s", label, line.strip())
+
+        if result.returncode == 0:
+            total_ok += 1
+        else:
+            total_fail += 1
+            log.error("  %s: azcopy failed (rc=%d)", label, result.returncode)
+            if result.stderr:
+                for errline in result.stderr.strip().splitlines()[:5]:
+                    log.error("    %s", errline)
+
+    elapsed = time.time() - t0
+    log.info(
+        "Upload complete: %d succeeded, %d failed (%.1fs / %.1f min)",
+        total_ok, total_fail, elapsed, elapsed / 60,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -3277,8 +3410,11 @@ def main() -> None:
 
     # Bulk upload after completion (if requested and not background-synced)
     if args.upload_after and local_save_dir is not None and not args.background_sync:
-        from process_from_raw import _bulk_upload_to_azure
-        _bulk_upload_to_azure(local_save_dir, args.output_container)
+        upload_all_to_azure(
+            local_save_dir=local_save_dir,
+            output_container=args.output_container,
+            output_dir=OUTPUT_DIR,
+        )
 
 
 if __name__ == "__main__":

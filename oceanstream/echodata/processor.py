@@ -760,6 +760,96 @@ class EchodataProcessor:
             )
 
     # =========================================================================
+    # Step 6c: Shoal Detection
+    # =========================================================================
+
+    def detect_and_mask_shoals(
+        self,
+        output_dir: Path,
+        input_paths: Optional[list[Path]] = None,
+    ) -> ProcessingResult:
+        """
+        Detect and mask shoals/fish schools in Sv datasets.
+
+        Uses the shoal detection method and parameters from config.shoal.
+
+        Args:
+            output_dir: Output directory for shoal-masked Zarr stores.
+            input_paths: Sv paths to process (default: seabed-masked,
+                denoised, or raw Sv paths).
+
+        Returns:
+            ProcessingResult with shoal detection status.
+        """
+        from oceanstream.echodata.shoal import detect_shoals, mask_shoals
+        import xarray as xr
+
+        start = perf_counter()
+
+        if input_paths:
+            paths_to_process = input_paths
+        elif hasattr(self, "_seabed_masked_paths") and self._seabed_masked_paths:
+            paths_to_process = self._seabed_masked_paths
+        elif self._denoised_paths:
+            paths_to_process = self._denoised_paths
+        elif self._sv_paths:
+            paths_to_process = self._sv_paths
+        else:
+            return ProcessingResult(
+                step="shoal_detection",
+                success=False,
+                message="No Sv paths available. Run compute_sv() first.",
+                duration_seconds=perf_counter() - start,
+            )
+
+        shoal_output = output_dir / "shoal_masked"
+        shoal_output.mkdir(parents=True, exist_ok=True)
+        shoal_kwargs = self.config.shoal.to_kwargs()
+
+        self.log(
+            f"Detecting shoals ({shoal_kwargs['method']}) "
+            f"for {len(paths_to_process)} datasets"
+        )
+
+        try:
+            self._shoal_masked_paths: list[Path] = []
+            total_shoals = 0
+            for sv_path in paths_to_process:
+                ds = xr.open_zarr(sv_path)
+                result = detect_shoals(ds, **shoal_kwargs)
+                total_shoals += result.num_shoals
+
+                ds_masked = mask_shoals(ds, result)
+                output_path = shoal_output / f"{sv_path.stem}_shoal_masked.zarr"
+                ds_masked.to_zarr(output_path, mode="w")
+                self._shoal_masked_paths.append(output_path)
+
+                self.log(
+                    f"  {sv_path.name}: {result.num_shoals} shoals "
+                    f"({result.shoal_fraction:.1%} of pixels)"
+                )
+
+            return ProcessingResult(
+                step="shoal_detection",
+                success=True,
+                output_path=shoal_output,
+                message=f"Detected {total_shoals} shoals across {len(paths_to_process)} datasets",
+                duration_seconds=perf_counter() - start,
+                metadata={
+                    "method": shoal_kwargs["method"],
+                    "total_shoals": total_shoals,
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Shoal detection failed: {e}")
+            return ProcessingResult(
+                step="shoal_detection",
+                success=False,
+                message=str(e),
+                duration_seconds=perf_counter() - start,
+            )
+
+    # =========================================================================
     # Step 7: Compute MVBS and NASC
     # =========================================================================
     
@@ -1032,6 +1122,7 @@ class EchodataProcessor:
         skip_concatenation: bool = False,
         skip_denoising: bool = False,
         skip_seabed: bool = False,
+        skip_shoals: bool = False,
         skip_mvbs: bool = False,
         skip_nasc: bool = False,
         skip_echograms: bool = False,
@@ -1048,6 +1139,7 @@ class EchodataProcessor:
             5. Compute Sv
             6. Apply denoising (unless skipped)
             6b. Detect and mask seabed (unless skipped)
+            6c. Detect and mask shoals (unless skipped)
             7. Compute MVBS and NASC (unless skipped)
             8. Generate echograms (unless skipped)
         
@@ -1059,6 +1151,7 @@ class EchodataProcessor:
             skip_concatenation: Skip daily concatenation step
             skip_denoising: Skip denoising step
             skip_seabed: Skip seabed detection & masking step
+            skip_shoals: Skip shoal/school detection step
             skip_mvbs: Skip MVBS computation
             skip_nasc: Skip NASC computation
             skip_echograms: Skip echogram generation
@@ -1133,6 +1226,11 @@ class EchodataProcessor:
             # Persist seabed-masked Sv if requested
             if save_intermediate and hasattr(self, "_seabed_masked_paths") and self._seabed_masked_paths:
                 self._save_intermediate(output_dir, self._seabed_masked_paths, "seabed_masked_sv")
+        
+        # Step 6c: Shoal detection
+        if not skip_shoals:
+            step_result = self.detect_and_mask_shoals(output_dir)
+            result.steps.append(step_result)
         
         # Step 7a: MVBS
         if not skip_mvbs:

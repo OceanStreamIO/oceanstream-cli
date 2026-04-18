@@ -102,6 +102,7 @@ __all__ = [
     # Config
     "EchodataConfig",
     "DenoiseConfig",
+    "ShoalConfig",
     "MVBSConfig",
     "NASCConfig",
     # Pydantic denoise parameter models
@@ -128,6 +129,15 @@ __all__ = [
     "SeabedDetectionResult",
     "get_bathymetry",
     "estimate_seabed_depth",
+    # Shoal detection
+    "detect_shoals",
+    "detect_shoals_weill",
+    "detect_shoals_echoview",
+    "mask_shoals",
+    "ShoalDetectionResult",
+    # Multi-frequency analysis
+    "db_difference",
+    "FrequencyDifferencingResult",
     # Cloud Storage
     "get_azure_zarr_store",
     "save_echodata_to_azure",
@@ -160,10 +170,11 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import attributes to avoid loading heavy dependencies on import."""
     # Config classes
-    if name in ("EchodataConfig", "DenoiseConfig", "MVBSConfig", "NASCConfig"):
+    if name in ("EchodataConfig", "DenoiseConfig", "ShoalConfig", "MVBSConfig", "NASCConfig"):
         from oceanstream.echodata.config import (
             EchodataConfig,
             DenoiseConfig,
+            ShoalConfig,
             MVBSConfig,
             NASCConfig,
         )
@@ -290,6 +301,31 @@ def __getattr__(name: str):
         from oceanstream.echodata.seabed.bathymetry import (
             get_bathymetry,
             estimate_seabed_depth,
+        )
+        return locals()[name]
+    
+    # Shoal detection functions
+    if name in (
+        "detect_shoals",
+        "detect_shoals_weill",
+        "detect_shoals_echoview",
+        "mask_shoals",
+        "ShoalDetectionResult",
+    ):
+        from oceanstream.echodata.shoal import (
+            detect_shoals,
+            detect_shoals_weill,
+            detect_shoals_echoview,
+            mask_shoals,
+            ShoalDetectionResult,
+        )
+        return locals()[name]
+    
+    # Multi-frequency analysis functions
+    if name in ("db_difference", "FrequencyDifferencingResult"):
+        from oceanstream.echodata.multifrequency import (
+            db_difference,
+            FrequencyDifferencingResult,
         )
         return locals()[name]
     
