@@ -325,6 +325,16 @@ def build_full_mask(
 
         if stage_or is not None:
             ch_masks.append(stage_or)
+        else:
+            # Channel was skipped (e.g. no frequency presets) — add all-False mask
+            # to keep the channel dimension aligned with the input dataset.
+            ch_value = ds["channel"].values[ch]
+            false_mask = xr.DataArray(
+                np.zeros(reference.shape, dtype=bool),
+                dims=reference.dims,
+                coords=reference.coords,
+            ).expand_dims(channel=[ch_value])
+            ch_masks.append(false_mask)
 
     if not ch_masks:
         full_mask = xr.DataArray(

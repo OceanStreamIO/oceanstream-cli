@@ -19,6 +19,34 @@ import os
 # Default parameters optimized for each frequency (in Hz)
 # Based on legacy code from _echodata-legacy-code/saildrone-echodata-processing
 FREQUENCY_PRESETS: dict[int, dict[str, dict]] = {
+    # 18 kHz - deepest penetration, lowest resolution
+    18000: {
+        "background": {
+            "range_window": 35,
+            "ping_window": 60,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-130.0dB",
+            "depth_stat": "quantile",
+            "depth_quantile": 0.15,
+        },
+        "transient": {
+            "exclude_above": 300.0,
+            "depth_bin": 15.0,
+            "n_pings": 25,
+            "thr_dB": 9.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "6m",
+            "ping_lags": [1, 2],
+            "threshold_db": 10.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 250.0,
+            "lower_limit_sl": 500.0,
+            "num_side_pings": 15,
+            "threshold": 6.0,
+        },
+    },
     # 38 kHz - deeper penetration, lower resolution
     38000: {
         "background": {
