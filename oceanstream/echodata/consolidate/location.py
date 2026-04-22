@@ -9,8 +9,6 @@ EK80 files from Saildrone often lack embedded NMEA GPS data.
 These functions enable interpolating coordinates from external
 geoparquet track files into Sv datasets keyed on ``ping_time``.
 
-Ported from saildrone-data/saildrone/process/location.py and
-saildrone-data/saildrone/process/concat.py.
 """
 
 from __future__ import annotations

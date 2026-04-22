@@ -3,8 +3,6 @@
 Provides high-level functions for applying multiple denoising
 methods and combining masks.  Supports frequency-keyed parameter
 dispatch and pulse-length selection.
-
-Ported from saildrone-data/saildrone/denoise/mask.py and workflow.py
 """
 
 from __future__ import annotations

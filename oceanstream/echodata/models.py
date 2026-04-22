@@ -4,9 +4,6 @@ These models provide validated, per-frequency parameter schemas with support
 for pulse-length-aware configuration (short_pulse / long_pulse).  Missing
 per-frequency entries are automatically inherited from the 38 kHz template
 (or the first available frequency) via :func:`fill_missing_frequency_params`.
-
-The models mirror the proven schema from the saildrone-data reference
-implementation while being usable without Prefect.
 """
 
 from __future__ import annotations

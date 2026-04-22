@@ -3,8 +3,6 @@
 Detects short-duration spikes that appear in single pings,
 using forward/backward difference comparisons with voting,
 post-dilation, and shallow-exclusion support.
-
-Ported from saildrone-data/saildrone/denoise/impulse_noise.py
 """
 
 from __future__ import annotations

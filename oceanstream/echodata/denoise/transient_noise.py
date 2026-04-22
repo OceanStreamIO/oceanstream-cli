@@ -9,7 +9,6 @@ Provides two methods for detecting transient interference in echosounder data:
 2. **Ryan et al. (2015)** (``transient_noise_mask_ryan``): Rolling 2-D
    percentile block comparison—simpler, suitable as fallback.
 
-Ported from saildrone-data/saildrone/denoise/transient_noise.py
 """
 
 from __future__ import annotations

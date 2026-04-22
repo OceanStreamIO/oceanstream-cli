@@ -3,8 +3,6 @@
 Detects depth layers with abnormally low backscatter compared
 to surrounding pings, indicating signal attenuation from
 bubbles, dense plankton, or equipment issues.
-
-Ported from saildrone-data/saildrone/denoise/attenuation_signal.py
 """
 
 from __future__ import annotations

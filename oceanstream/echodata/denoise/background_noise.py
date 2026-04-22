@@ -3,8 +3,6 @@
 Estimates background noise level and flags samples with insufficient
 signal-to-noise ratio.  Supports quantile-based depth statistics and
 guard-mode DSL exclusion.
-
-Ported from saildrone-data/saildrone/denoise/background_noise.py
 """
 
 from __future__ import annotations
