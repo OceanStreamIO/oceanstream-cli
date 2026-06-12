@@ -128,6 +128,7 @@ def compute_sv(
 def compute_sv_from_echodata(
     echodata: "EchoData",
     env_params: Optional[dict] = None,
+    cal_params: Optional[dict] = None,
     add_depth: bool = True,
     add_location: bool = True,
     waveform_mode: str = "CW",
@@ -139,6 +140,7 @@ def compute_sv_from_echodata(
     Args:
         echodata: EchoData object (already loaded)
         env_params: Optional environment parameters override
+        cal_params: Optional calibration parameters override (from ECS parsing)
         add_depth: Add depth coordinate
         add_location: Add lat/lon coordinates
         waveform_mode: Waveform mode for EK80 ('CW' for narrowband, 'BB' for broadband)
@@ -155,6 +157,8 @@ def compute_sv_from_echodata(
     compute_kwargs = {}
     if env_params:
         compute_kwargs["env_params"] = env_params
+    if cal_params:
+        compute_kwargs["cal_params"] = cal_params
     
     # EK80 requires waveform_mode and encode_mode
     if echodata.sonar_model == "EK80":

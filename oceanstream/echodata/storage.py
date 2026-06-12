@@ -1,7 +1,14 @@
-"""Cloud storage support for echodata Zarr stores.
+"""Storage support for echodata Zarr stores (Azure Blob + local filesystem).
 
 This module provides functions for reading/writing EchoData and Sv datasets
-to cloud storage (Azure Blob, S3, GCS) using fsspec-based Zarr stores.
+to either cloud storage (Azure Blob) or local filesystem, using fsspec-based
+Zarr stores.
+
+**Storage backend selection** (checked in order):
+
+1. Explicit ``use_local_storage(root_dir)`` call — all I/O goes to ``root_dir``
+2. ``OCEANSTREAM_STORAGE_BACKEND=local`` env var + ``OCEANSTREAM_OUTPUT_DIR``
+3. Azure credentials (env vars or ``oceanstream configure``) — Azure Blob
 
 The module integrates with the oceanstream storage configuration system,
 using credentials from either:
@@ -27,20 +34,24 @@ Usage:
         get_azure_zarr_store,
         save_echodata_to_azure,
         save_sv_to_azure,
+        use_local_storage,
     )
-    
-    # Using environment variables
+
+    # ── Local mode (no Azure credentials needed) ──────────────────
+    use_local_storage("/data/output")
+    # All subsequent calls write to /data/output/<container>/<path>
+    save_dataset_to_azure(ds, "day/file.zarr", container="processed")
+
+    # ── Azure mode (default) ──────────────────────────────────────
     store = get_azure_zarr_store("echodata/campaign_1/converted/file.zarr")
     echodata.to_zarr(store, mode="w")
-    
-    # Using helper function
-    save_echodata_to_azure(echodata, campaign_id="campaign_1", filename="file")
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -50,6 +61,66 @@ if TYPE_CHECKING:
     import zarr
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Local storage backend
+# ═══════════════════════════════════════════════════════════════════════════
+
+_LOCAL_ROOT: Path | None = None
+
+
+def use_local_storage(root_dir: str | Path) -> None:
+    """Switch to local filesystem storage.
+
+    After calling this, all ``save_dataset_to_azure``, ``open_sv_from_azure``,
+    etc. will read/write from ``root_dir`` instead of Azure Blob Storage.
+
+    Args:
+        root_dir: Root directory for all storage operations.
+            Containers become subdirectories under this root.
+
+    Example:
+        >>> use_local_storage("./output")
+        >>> save_dataset_to_azure(ds, "2023-08-10/sv.zarr", container="processed")
+        # Writes to: ./output/processed/2023-08-10/sv.zarr
+    """
+    global _LOCAL_ROOT
+    _LOCAL_ROOT = Path(root_dir).resolve()
+    _LOCAL_ROOT.mkdir(parents=True, exist_ok=True)
+    logger.info("Storage backend: local filesystem at %s", _LOCAL_ROOT)
+
+
+def use_azure_storage() -> None:
+    """Switch back to Azure Blob storage (the default)."""
+    global _LOCAL_ROOT
+    _LOCAL_ROOT = None
+    logger.info("Storage backend: Azure Blob Storage")
+
+
+def is_local_storage() -> bool:
+    """Return True if local storage is currently active."""
+    if _LOCAL_ROOT is not None:
+        return True
+    return os.environ.get("OCEANSTREAM_STORAGE_BACKEND", "").lower() == "local"
+
+
+def _get_local_root() -> Path:
+    """Get the local storage root, checking env fallback."""
+    if _LOCAL_ROOT is not None:
+        return _LOCAL_ROOT
+    env_dir = os.environ.get("OCEANSTREAM_OUTPUT_DIR", "/tmp/oceanstream/output")
+    root = Path(env_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _local_resolve(path: str, container: str | None) -> Path:
+    """Resolve a storage path to local filesystem."""
+    root = _get_local_root()
+    if container:
+        return root / container / path
+    return root / path
 
 
 def get_azure_credentials(
@@ -110,18 +181,20 @@ def get_azure_credentials(
 
 
 def get_azure_filesystem(connection_string: str | None = None):
-    """Get an fsspec AzureBlobFileSystem configured with credentials.
+    """Get an fsspec filesystem for listing storage contents.
+
+    In local mode, returns a ``_LocalListFS`` that mimics the adlfs interface.
+    In Azure mode, returns an ``adlfs.AzureBlobFileSystem``.
 
     Args:
         connection_string: Explicit connection string (takes priority over env/config).
 
     Returns:
-        adlfs.AzureBlobFileSystem instance
-
-    Raises:
-        ValueError: If credentials not found
-        ImportError: If adlfs not installed
+        Filesystem instance with at least ``ls()`` and ``isdir()`` methods.
     """
+    if is_local_storage():
+        return _LocalListFS(_get_local_root())
+
     try:
         import adlfs
     except ImportError as e:
@@ -140,7 +213,12 @@ def get_azure_zarr_store(
     mode: str = "w",
     connection_string: str | None = None,
 ):
-    """Get a Zarr store backed by Azure Blob Storage.
+    """Get a Zarr store for reading/writing.
+
+    In local mode, returns a local filesystem path string (compatible with
+    xarray's ``to_zarr()`` and ``open_zarr()``).
+
+    In Azure mode, returns a Zarr store backed by Azure Blob Storage.
 
     Args:
         path: Path within the container (e.g., "echodata/campaign/file.zarr")
@@ -149,12 +227,17 @@ def get_azure_zarr_store(
         connection_string: Explicit connection string.
 
     Returns:
-        Zarr store configured for Azure (FSStore for zarr v2, FSMap for v3)
+        Zarr store (FSStore/FSMap for Azure, str path for local)
 
     Example:
         store = get_azure_zarr_store("echodata/test/data.zarr")
         ds.to_zarr(store, mode="w")
     """
+    if is_local_storage():
+        dest = _local_resolve(path, container)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        return str(dest)
+
     import zarr
 
     _conn_str, default_container = get_azure_credentials(connection_string)
@@ -176,7 +259,10 @@ def get_zarr_store_uri(
     container: Optional[str] = None,
     connection_string: str | None = None,
 ) -> str:
-    """Get the Azure Blob URI for a zarr store path.
+    """Get the URI for a zarr store path.
+
+    In local mode, returns a ``file://`` URI.
+    In Azure mode, returns an ``abfs://`` URI.
 
     Args:
         path: Path within container
@@ -184,8 +270,11 @@ def get_zarr_store_uri(
         connection_string: Explicit connection string.
 
     Returns:
-        URI like "abfs://container/path"
+        URI string
     """
+    if is_local_storage():
+        return str(_local_resolve(path, container))
+
     _, default_container = get_azure_credentials(connection_string)
     container = container or default_container
     return f"abfs://{container}/{path}"
@@ -326,7 +415,10 @@ def save_dataset_to_azure(
     container: Optional[str] = None,
     connection_string: str | None = None,
 ) -> str:
-    """Save an xarray Dataset to an arbitrary zarr path on Azure Blob Storage.
+    """Save an xarray Dataset to a zarr store.
+
+    In local mode, writes to ``{root}/{container}/{zarr_path}`` on disk.
+    In Azure mode, writes to Azure Blob Storage.
 
     This is a generic helper for callers that manage their own path layout
     (e.g. ``cruise_id/days/2023-01-01_Sv.zarr``).  For campaign-structured
@@ -335,20 +427,32 @@ def save_dataset_to_azure(
     Args:
         dataset: xarray Dataset to save
         zarr_path: Path inside the container (e.g. "HB2302/file_Sv.zarr")
-        container: Azure container (default: from credentials)
+        container: Container name (default: from credentials or local root)
+        connection_string: Explicit connection string (Azure only).
 
     Returns:
-        Azure URI of saved zarr store
+        URI or path of saved zarr store
     """
+    import xarray as xr_mod
+    from oceanstream.echodata.utils.encoding import fix_chunking
+
+    if isinstance(dataset, xr_mod.Dataset):
+        dataset = fix_chunking(dataset)
+
+    if is_local_storage():
+        dest = _local_resolve(zarr_path, container)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Saving dataset locally: %s", dest)
+        import dask
+        with dask.config.set(scheduler="synchronous"):
+            dataset.to_zarr(str(dest), mode="w")
+        return str(dest)
+
     store = get_azure_zarr_store(
         zarr_path, container=container, connection_string=connection_string,
     )
 
     logger.info(f"Saving dataset to Azure: {zarr_path}")
-    import xarray as xr_mod
-    if isinstance(dataset, xr_mod.Dataset):
-        from oceanstream.echodata.utils.encoding import fix_chunking
-        dataset = fix_chunking(dataset)
     dataset.to_zarr(store, mode="w")
 
     return get_zarr_store_uri(zarr_path, container, connection_string=connection_string)
@@ -393,7 +497,7 @@ def open_sv_from_azure(
     *,
     zarr_path: str | None = None,
 ) -> "xr.Dataset":
-    """Open Sv dataset from Azure Blob Storage.
+    """Open Sv dataset from storage (Azure Blob or local filesystem).
 
     Can be called in two ways:
         # Structured (campaign-based):
@@ -405,7 +509,7 @@ def open_sv_from_azure(
     Args:
         campaign_id: Campaign identifier (used with *filename*)
         filename: Base filename (used with *campaign_id*)
-        container: Azure container (default: from credentials)
+        container: Container name (default: from credentials)
         chunks: Dask chunking for lazy loading
         zarr_path: Direct path to the zarr store inside the container.
             When provided, *campaign_id* and *filename* are ignored.
@@ -422,6 +526,20 @@ def open_sv_from_azure(
     else:
         raise ValueError("Provide either zarr_path or both campaign_id and filename.")
 
+    # ── Local storage path ───────────────────────────────────────
+    if is_local_storage():
+        local_path = _local_resolve(path, container)
+        logger.info("Opening local zarr: %s", local_path)
+        ds = xr.open_zarr(str(local_path), chunks={})
+        if not ds.data_vars:
+            ds = xr.open_zarr(str(local_path), consolidated=False, chunks={})
+        if chunks:
+            valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
+            if valid_chunks:
+                ds = ds.chunk(valid_chunks)
+        return ds
+
+    # ── Azure path ───────────────────────────────────────────────
     conn_str, default_container = get_azure_credentials(connection_string)
     container = container or default_container
     full_path = f"abfs://{container}/{path}"
@@ -507,7 +625,17 @@ def ensure_container_exists(
     connection_string: str | None = None,
     public_access: str | None = None,
 ) -> None:
-    """Create the Azure Blob container if it does not already exist."""
+    """Create the storage container/directory if it does not already exist.
+
+    In local mode, creates a subdirectory under the storage root.
+    In Azure mode, creates an Azure Blob container.
+    """
+    if is_local_storage():
+        dest = _get_local_root() / container_name
+        dest.mkdir(parents=True, exist_ok=True)
+        logger.info("Local output directory: %s", dest)
+        return
+
     from azure.storage.blob import BlobServiceClient
 
     conn_str = (
@@ -641,7 +769,18 @@ def upload_file_to_blob(
     container_name: str,
     connection_string: str | None = None,
 ) -> None:
-    """Upload a local file to Azure Blob Storage."""
+    """Upload a local file to storage.
+
+    In local mode, copies the file to ``{root}/{container_name}/{blob_path}``.
+    In Azure mode, uploads to Azure Blob Storage.
+    """
+    if is_local_storage():
+        dest = _local_resolve(blob_path, container_name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_path, dest)
+        logger.info("Copied %s → %s", Path(local_path).name, dest)
+        return
+
     from azure.storage.blob import BlobServiceClient
 
     conn_str = (
@@ -659,6 +798,41 @@ def upload_file_to_blob(
 
 
 # ── Internal helpers ────────────────────────────────────────────────
+
+
+class _LocalListFS:
+    """Minimal fsspec-like filesystem for local directory listing.
+
+    Used by ``get_azure_filesystem()`` in local mode so that callers
+    (e.g. ``list_zarr_files``, ``list_campaign_data``) work without adlfs.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def ls(self, path: str, detail: bool = False) -> list:
+        local = self._root / path
+        if not local.exists():
+            return []
+        items = []
+        for p in sorted(local.iterdir()):
+            rel = str(p.relative_to(self._root))
+            if detail:
+                items.append({
+                    "name": rel,
+                    "type": "directory" if p.is_dir() else "file",
+                    "size": p.stat().st_size if p.is_file() else 0,
+                })
+            else:
+                items.append(rel)
+        return items
+
+    def isdir(self, path: str) -> bool:
+        return (self._root / path).is_dir()
+
+    def get_mapper(self, path: str):
+        """Return a local path string (compatible with xarray to_zarr)."""
+        return str(self._root / path)
 
 
 def _netcdf_encoding(ds: "xr.Dataset", compression_level: int = 5) -> dict:

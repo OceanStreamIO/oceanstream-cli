@@ -45,6 +45,11 @@ def _ensure_depth(
         logger.debug("Dataset already has depth variable")
         return sv_dataset
     
+    # Also check if depth is already a dimension coordinate (e.g. from swap_dims)
+    if "depth" in sv_dataset.dims:
+        logger.debug("Dataset already has depth as a dimension — skipping recomputation")
+        return sv_dataset
+    
     from oceanstream.echodata.consolidate import add_depth_to_sv
     
     return add_depth_to_sv(
