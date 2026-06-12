@@ -359,6 +359,237 @@ class TestListCampaignData:
         assert results == []
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Local storage backend tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestLocalStorage:
+    """Tests for the local filesystem storage backend.
+
+    Every test in this class resets ``_LOCAL_ROOT`` on teardown to avoid
+    leaking state into other tests.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_local_storage(self, monkeypatch):
+        """Reset storage backend after each test."""
+        monkeypatch.delenv("OCEANSTREAM_STORAGE_BACKEND", raising=False)
+        monkeypatch.delenv("OCEANSTREAM_OUTPUT_DIR", raising=False)
+        yield
+        from oceanstream.echodata.storage import use_azure_storage
+
+        use_azure_storage()
+
+    # ── Toggle ───────────────────────────────────────────────────
+
+    def test_use_local_storage_toggle(self, tmp_path: Path):
+        """use_local_storage / use_azure_storage toggle is_local_storage."""
+        from oceanstream.echodata.storage import (
+            is_local_storage,
+            use_azure_storage,
+            use_local_storage,
+        )
+
+        assert is_local_storage() is False
+
+        use_local_storage(tmp_path)
+        assert is_local_storage() is True
+
+        use_azure_storage()
+        assert is_local_storage() is False
+
+    def test_is_local_storage_env_var(self, monkeypatch):
+        """OCEANSTREAM_STORAGE_BACKEND=local activates local mode."""
+        from oceanstream.echodata.storage import is_local_storage
+
+        monkeypatch.setenv("OCEANSTREAM_STORAGE_BACKEND", "local")
+        assert is_local_storage() is True
+
+    # ── get_azure_zarr_store ─────────────────────────────────────
+
+    def test_get_azure_zarr_store_local(self, tmp_path: Path):
+        """In local mode, get_azure_zarr_store returns a string path."""
+        from oceanstream.echodata.storage import (
+            get_azure_zarr_store,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+        result = get_azure_zarr_store("data/file.zarr", container="processed")
+
+        assert isinstance(result, str)
+        expected = tmp_path / "processed" / "data" / "file.zarr"
+        assert result == str(expected)
+        # Parent dirs should have been created
+        assert expected.parent.exists()
+
+    # ── get_zarr_store_uri ───────────────────────────────────────
+
+    def test_get_zarr_store_uri_local(self, tmp_path: Path):
+        """In local mode, get_zarr_store_uri returns a local path."""
+        from oceanstream.echodata.storage import (
+            get_zarr_store_uri,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+        result = get_zarr_store_uri("day/file.zarr", container="output")
+
+        assert "abfs://" not in result
+        assert str(tmp_path / "output" / "day" / "file.zarr") == result
+
+    # ── save + open roundtrip ────────────────────────────────────
+
+    def test_save_and_open_roundtrip(self, tmp_path: Path):
+        """save_dataset_to_azure + open_sv_from_azure roundtrip in local mode."""
+        import numpy as np
+        import xarray as xr
+
+        from oceanstream.echodata.storage import (
+            open_sv_from_azure,
+            save_dataset_to_azure,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+
+        ds = xr.Dataset({
+            "Sv": (["ping_time", "range_sample"], np.random.randn(10, 20) - 70),
+        })
+
+        zarr_path = "test/roundtrip.zarr"
+        returned = save_dataset_to_azure(ds, zarr_path, container="processed")
+        assert (tmp_path / "processed" / zarr_path).exists()
+
+        loaded = open_sv_from_azure(zarr_path=zarr_path, container="processed")
+        assert "Sv" in loaded
+        np.testing.assert_array_almost_equal(
+            loaded["Sv"].values, ds["Sv"].values
+        )
+        loaded.close()
+
+    # ── ensure_container_exists ──────────────────────────────────
+
+    def test_ensure_container_exists_local(self, tmp_path: Path):
+        """ensure_container_exists creates a subdirectory in local mode."""
+        from oceanstream.echodata.storage import (
+            ensure_container_exists,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+        ensure_container_exists("my-container")
+
+        assert (tmp_path / "my-container").is_dir()
+
+    # ── upload_file_to_blob ──────────────────────────────────────
+
+    def test_upload_file_to_blob_local(self, tmp_path: Path):
+        """upload_file_to_blob copies file to local tree in local mode."""
+        from oceanstream.echodata.storage import (
+            upload_file_to_blob,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+
+        src = tmp_path / "source.txt"
+        src.write_text("hello world")
+
+        upload_file_to_blob(str(src), "dest/file.txt", "container")
+
+        dest = tmp_path / "container" / "dest" / "file.txt"
+        assert dest.exists()
+        assert dest.read_text() == "hello world"
+
+    # ── _LocalListFS ─────────────────────────────────────────────
+
+    def test_local_list_fs_ls(self, tmp_path: Path):
+        """_LocalListFS.ls lists directory contents."""
+        from oceanstream.echodata.storage import _LocalListFS
+
+        (tmp_path / "ctr" / "subdir").mkdir(parents=True)
+        (tmp_path / "ctr" / "file.txt").write_text("x")
+
+        fs = _LocalListFS(tmp_path)
+        items = fs.ls("ctr")
+
+        assert len(items) == 2
+        assert any("file.txt" in i for i in items)
+        assert any("subdir" in i for i in items)
+
+    def test_local_list_fs_ls_detail(self, tmp_path: Path):
+        """_LocalListFS.ls(detail=True) returns dicts with type and size."""
+        from oceanstream.echodata.storage import _LocalListFS
+
+        (tmp_path / "ctr").mkdir()
+        (tmp_path / "ctr" / "data.bin").write_bytes(b"abc")
+
+        fs = _LocalListFS(tmp_path)
+        items = fs.ls("ctr", detail=True)
+
+        assert len(items) == 1
+        entry = items[0]
+        assert entry["type"] == "file"
+        assert entry["size"] == 3
+        assert "data.bin" in entry["name"]
+
+    def test_local_list_fs_isdir(self, tmp_path: Path):
+        """_LocalListFS.isdir works for dirs and files."""
+        from oceanstream.echodata.storage import _LocalListFS
+
+        (tmp_path / "adir").mkdir()
+        (tmp_path / "afile").write_text("x")
+
+        fs = _LocalListFS(tmp_path)
+
+        assert fs.isdir("adir") is True
+        assert fs.isdir("afile") is False
+        assert fs.isdir("nonexistent") is False
+
+    def test_local_list_fs_nonexistent(self, tmp_path: Path):
+        """_LocalListFS.ls on nonexistent path returns empty list."""
+        from oceanstream.echodata.storage import _LocalListFS
+
+        fs = _LocalListFS(tmp_path)
+        assert fs.ls("does-not-exist") == []
+
+    def test_local_list_fs_get_mapper(self, tmp_path: Path):
+        """_LocalListFS.get_mapper returns a string path."""
+        from oceanstream.echodata.storage import _LocalListFS
+
+        fs = _LocalListFS(tmp_path)
+        result = fs.get_mapper("container/path")
+
+        assert result == str(tmp_path / "container" / "path")
+
+    # ── get_azure_filesystem returns _LocalListFS ────────────────
+
+    def test_get_azure_filesystem_local_mode(self, tmp_path: Path):
+        """get_azure_filesystem returns _LocalListFS in local mode."""
+        from oceanstream.echodata.storage import (
+            _LocalListFS,
+            get_azure_filesystem,
+            use_local_storage,
+        )
+
+        use_local_storage(tmp_path)
+        fs = get_azure_filesystem()
+
+        assert isinstance(fs, _LocalListFS)
+
+    # ── Module exports for new functions ─────────────────────────
+
+    def test_local_storage_exports(self):
+        """New local storage functions are exported from oceanstream.echodata."""
+        from oceanstream import echodata
+
+        assert hasattr(echodata, "use_local_storage")
+        assert hasattr(echodata, "use_azure_storage")
+        assert hasattr(echodata, "is_local_storage")
+
+
 class TestModuleExports:
     """Test that all storage functions are properly exported."""
 

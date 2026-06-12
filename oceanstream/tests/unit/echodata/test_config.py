@@ -101,10 +101,13 @@ class TestDenoiseConfig:
         assert config.impulse_num_lags == 3
 
     def test_attenuation_defaults(self):
-        """Attenuation detection defaults."""
+        """Attenuation detection defaults (Ryan et al. 2015 values)."""
         config = DenoiseConfig()
         
-        assert config.attenuation_threshold == 0.8
+        assert config.attenuation_threshold == 6.0
+        assert config.attenuation_upper_limit == 180.0
+        assert config.attenuation_lower_limit == 280.0
+        assert config.attenuation_side_pings == 15
 
     def test_custom_methods(self):
         """Config should accept custom method list."""

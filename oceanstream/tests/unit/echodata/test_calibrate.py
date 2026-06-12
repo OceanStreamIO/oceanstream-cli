@@ -148,51 +148,52 @@ class TestCalibrationParams:
 
 
 class TestECSCalibration:
-    """Tests for ECS (Simrad Calibration Software) format."""
+    """Tests for ECS calibration format handling.
 
-    def test_parse_ecs_file(self, tmp_path: Path):
-        """Should parse ECS XML format."""
-        from oceanstream.echodata.calibrate.calibration import parse_ecs_file
-        
-        # Create minimal ECS file
-        ecs_content = """<?xml version="1.0" encoding="utf-8"?>
-<CalibrationResults>
-  <Calibration Frequency="38000">
-    <Gain>25.5</Gain>
-    <SaCorrection>-0.5</SaCorrection>
-  </Calibration>
-</CalibrationResults>
-"""
+    The old ``parse_ecs_file`` / ``parse_json_calibration`` functions were
+    removed from ``calibration.py``.  ECS parsing now lives in
+    ``oceanstream.echodata.calibrate.ecs`` (tested in ``test_ecs.py``).
+    """
+
+    def test_load_calibration_ecs_raises(self, tmp_path: Path):
+        """load_calibration should raise ValueError for .ecs files.
+
+        Users are directed to ``ecs.parse_ecs()`` instead.
+        """
+        from oceanstream.echodata.calibrate.calibration import load_calibration
+
         ecs_file = tmp_path / "calibration.ecs"
-        ecs_file.write_text(ecs_content)
-        
-        try:
-            params = parse_ecs_file(ecs_file)
-            assert 38000 in params
-        except (NotImplementedError, AttributeError):
-            # Function may not be implemented yet
-            pass
+        ecs_file.write_text("SourceCal T1\n  Frequency = 38000\n")
 
-    def test_parse_json_calibration(self, tmp_path: Path):
-        """Should parse JSON calibration format."""
-        from oceanstream.echodata.calibrate.calibration import parse_json_calibration
-        
+        with pytest.raises(ValueError, match=r"\.ecs"):
+            load_calibration(ecs_file)
+
+    def test_load_calibration_json(self, tmp_path: Path):
+        """load_calibration should still load JSON calibration files."""
         import json
-        cal_data = {
-            "frequencies": {
-                "38000": {
-                    "gain": 25.5,
-                    "sa_correction": -0.5,
-                    "equivalent_beam_angle": -20.7,
-                }
-            }
-        }
-        
+        from oceanstream.echodata.calibrate.calibration import load_calibration
+
+        cal_data = {"38000": {"gain": 25.5, "sa_correction": -0.5}}
         json_file = tmp_path / "calibration.json"
         json_file.write_text(json.dumps(cal_data))
-        
-        try:
-            params = parse_json_calibration(json_file)
-            assert 38000 in params or "38000" in params
-        except (NotImplementedError, AttributeError):
-            pass
+
+        params = load_calibration(json_file)
+        assert isinstance(params, dict)
+        assert "38000" in params
+
+    def test_apply_calibration_bad_type_raises(self):
+        """apply_calibration should raise TypeError for non-Path/non-dict."""
+        from oceanstream.echodata.calibrate.calibration import apply_calibration
+
+        with pytest.raises(TypeError, match="must be a Path or dict"):
+            apply_calibration(MagicMock(), 42)
+
+    def test_apply_calibration_auto_detect_failure(self):
+        """apply_calibration should raise when provider can't be inferred."""
+        from oceanstream.echodata.calibrate.calibration import apply_calibration
+
+        # Dict without Saildrone-specific keys
+        generic_cal = {"38kHz": {"gain": 25.0}}
+
+        with pytest.raises(ValueError, match="Cannot infer calibration provider"):
+            apply_calibration(MagicMock(), generic_cal, provider="auto")

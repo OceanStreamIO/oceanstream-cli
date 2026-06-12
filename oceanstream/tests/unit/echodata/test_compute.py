@@ -100,6 +100,70 @@ class TestComputeSv:
         assert "sv_dataset" in params
         assert "campaign_dir" in params or "campaign_id" in params
 
+    def test_compute_sv_from_echodata_forwards_cal_params(self):
+        """compute_sv_from_echodata should forward cal_params to compute_Sv."""
+        mock_compute_Sv = MagicMock()
+        mock_add_depth = MagicMock()
+        mock_add_location = MagicMock()
+
+        sentinel_ds = xr.Dataset({"Sv": (["x"], [1, 2, 3])})
+        mock_compute_Sv.return_value = sentinel_ds
+        mock_add_depth.return_value = sentinel_ds
+        mock_add_location.return_value = sentinel_ds
+
+        mock_ep = MagicMock()
+        mock_ep.calibrate.compute_Sv = mock_compute_Sv
+        mock_ep.consolidate.add_depth = mock_add_depth
+        mock_ep.consolidate.add_location = mock_add_location
+
+        mock_ed = MagicMock()
+        mock_ed.sonar_model = "EK80"
+
+        cal = {"gain": [25.0]}
+        env = {"speed_of_sound": 1500}
+
+        with patch.dict("sys.modules", {"echopype": mock_ep}):
+            # Re-import so the local `import echopype as ep` picks up the mock
+            import importlib
+            import oceanstream.echodata.compute.sv as sv_mod
+            importlib.reload(sv_mod)
+
+            sv_mod.compute_sv_from_echodata(mock_ed, env_params=env, cal_params=cal)
+
+        call_kwargs = mock_compute_Sv.call_args.kwargs
+        assert call_kwargs["cal_params"] == cal
+        assert call_kwargs["env_params"] == env
+
+    def test_compute_sv_from_echodata_omits_none_cal_params(self):
+        """cal_params=None should not be passed as a kwarg."""
+        mock_compute_Sv = MagicMock()
+        mock_add_depth = MagicMock()
+        mock_add_location = MagicMock()
+
+        sentinel_ds = xr.Dataset({"Sv": (["x"], [1, 2, 3])})
+        mock_compute_Sv.return_value = sentinel_ds
+        mock_add_depth.return_value = sentinel_ds
+        mock_add_location.return_value = sentinel_ds
+
+        mock_ep = MagicMock()
+        mock_ep.calibrate.compute_Sv = mock_compute_Sv
+        mock_ep.consolidate.add_depth = mock_add_depth
+        mock_ep.consolidate.add_location = mock_add_location
+
+        mock_ed = MagicMock()
+        mock_ed.sonar_model = "EK80"
+
+        with patch.dict("sys.modules", {"echopype": mock_ep}):
+            import importlib
+            import oceanstream.echodata.compute.sv as sv_mod
+            importlib.reload(sv_mod)
+
+            sv_mod.compute_sv_from_echodata(mock_ed, cal_params=None, env_params=None)
+
+        call_kwargs = mock_compute_Sv.call_args.kwargs
+        assert "cal_params" not in call_kwargs
+        assert "env_params" not in call_kwargs
+
 
 class TestComputeMVBS:
     """Tests for MVBS computation."""
@@ -308,10 +372,19 @@ class TestComputeIntegration:
 
 # ──────────────────────────────────────────────────────────────────────────
 # Strict xarray-2026 regression tests (no exception swallowing)
+# These require echopype + dask.array; skipped individually when missing.
 # ──────────────────────────────────────────────────────────────────────────
 
-echopype = pytest.importorskip("echopype")
-dask_array = pytest.importorskip("dask.array")
+_has_echopype = bool(pytest.importorskip.__module__)  # always True, just a placeholder
+try:
+    import echopype  # noqa: F401
+    import dask.array  # noqa: F401
+except ImportError:
+    _has_echopype = False
+
+_skip_no_echopype = pytest.mark.skipif(
+    not _has_echopype, reason="echopype + dask.array required for regression tests"
+)
 
 
 def _make_sv_dataset(
@@ -371,6 +444,7 @@ def _make_sv_dataset(
     return ds
 
 
+@_skip_no_echopype
 class TestMVBSXarray2026:
     """Strict MVBS regression tests — no broad except blocks."""
 
@@ -414,6 +488,7 @@ class TestMVBSXarray2026:
         assert mvbs.sizes["echo_range"] in (5, 6)
 
 
+@_skip_no_echopype
 class TestNASCXarray2026:
     """Strict NASC regression tests — no broad except blocks."""
 
