@@ -70,6 +70,15 @@ def _normalize_ecs_text(text: str) -> str:
         stripped = line.rstrip("\r\n")
         # Only rewrite top-level headers (no leading whitespace).
         if not stripped or line.startswith((" ", "\t")):
+            # Filter out commented param lines with empty/invalid values
+            # e.g. "    # SoundSpeed = # (meters per second)..."
+            # These crash echopype's PARAM_MATCHER
+            trimmed = stripped.lstrip()
+            if trimmed.startswith("#"):
+                # Check if it's a commented param with "= #" (empty value)
+                if "= #" in trimmed or "= \n" in line or trimmed.endswith("="):
+                    # Skip this line entirely — it's a no-op comment
+                    continue
             out_lines.append(line)
             continue
         nl = line[len(stripped):] or "\n"
