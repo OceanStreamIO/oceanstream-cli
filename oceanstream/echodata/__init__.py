@@ -129,6 +129,7 @@ __all__ = [
     "get_bathymetry",
     "estimate_seabed_depth",
     # Cloud Storage
+    "get_azure_uri_and_options",
     "get_azure_zarr_store",
     "save_echodata_to_azure",
     "save_sv_to_azure",
@@ -372,6 +373,7 @@ def __getattr__(name: str):
     
     # Cloud storage functions
     if name in (
+        "get_azure_uri_and_options",
         "get_azure_zarr_store",
         "save_echodata_to_azure",
         "save_sv_to_azure",
@@ -381,6 +383,7 @@ def __getattr__(name: str):
         "list_campaign_data",
     ):
         from oceanstream.echodata.storage import (
+            get_azure_uri_and_options,
             get_azure_zarr_store,
             save_echodata_to_azure,
             save_sv_to_azure,

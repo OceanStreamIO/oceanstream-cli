@@ -24,17 +24,16 @@ Storage Structure (recommended):
 
 Usage:
     from oceanstream.echodata.storage import (
-        get_azure_zarr_store,
         save_echodata_to_azure,
         save_sv_to_azure,
     )
     
-    # Using environment variables
-    store = get_azure_zarr_store("echodata/campaign_1/converted/file.zarr")
-    echodata.to_zarr(store, mode="w")
-    
-    # Using helper function
+    # Using helper function (recommended)
     save_echodata_to_azure(echodata, campaign_id="campaign_1", filename="file")
+    
+    # Direct xarray write via URI + storage_options
+    uri, opts = get_azure_uri_and_options("echodata/campaign_1/calibrated/file_Sv.zarr")
+    ds.to_zarr(uri, storage_options=opts, mode="w")
 """
 
 from __future__ import annotations
@@ -134,13 +133,47 @@ def get_azure_filesystem(connection_string: str | None = None):
     return adlfs.AzureBlobFileSystem(connection_string=conn_str)
 
 
+def get_azure_uri_and_options(
+    path: str,
+    container: Optional[str] = None,
+    connection_string: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Get an ``abfs://`` URI and fsspec storage options for a zarr path.
+
+    This is the recommended way to reference Azure zarr stores with zarr v3.
+    Both echopype's ``EchoData.to_zarr`` and xarray's ``Dataset.to_zarr``
+    accept a string URI plus ``storage_options`` / ``output_storage_options``.
+
+    Args:
+        path: Path within the container (e.g., "echodata/campaign/file.zarr")
+        container: Container name (default: from credentials)
+        connection_string: Explicit connection string.
+
+    Returns:
+        Tuple of (abfs_uri, storage_options_dict)
+
+    Example:
+        uri, opts = get_azure_uri_and_options("echodata/test/data.zarr")
+        ds.to_zarr(uri, storage_options=opts, mode="w")
+    """
+    conn_str, default_container = get_azure_credentials(connection_string)
+    container = container or default_container
+    uri = f"abfs://{container}/{path}"
+    return uri, {"connection_string": conn_str}
+
+
 def get_azure_zarr_store(
     path: str,
     container: Optional[str] = None,
     mode: str = "w",
     connection_string: str | None = None,
 ):
-    """Get a Zarr store backed by Azure Blob Storage.
+    """Get an fsspec mapper for a zarr path on Azure Blob Storage.
+
+    .. deprecated::
+        Prefer :func:`get_azure_uri_and_options` and pass the URI string
+        directly to ``to_zarr(uri, storage_options=...)``.  This function
+        is kept for callers that need a mapping object.
 
     Args:
         path: Path within the container (e.g., "echodata/campaign/file.zarr")
@@ -149,26 +182,14 @@ def get_azure_zarr_store(
         connection_string: Explicit connection string.
 
     Returns:
-        Zarr store configured for Azure (FSStore for zarr v2, FSMap for v3)
-
-    Example:
-        store = get_azure_zarr_store("echodata/test/data.zarr")
-        ds.to_zarr(store, mode="w")
+        fsspec.FSMap usable by xarray's ``to_zarr()``.
     """
-    import zarr
-
     _conn_str, default_container = get_azure_credentials(connection_string)
     container = container or default_container
 
     fs = get_azure_filesystem(connection_string)
     full_path = f"{container}/{path}"
-
-    # zarr v2 has FSStore, zarr v3 removed it
-    if hasattr(zarr.storage, "FSStore"):
-        return zarr.storage.FSStore(full_path, fs=fs, mode=mode)
-    else:
-        # zarr v3: use fsspec.FSMap which xarray's to_zarr() accepts
-        return fs.get_mapper(full_path)
+    return fs.get_mapper(full_path)
 
 
 def get_zarr_store_uri(
@@ -204,11 +225,11 @@ def build_echodata_path(
         stage: Processing stage - "converted", "calibrated", "products"
         
     Returns:
-        Path like "echodata/{campaign_id}/{stage}/{filename}.zarr"
+        Path like "{campaign_id}/{stage}/{filename}.zarr"
     """
     # Sanitize filename
     filename = Path(filename).stem
-    return f"echodata/{campaign_id}/{stage}/{filename}.zarr"
+    return f"{campaign_id}/{stage}/{filename}.zarr"
 
 
 def save_echodata_to_azure(
@@ -244,12 +265,24 @@ def save_echodata_to_azure(
             filename = "echodata"
     
     path = build_echodata_path(campaign_id, filename, stage="converted")
-    store = get_azure_zarr_store(path, container=container, connection_string=connection_string)
+    uri, storage_opts = get_azure_uri_and_options(
+        path, container=container, connection_string=connection_string,
+    )
 
-    logger.info(f"Saving EchoData to Azure: {path}")
-    echodata.to_zarr(store, overwrite=overwrite)
+    logger.info(f"Saving EchoData to Azure: {uri}")
 
-    return get_zarr_store_uri(path, container, connection_string=connection_string)
+    # Write EchoData groups directly via DataTree.to_zarr, bypassing
+    # echopype's validate_output_path / check_file_permissions which
+    # fails on cloud URIs with zarr v3.
+    tree = echodata._tree
+    if tree is None:
+        raise ValueError("EchoData has no DataTree to save.")
+
+    mode = "w" if overwrite else "w-"
+    tree.to_zarr(uri, mode=mode, storage_options=storage_opts)
+    echodata.converted_raw_path = uri
+
+    return uri
 
 
 def save_sv_to_azure(
@@ -271,18 +304,18 @@ def save_sv_to_azure(
         Azure URI of saved zarr store
     """
     path = build_echodata_path(campaign_id, f"{filename}_Sv", stage="calibrated")
-    store = get_azure_zarr_store(
+    uri, storage_opts = get_azure_uri_and_options(
         path, container=container, connection_string=connection_string,
     )
 
-    logger.info(f"Saving Sv dataset to Azure: {path}")
+    logger.info(f"Saving Sv dataset to Azure: {uri}")
     import xarray as xr_mod
     if isinstance(sv_dataset, xr_mod.Dataset):
         from oceanstream.echodata.utils.encoding import fix_chunking
         sv_dataset = fix_chunking(sv_dataset)
-    sv_dataset.to_zarr(store, mode="w")
+    sv_dataset.to_zarr(uri, storage_options=storage_opts, mode="w")
 
-    return get_zarr_store_uri(path, container, connection_string=connection_string)
+    return uri
 
 
 def save_product_to_azure(
@@ -306,18 +339,18 @@ def save_product_to_azure(
         Azure URI of saved zarr store
     """
     path = build_echodata_path(campaign_id, f"{filename}_{product_type}", stage="products")
-    store = get_azure_zarr_store(
+    uri, storage_opts = get_azure_uri_and_options(
         path, container=container, connection_string=connection_string,
     )
 
-    logger.info(f"Saving {product_type.upper()} to Azure: {path}")
+    logger.info(f"Saving {product_type.upper()} to Azure: {uri}")
     import xarray as xr_mod
     if isinstance(dataset, xr_mod.Dataset):
         from oceanstream.echodata.utils.encoding import fix_chunking
         dataset = fix_chunking(dataset)
-    dataset.to_zarr(store, mode="w")
+    dataset.to_zarr(uri, storage_options=storage_opts, mode="w")
 
-    return get_zarr_store_uri(path, container, connection_string=connection_string)
+    return uri
 
 
 def save_dataset_to_azure(
@@ -340,18 +373,18 @@ def save_dataset_to_azure(
     Returns:
         Azure URI of saved zarr store
     """
-    store = get_azure_zarr_store(
+    uri, storage_opts = get_azure_uri_and_options(
         zarr_path, container=container, connection_string=connection_string,
     )
 
-    logger.info(f"Saving dataset to Azure: {zarr_path}")
+    logger.info(f"Saving dataset to Azure: {uri}")
     import xarray as xr_mod
     if isinstance(dataset, xr_mod.Dataset):
         from oceanstream.echodata.utils.encoding import fix_chunking
         dataset = fix_chunking(dataset)
-    dataset.to_zarr(store, mode="w")
+    dataset.to_zarr(uri, storage_options=storage_opts, mode="w")
 
-    return get_zarr_store_uri(zarr_path, container, connection_string=connection_string)
+    return uri
 
 
 def open_echodata_from_azure(
