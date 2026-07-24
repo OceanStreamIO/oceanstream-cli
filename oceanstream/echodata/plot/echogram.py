@@ -456,6 +456,17 @@ def ensure_channel_labels(
         fn_hz = ds["frequency_nominal"].values
         if hasattr(fn_hz, "compute"):
             fn_hz = fn_hz.compute()
+        # Coerce to 1-D list of scalars (frequency_nominal may have extra
+        # dimensions after xr.concat, making each element an ndarray).
+        fn_hz_scalar = []
+        for v in fn_hz:
+            if np.ndim(v) == 0:
+                fn_hz_scalar.append(float(v))
+            elif hasattr(v, "flat") and v.size > 0:
+                fn_hz_scalar.append(float(v.flat[0]))
+            else:
+                fn_hz_scalar.append(np.nan)
+        fn_hz = fn_hz_scalar
     else:
         # Try to parse frequency from channel name
         fn_hz = []
