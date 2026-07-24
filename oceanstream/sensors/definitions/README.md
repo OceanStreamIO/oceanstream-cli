@@ -87,6 +87,7 @@ To add a new sensor:
 | airmar-150wx | Airmar 150WX WeatherStation | Meteorological | Airmar Technology |
 | licor-li190r | LI-COR LI-190R PAR Sensor | Radiation | LI-COR Biosciences |
 | kipp-zonen-cmp | Kipp & Zonen CMP Pyranometer | Radiation | Kipp & Zonen |
+| kipp-zonen-cgr | Kipp & Zonen CGR Pyrgeometer | Radiation | Kipp & Zonen |
 | apogee-si111 | Apogee SI-111 Infrared Radiometer | Radiation | Apogee Instruments |
 | thermistor-0.5m | Hull-Mounted Thermistor | Thermistor | Sea-Bird Scientific |
 | wave-imu | IMU-Derived Wave Sensor | Wave | Saildrone |

@@ -101,10 +101,13 @@ class TestDenoiseConfig:
         assert config.impulse_num_lags == 3
 
     def test_attenuation_defaults(self):
-        """Attenuation detection defaults."""
+        """Attenuation detection defaults (Ryan et al. 2015 values)."""
         config = DenoiseConfig()
         
-        assert config.attenuation_threshold == 0.8
+        assert config.attenuation_threshold == 6.0
+        assert config.attenuation_upper_limit == 180.0
+        assert config.attenuation_lower_limit == 280.0
+        assert config.attenuation_side_pings == 15
 
     def test_custom_methods(self):
         """Config should accept custom method list."""
@@ -190,3 +193,115 @@ dist_bin = "1nmi"
         assert config.sonar_model == "EK80"
         assert config.n_workers == 8
         assert config.campaign_id == "TPOS2023"
+
+
+class TestDenoiseConfigFrequencyKeyed:
+    """Tests for DenoiseConfig.to_frequency_keyed_params and frequency parsing."""
+
+    def test_to_frequency_keyed_params_uses_presets_when_no_user_overrides(self):
+        """Without frequency_params, should return presets for all frequencies."""
+        config = DenoiseConfig(use_frequency_specific=True)
+        result = config.to_frequency_keyed_params("background")
+
+        # Should include entries from FREQUENCY_PRESETS
+        assert len(result) >= 1
+        assert "38000" in result
+        assert "range_window" in result["38000"]
+
+    def test_to_frequency_keyed_params_merges_user_overrides(self):
+        """User overrides should layer on top of presets."""
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            frequency_params={
+                38000: {"background": {"range_window": 99}},
+            },
+        )
+        result = config.to_frequency_keyed_params("background")
+
+        # Should only include 38000 (user restricted to that freq)
+        assert set(result.keys()) == {"38000"}
+        # Override should win
+        assert result["38000"]["range_window"] == 99
+        # Preset defaults should still be present
+        assert "ping_window" in result["38000"]
+
+    def test_to_frequency_keyed_params_subset_frequencies(self):
+        """When frequency_params specifies a subset, only those appear."""
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            frequency_params={
+                200000: {"transient": {"exclude_above": 100.0}},
+            },
+        )
+        result = config.to_frequency_keyed_params("transient")
+
+        assert set(result.keys()) == {"200000"}
+        assert result["200000"]["exclude_above"] == 100.0
+
+    def test_to_frequency_keyed_params_unknown_method_returns_empty(self):
+        """Frequencies with no preset for the method return empty if no override."""
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            frequency_params={
+                99999: {},  # Frequency not in presets, no method overrides
+            },
+        )
+        result = config.to_frequency_keyed_params("background")
+
+        # 99999 has no preset and no override → excluded (empty params skipped)
+        assert "99999" not in result
+
+    def test_to_frequency_keyed_params_string_key_in_frequency_params(self):
+        """frequency_params with string keys should still be matched."""
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            frequency_params={
+                "38000": {"impulse": {"threshold_db": 15.0}},  # type: ignore[dict-item]
+            },
+        )
+        result = config.to_frequency_keyed_params("impulse")
+
+        assert "38000" in result
+        assert result["38000"]["threshold_db"] == 15.0
+
+    def test_from_toml_frequency_params(self, tmp_path: Path):
+        """from_toml should parse frequency_params and enable use_frequency_specific."""
+        toml_content = """
+[echodata]
+sonar_model = "EK80"
+
+[echodata.denoise]
+methods = ["background", "transient"]
+
+[echodata.denoise.frequency_params.38000]
+[echodata.denoise.frequency_params.38000.background]
+range_window = 30
+ping_window = 60
+
+[echodata.denoise.frequency_params.200000]
+[echodata.denoise.frequency_params.200000.background]
+range_window = 15
+"""
+        toml_file = tmp_path / "oceanstream.toml"
+        toml_file.write_text(toml_content)
+
+        config = EchodataConfig.from_toml(toml_file)
+
+        assert config.denoise.use_frequency_specific is True
+        assert config.denoise.frequency_params is not None
+        assert 38000 in config.denoise.frequency_params
+        assert 200000 in config.denoise.frequency_params
+
+    def test_from_toml_no_frequency_params_leaves_disabled(self, tmp_path: Path):
+        """Without frequency_params section, use_frequency_specific stays False."""
+        toml_content = """
+[echodata.denoise]
+methods = ["background"]
+"""
+        toml_file = tmp_path / "oceanstream.toml"
+        toml_file.write_text(toml_content)
+
+        config = EchodataConfig.from_toml(toml_file)
+
+        assert config.denoise.use_frequency_specific is False
+        assert config.denoise.frequency_params is None

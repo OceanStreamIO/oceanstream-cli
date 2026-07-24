@@ -9,7 +9,6 @@ Provides two methods for detecting transient interference in echosounder data:
 2. **Ryan et al. (2015)** (``transient_noise_mask_ryan``): Rolling 2-D
    percentile block comparison—simpler, suitable as fallback.
 
-Ported from saildrone-data/saildrone/denoise/transient_noise.py
 """
 
 from __future__ import annotations
@@ -245,13 +244,13 @@ def transient_noise_mask(
         params: Dictionary of parameters:
             - range_coord (str): vertical coordinate, default ``"depth"``
               (falls back to ``"echo_range"`` / ``"range_sample"``)
-            - ping_window (int): pings on each side, default 5
-            - threshold (tuple|float): ``(thr0, thr1)`` or single value (dB),
-              default ``(10.0, 7.0)``
+            - ping_window / n_pings (int): pings on each side, default 5
+            - threshold / thr_dB (tuple|float): ``(thr0, thr1)`` or single
+              value (dB), default ``(10.0, 7.0)``
             - exclude_above (float): min range to mask (m), default 250
             - ref_min / ref_max (float|None): deep-reference band limits (m).
               Auto-derived when ``None``.
-            - jumps (float): vertical step size (m), default 5
+            - jumps / depth_bin (float): vertical step size (m), default 5
             - maxts (float): max transient dB to accept, default −35
 
     Returns:
@@ -270,12 +269,36 @@ def transient_noise_mask(
         if rng is None:
             rng = "depth"
 
-    ping_win = int(params.get("ping_window", 5))
-    thr = params.get("threshold", (10.0, 7.0))
+    # When `depth` (or `echo_range`) is a data_var but not a dim/coord, the
+    # actual dimension is likely `range_sample`.  We still want metre-based
+    # range values for index calculations (exclude_above, ref band, jumps).
+    _range_vals_1d = None  # Will hold 1-D metre values if available
+    if rng not in sv_dataset.dims and rng not in sv_dataset.coords:
+        # rng exists as a data_var — extract 1-D depth profile, use range_sample as dim
+        if rng in sv_dataset.data_vars:
+            range_da = sv_dataset[rng]
+            if "ping_time" in range_da.dims:
+                range_da = range_da.isel(ping_time=0, drop=True)
+            if "channel" in range_da.dims:
+                range_da = range_da.isel(channel=0, drop=True)
+            _range_vals_1d = range_da.values.astype(float)
+        rng = "range_sample"
+
+    ping_win = int(params.get("ping_window", params.get("n_pings", 5)))
+
+    # threshold / thr_dB → (thr0, thr1)
+    thr = params.get("threshold", None)
+    if thr is None:
+        thr_db_val = params.get("thr_dB", None)
+        if thr_db_val is not None:
+            thr = (float(thr_db_val), max(2.0, float(thr_db_val) - 3.0))
+        else:
+            thr = (10.0, 7.0)
+
     excl_above = float(params.get("exclude_above", 250.0))
     ref_min_m = params.get("ref_min", None)
     ref_max_m = params.get("ref_max", None)
-    jumps_m = float(params.get("jumps", 5.0))
+    jumps_m = float(params.get("jumps", params.get("depth_bin", 5.0)))
     maxts = float(params.get("maxts", -35.0))
 
     # Thresholds
@@ -292,7 +315,11 @@ def transient_noise_mask(
         {"ping_time": max(1024, 4 * (2 * ping_win + 1)), rng: -1}
     )
 
-    r = sv_dataset[rng].values.astype(float)
+    # Use metre-based depth profile when available, else raw dim values
+    if _range_vals_1d is not None:
+        r = _range_vals_1d
+    else:
+        r = sv_dataset[rng].values.astype(float)
     Z = r.size
 
     # Default deep reference band

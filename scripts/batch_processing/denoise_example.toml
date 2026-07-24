@@ -1,0 +1,63 @@
+# Denoise configuration for the Saildrone TPOS 2023 campaign
+# Load with: python process_campaign.py --denoise-config denoise.toml
+#
+# This file is loaded via oceanstream.echodata.config.EchodataConfig.from_toml()
+# Only the [echodata.denoise] section is used by the processing script.
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# Methods to apply (order matters):
+# "background" - remove background noise
+# "impulse"    - remove impulse/spike noise
+# "transient"  - remove transient noise
+# "attenuation"- remove signal attenuation
+methods = ["background", "impulse", "transient", "attenuation"]
+
+# ── Background noise removal ────────────────────────────────────
+background_num_side_pings = 25
+background_snr_threshold = 3.0
+# background_noise_max =       # uncomment to set upper limit
+
+# ── Impulse noise removal ───────────────────────────────────────
+impulse_threshold_db = 10.0
+impulse_num_lags = 3
+
+# ── Transient noise removal ─────────────────────────────────────
+transient_n = 5
+transient_exclude_above = 250.0
+
+# ── Signal attenuation masking ──────────────────────────────────
+attenuation_threshold = 0.8
+attenuation_upper_limit = 180.0
+attenuation_lower_limit = 280.0
+
+# ── Frequency-specific overrides ────────────────────────────────
+# Each [frequency_params.<freq_hz>] section maps method names to
+# parameter dicts that override the built-in FREQUENCY_PRESETS.
+# Parameters use the same keys as the denoise functions (see
+# oceanstream.echodata.config.FREQUENCY_PRESETS for all defaults).
+
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+background = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+impulse    = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+transient  = { exclude_above = 250.0, depth_bin = 10.0, n_pings = 20, thr_dB = 8.0 }
+attenuation = { upper_limit_sl = 200.0, lower_limit_sl = 400.0, num_side_pings = 15, threshold = 6.0 }
+
+[echodata.denoise.frequency_params.200000]
+background = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
+impulse    = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+transient  = { exclude_above = 100.0, depth_bin = 3.0, n_pings = 10, thr_dB = 5.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 10, threshold = 4.0 }
+
+[echodata.mvbs]
+range_bin = "20m"
+ping_time_bin = "5s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"

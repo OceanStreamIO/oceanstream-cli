@@ -512,3 +512,214 @@ class TestModuleExports:
         
         for name in expected:
             assert name in __all__
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# New-feature tests: frequency-specific dispatch, 2D depth, param aliases
+# ──────────────────────────────────────────────────────────────────────────
+
+dask_array = pytest.importorskip("dask.array")
+
+
+def _make_2d_depth_dataset(n_pings=100, n_range=200):
+    """Build a dataset where depth is a 2-D data_var (ping_time, range_sample).
+
+    This mimics EK80 data where echo_range varies slightly per ping.
+    """
+    rng = np.random.default_rng(99)
+    ping_times = pd.date_range("2023-06-01", periods=n_pings, freq="s")
+    depth_profile = np.linspace(0, 250, n_range)
+    # Add small per-ping jitter to make depth 2-D
+    depth_2d = np.tile(depth_profile, (n_pings, 1)) + rng.uniform(
+        -0.3, 0.3, (n_pings, n_range)
+    )
+    sv = rng.standard_normal((n_pings, n_range)) - 70.0
+
+    return xr.Dataset(
+        {
+            "Sv": (["ping_time", "range_sample"], sv),
+            "depth": (["ping_time", "range_sample"], depth_2d),
+        },
+        coords={
+            "ping_time": ping_times,
+            "range_sample": np.arange(n_range),
+        },
+    )
+
+
+class TestTransientNoiseParamAliases:
+    """Tests for transient_noise_mask parameter aliases (n_pings, thr_dB, depth_bin)."""
+
+    def test_n_pings_alias(self, sample_sv_dataset):
+        """n_pings should work as an alias for ping_window."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        params_old = {"ping_window": 3, "threshold": (10.0, 7.0)}
+        params_new = {"n_pings": 3, "threshold": (10.0, 7.0)}
+
+        mask_old, _ = transient_noise_mask(sample_sv_dataset, params_old)
+        mask_new, _ = transient_noise_mask(sample_sv_dataset, params_new)
+
+        np.testing.assert_array_equal(mask_old.values, mask_new.values)
+
+    def test_thr_dB_alias(self, sample_sv_dataset):
+        """thr_dB should produce a (thr_dB, thr_dB-3) threshold pair."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        # When thr_dB=10, result should equal threshold=(10.0, 7.0)
+        params_explicit = {"threshold": (10.0, 7.0), "ping_window": 3}
+        params_alias = {"thr_dB": 10.0, "ping_window": 3}
+
+        mask_explicit, _ = transient_noise_mask(sample_sv_dataset, params_explicit)
+        mask_alias, _ = transient_noise_mask(sample_sv_dataset, params_alias)
+
+        np.testing.assert_array_equal(mask_explicit.values, mask_alias.values)
+
+    def test_depth_bin_alias(self, sample_sv_dataset):
+        """depth_bin should work as an alias for jumps."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        params_old = {"jumps": 10.0, "ping_window": 3}
+        params_new = {"depth_bin": 10.0, "ping_window": 3}
+
+        mask_old, _ = transient_noise_mask(sample_sv_dataset, params_old)
+        mask_new, _ = transient_noise_mask(sample_sv_dataset, params_new)
+
+        np.testing.assert_array_equal(mask_old.values, mask_new.values)
+
+
+class TestTransientNoise2DDepth:
+    """Tests for transient_noise_mask with 2-D depth data_var."""
+
+    def test_2d_depth_does_not_raise(self):
+        """transient_noise_mask should handle 2-D depth without error."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _make_2d_depth_dataset()
+        params = {"range_coord": "depth", "ping_window": 3}
+
+        mask, unfeasible = transient_noise_mask(ds, params)
+
+        assert mask.dtype == bool
+        assert mask.shape == ds["Sv"].shape
+
+    def test_2d_depth_uses_range_sample_dim(self):
+        """With 2-D depth, the mask should use range_sample as the vertical dim."""
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _make_2d_depth_dataset()
+        params = {"range_coord": "depth", "ping_window": 3}
+
+        mask, _ = transient_noise_mask(ds, params)
+
+        assert "range_sample" in mask.dims
+        assert "ping_time" in mask.dims
+
+
+class TestImpulseNoise2DDepth:
+    """Tests for impulse_noise_mask with 2-D depth data_var."""
+
+    def test_2d_depth_does_not_raise(self):
+        """impulse_noise_mask should handle 2-D depth without error."""
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        ds = _make_2d_depth_dataset()
+        params = {"vertical_bin_size": "5m", "threshold_db": 10.0}
+
+        mask, unfeasible = impulse_noise_mask(ds, params)
+
+        assert mask.dtype == bool
+        assert mask.shape == ds["Sv"].shape
+
+    def test_2d_depth_collapses_to_1d(self):
+        """The 2-D depth should be collapsed to 1-D for range calculations."""
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        ds = _make_2d_depth_dataset()
+        params = {"vertical_bin_size": "5m", "threshold_db": 10.0}
+
+        mask, _ = impulse_noise_mask(ds, params)
+
+        # Mask should have the expected dimensions
+        assert "range_sample" in mask.dims
+        assert "ping_time" in mask.dims
+
+
+class TestBuildFullMaskFrequencySpecific:
+    """Tests for build_full_mask with frequency-specific dispatch."""
+
+    def test_frequency_specific_dispatch(self):
+        """build_full_mask should use frequency-keyed params when enabled."""
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.config import DenoiseConfig
+
+        # Create a multi-channel dataset with frequency_nominal
+        ping_times = pd.date_range("2023-06-01", periods=100, freq="s")
+        n_depth = 500
+        depth_values = np.arange(n_depth) * 0.5
+        sv = np.random.default_rng(42).standard_normal((2, 100, n_depth)) - 70.0
+
+        ds = xr.Dataset(
+            {"Sv": (["channel", "ping_time", "depth"], sv)},
+            coords={
+                "ping_time": ping_times,
+                "depth": depth_values,
+                "channel": ["38kHz", "200kHz"],
+            },
+        )
+        ds["frequency_nominal"] = xr.DataArray([38000, 200000], dims=["channel"])
+
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            methods=["background"],
+        )
+
+        mask = build_full_mask(
+            ds,
+            methods=["background"],
+            config=config,
+            return_stage_masks=False,
+        )
+
+        assert mask is not None
+        assert mask.dtype == bool
+        assert mask.shape == ds["Sv"].shape
+
+    def test_frequency_specific_with_user_overrides(self):
+        """Frequency-specific dispatch with user overrides should work."""
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.config import DenoiseConfig
+
+        ping_times = pd.date_range("2023-06-01", periods=100, freq="s")
+        n_depth = 500
+        depth_values = np.arange(n_depth) * 0.5
+        sv = np.random.default_rng(42).standard_normal((2, 100, n_depth)) - 70.0
+
+        ds = xr.Dataset(
+            {"Sv": (["channel", "ping_time", "depth"], sv)},
+            coords={
+                "ping_time": ping_times,
+                "depth": depth_values,
+                "channel": ["38kHz", "200kHz"],
+            },
+        )
+        ds["frequency_nominal"] = xr.DataArray([38000, 200000], dims=["channel"])
+
+        config = DenoiseConfig(
+            use_frequency_specific=True,
+            methods=["background"],
+            frequency_params={
+                38000: {"background": {"range_window": 25, "ping_window": 40}},
+                200000: {"background": {"range_window": 10, "ping_window": 30}},
+            },
+        )
+
+        mask, stage_masks = build_full_mask(
+            ds,
+            methods=["background"],
+            config=config,
+            return_stage_masks=True,
+        )
+
+        assert mask is not None
+        assert "background" in stage_masks

@@ -3,8 +3,6 @@
 Estimates background noise level and flags samples with insufficient
 signal-to-noise ratio.  Supports quantile-based depth statistics and
 guard-mode DSL exclusion.
-
-Ported from saildrone-data/saildrone/denoise/background_noise.py
 """
 
 from __future__ import annotations
@@ -190,11 +188,21 @@ def background_noise_mask(
     if depth_stat == "min":
         noise_1d_db = binned_db.min(dim=range_dim, skipna=True)
     elif depth_stat == "quantile":
-        noise_1d_db = binned_db.quantile(
-            depth_quantile, dim=range_dim, skipna=True
-        )
-        if "quantile" in noise_1d_db.dims:
-            noise_1d_db = noise_1d_db.squeeze("quantile", drop=True)
+        # Bypass xarray/dask quantile entirely — dask 2024.12.x passes the
+        # removed 'interpolation' kwarg to numpy 2.x in both the nanquantile
+        # and map_blocks/quantile code paths.  Compute eagerly via numpy.
+        import numpy as _np
+
+        _vals = binned_db.values if hasattr(binned_db, 'values') else binned_db
+        _vals = _np.asarray(_vals, dtype=_np.float64)
+        axis = binned_db.dims.index(range_dim)
+        noise_arr = _np.nanquantile(_vals, depth_quantile, axis=axis, method="linear")
+        remaining_dims = [d for d in binned_db.dims if d != range_dim]
+        remaining_coords = {
+            k: v for k, v in binned_db.coords.items()
+            if k in remaining_dims
+        }
+        noise_1d_db = xr.DataArray(noise_arr, dims=remaining_dims, coords=remaining_coords)
     else:
         raise ValueError("depth_stat must be 'min' or 'quantile'.")
 

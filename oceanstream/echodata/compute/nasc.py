@@ -61,9 +61,12 @@ def _ensure_depth(
 
 def _ensure_location(sv_dataset: "xr.Dataset") -> "xr.Dataset":
     """
-    Ensure latitude/longitude are data variables (not just coords).
+    Ensure latitude/longitude are 1D data variables along ping_time.
     
     echopype.commongrid.compute_NASC requires lat/lon as data_vars.
+    Multi-dimensional lat/lon (e.g., channel × ping_time from EK80)
+    are collapsed to 1D by selecting the first index along extra dims,
+    since GPS position is physically identical across sonar channels.
     """
     # Check if we have location data at all
     has_lat = "latitude" in sv_dataset.data_vars or "latitude" in sv_dataset.coords
@@ -83,6 +86,15 @@ def _ensure_location(sv_dataset: "xr.Dataset") -> "xr.Dataset":
     if "longitude" in sv_dataset.coords and "longitude" not in sv_dataset.data_vars:
         sv_dataset = sv_dataset.assign(longitude=sv_dataset.coords["longitude"])
         logger.debug("Promoted longitude from coord to data_var")
+    
+    # Collapse multi-dimensional lat/lon to 1D along ping_time.
+    # GPS position is identical across sonar channels; select index 0 on extras.
+    for var in ("latitude", "longitude"):
+        da = sv_dataset[var]
+        extra_dims = [d for d in da.dims if d != "ping_time"]
+        if extra_dims:
+            sv_dataset[var] = da.isel({d: 0 for d in extra_dims})
+            logger.debug("Collapsed %s from %dD to 1D", var, da.ndim)
     
     return sv_dataset
 
@@ -157,6 +169,21 @@ def compute_nasc(
         range_bin=range_bin,
         dist_bin=dist_bin,
     )
+    
+    # Ensure lat/lon are in the result (echopype's _get_reduced_positions may
+    # silently fail via try/except in older versions).
+    for var in ("latitude", "longitude"):
+        if var not in ds_NASC and (var in sv_dataset.data_vars or var in sv_dataset.coords):
+            da = sv_dataset[var]
+            extra = [d for d in da.dims if d != "ping_time"]
+            if extra:
+                da = da.isel({d: 0 for d in extra})
+            # Average position per distance bin using the NASC ping_time coord
+            if "ping_time" in ds_NASC:
+                ds_NASC[var] = ("distance", da.sel(
+                    ping_time=ds_NASC["ping_time"].values, method="nearest"
+                ).values)
+            logger.debug("Added missing %s to NASC output via fallback", var)
     
     # Add NASC_log for visualization (ported from legacy workflow.py:555)
     # Log transform provides better visual representation across dynamic range

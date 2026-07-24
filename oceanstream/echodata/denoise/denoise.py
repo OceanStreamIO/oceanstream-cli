@@ -3,8 +3,6 @@
 Provides high-level functions for applying multiple denoising
 methods and combining masks.  Supports frequency-keyed parameter
 dispatch and pulse-length selection.
-
-Ported from saildrone-data/saildrone/denoise/mask.py and workflow.py
 """
 
 from __future__ import annotations
@@ -249,8 +247,12 @@ def build_full_mask(
             if method not in method_fns:
                 logger.warning(f"Unknown method {method}, skipping")
                 continue
-            # Build param_sets from config
-            if method == "background":
+            # Build param_sets from config — use frequency-keyed dicts
+            # when per-frequency dispatch is enabled so that
+            # _params_for_channel resolves per-channel parameters.
+            if config.use_frequency_specific:
+                params = config.to_frequency_keyed_params(method)
+            elif method == "background":
                 params = config.to_background_params()
             elif method == "transient":
                 params = config.to_transient_params()
@@ -321,6 +323,16 @@ def build_full_mask(
 
         if stage_or is not None:
             ch_masks.append(stage_or)
+        else:
+            # Channel was skipped (e.g. no frequency presets) — add all-False mask
+            # to keep the channel dimension aligned with the input dataset.
+            ch_value = ds["channel"].values[ch]
+            false_mask = xr.DataArray(
+                np.zeros(reference.shape, dtype=bool),
+                dims=reference.dims,
+                coords=reference.coords,
+            ).expand_dims(channel=[ch_value])
+            ch_masks.append(false_mask)
 
     if not ch_masks:
         full_mask = xr.DataArray(

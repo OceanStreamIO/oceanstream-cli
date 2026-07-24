@@ -73,10 +73,10 @@ seabirdscientific = { version = ">=2.7", optional = true }
 
 # Echodata dependencies (pinned for echopype compatibility)
 echopype = { git = "https://github.com/OceanStreamIO/echopype.git", branch = "oceanstream-integration", optional = true }
-numpy = { version = "1.26.4", optional = true }
-xarray = { version = "2024.11.0", optional = true }
-dask = { version = "2024.9.0", extras = ["complete"], optional = true }
-distributed = { version = "2024.9.0", optional = true }
+numpy = { version = ">=1.26.4,<2.1", optional = true }
+xarray = { version = ">=2024.11.0,<2027", optional = true }
+dask = { version = ">=2024.9.0", extras = ["complete"], optional = true }
+distributed = { version = ">=2024.9.0", optional = true }
 zarr = { version = ">=2.16", optional = true }
 netcdf4 = { version = ">=1.6", optional = true }
 fsspec = { version = "2025.3.2", optional = true }
@@ -84,6 +84,11 @@ numcodecs = { version = "0.14.1", optional = true }
 bottleneck = { version = "1.5.0", optional = true }
 openpyxl = { version = ">=3.0", optional = true }
 adlfs = { version = ">=2024.4.0", optional = true }
+
+# ADCP processing (dolfyn for RDI binary files)
+dolfyn = { version = ">=1.3", optional = true }
+scipy = { version = ">=1.12", optional = true }
+setuptools = { version = "<81", optional = true }  # dolfyn needs pkg_resources
 
 # Environmental data fallback (Copernicus Marine Service)
 copernicusmarine = { version = ">=1.0.0", optional = true }
@@ -122,7 +127,7 @@ echodata = [
 echodata-viz = ["matplotlib", "hvplot", "datashader", "holoviews", "panel", "bokeh"]
 
 multibeam = []  # Future: MB-System Python bindings when available
-adcp = []  # Future: ADCP processing libraries
+adcp = ["dolfyn", "scipy", "setuptools", "xarray"]
 
 # Convenience extras
 all = [
@@ -130,7 +135,8 @@ all = [
     "echopype", "numpy", "xarray", "dask", "distributed", "zarr", "netcdf4",
     "fsspec", "numcodecs", "bottleneck", "openpyxl", "adlfs",
     "copernicusmarine", "gsw", "matplotlib", "hvplot", "datashader",
-    "holoviews", "panel", "bokeh", "haversine", "erddapy"
+    "holoviews", "panel", "bokeh", "haversine", "erddapy",
+    "dolfyn", "scipy", "setuptools"
 ]
 geo = ["geopandas", "shapely", "pynmea2", "seabirdscientific"]  # Legacy alias for geotrack
 

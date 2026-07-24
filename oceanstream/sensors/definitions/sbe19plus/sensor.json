@@ -1,0 +1,64 @@
+{
+  "id": "sbe19plus",
+  "name": "Sea-Bird SBE 19plus V2 SeaCAT CTD",
+  "manufacturer": "Sea-Bird Scientific",
+  "model": "SBE 19plus V2",
+  "sensor_type": "ctd",
+  "description": "Self-contained CTD profiler for moored and profiling deployments. Internal memory, integrated pump. Supports auxiliary voltage channels for oxygen, fluorescence, turbidity, etc.",
+  "variables": [
+    "temperature",
+    "conductivity",
+    "pressure",
+    "salinity",
+    "oxygen",
+    "oxygen_temperature",
+    "depth"
+  ],
+  "raw_variables": [
+    "Temperature",
+    "Conductivity",
+    "Pressure",
+    "Salinity",
+    "SBE63",
+    "SBE63Temperature",
+    "Volt0",
+    "Volt1",
+    "Volt2",
+    "Volt4",
+    "Volt5"
+  ],
+  "column_mapping": {
+    "Temperature": "temperature",
+    "Conductivity": "conductivity",
+    "Pressure": "pressure",
+    "Salinity": "salinity",
+    "SBE63": "oxygen",
+    "SBE63Temperature": "oxygen_temperature",
+    "Timestamp": "time",
+    "Volt0": "volt0",
+    "Volt1": "volt1",
+    "Volt2": "volt2",
+    "Volt4": "volt4",
+    "Volt5": "volt5"
+  },
+  "specifications": {
+    "temperature_range": "-5 to +35°C",
+    "temperature_accuracy": "±0.005°C",
+    "temperature_resolution": "0.0001°C",
+    "conductivity_range": "0 to 9 S/m",
+    "conductivity_accuracy": "±0.0005 S/m",
+    "conductivity_resolution": "0.00005 S/m",
+    "pressure_range": "0 to 7000 m (various ranges)",
+    "pressure_accuracy": "±0.1% full scale",
+    "sampling_rate": "4 Hz",
+    "auxiliary_channels": "6 voltage channels (0-5V)"
+  },
+  "file_formats": {
+    "hex": "Raw hexadecimal scan data",
+    "hdr": "Header file with metadata",
+    "xmlcon": "XML configuration with calibration coefficients",
+    "cnv": "Processed ASCII data",
+    "csv": "Comma-separated realtime output (latest reading)"
+  },
+  "documentation_url": "https://www.seabird.com/sbe-19plus-v2-seacat-ctd/product?id=60762467712"
+}

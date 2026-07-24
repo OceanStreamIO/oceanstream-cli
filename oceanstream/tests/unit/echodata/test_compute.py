@@ -100,6 +100,70 @@ class TestComputeSv:
         assert "sv_dataset" in params
         assert "campaign_dir" in params or "campaign_id" in params
 
+    def test_compute_sv_from_echodata_forwards_cal_params(self):
+        """compute_sv_from_echodata should forward cal_params to compute_Sv."""
+        mock_compute_Sv = MagicMock()
+        mock_add_depth = MagicMock()
+        mock_add_location = MagicMock()
+
+        sentinel_ds = xr.Dataset({"Sv": (["x"], [1, 2, 3])})
+        mock_compute_Sv.return_value = sentinel_ds
+        mock_add_depth.return_value = sentinel_ds
+        mock_add_location.return_value = sentinel_ds
+
+        mock_ep = MagicMock()
+        mock_ep.calibrate.compute_Sv = mock_compute_Sv
+        mock_ep.consolidate.add_depth = mock_add_depth
+        mock_ep.consolidate.add_location = mock_add_location
+
+        mock_ed = MagicMock()
+        mock_ed.sonar_model = "EK80"
+
+        cal = {"gain": [25.0]}
+        env = {"speed_of_sound": 1500}
+
+        with patch.dict("sys.modules", {"echopype": mock_ep}):
+            # Re-import so the local `import echopype as ep` picks up the mock
+            import importlib
+            import oceanstream.echodata.compute.sv as sv_mod
+            importlib.reload(sv_mod)
+
+            sv_mod.compute_sv_from_echodata(mock_ed, env_params=env, cal_params=cal)
+
+        call_kwargs = mock_compute_Sv.call_args.kwargs
+        assert call_kwargs["cal_params"] == cal
+        assert call_kwargs["env_params"] == env
+
+    def test_compute_sv_from_echodata_omits_none_cal_params(self):
+        """cal_params=None should not be passed as a kwarg."""
+        mock_compute_Sv = MagicMock()
+        mock_add_depth = MagicMock()
+        mock_add_location = MagicMock()
+
+        sentinel_ds = xr.Dataset({"Sv": (["x"], [1, 2, 3])})
+        mock_compute_Sv.return_value = sentinel_ds
+        mock_add_depth.return_value = sentinel_ds
+        mock_add_location.return_value = sentinel_ds
+
+        mock_ep = MagicMock()
+        mock_ep.calibrate.compute_Sv = mock_compute_Sv
+        mock_ep.consolidate.add_depth = mock_add_depth
+        mock_ep.consolidate.add_location = mock_add_location
+
+        mock_ed = MagicMock()
+        mock_ed.sonar_model = "EK80"
+
+        with patch.dict("sys.modules", {"echopype": mock_ep}):
+            import importlib
+            import oceanstream.echodata.compute.sv as sv_mod
+            importlib.reload(sv_mod)
+
+            sv_mod.compute_sv_from_echodata(mock_ed, cal_params=None, env_params=None)
+
+        call_kwargs = mock_compute_Sv.call_args.kwargs
+        assert "cal_params" not in call_kwargs
+        assert "env_params" not in call_kwargs
+
 
 class TestComputeMVBS:
     """Tests for MVBS computation."""
@@ -304,3 +368,161 @@ class TestComputeIntegration:
         loaded = xr.open_zarr(zarr_path)
         
         assert np.allclose(sv_ds["Sv"].values, loaded["Sv"].values)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Strict xarray-2026 regression tests (no exception swallowing)
+# These require echopype + dask.array; skipped individually when missing.
+# ──────────────────────────────────────────────────────────────────────────
+
+_has_echopype = bool(pytest.importorskip.__module__)  # always True, just a placeholder
+try:
+    import echopype  # noqa: F401
+    import dask.array  # noqa: F401
+except ImportError:
+    _has_echopype = False
+
+_skip_no_echopype = pytest.mark.skipif(
+    not _has_echopype, reason="echopype + dask.array required for regression tests"
+)
+
+
+def _make_sv_dataset(
+    n_pings=200, n_channels=2, n_depth=50, multidim_latlon=False, latlon_as_coords=False
+):
+    """Build a synthetic Sv dataset for regression testing."""
+    import pandas as pd
+    import dask.array as da
+
+    rng = np.random.default_rng(42)
+    channels = [f"ch{i}" for i in range(n_channels)]
+    ping_time = pd.date_range("2023-01-01", periods=n_pings, freq="1s")
+
+    echo_range = np.tile(
+        np.linspace(0, 250, n_depth)[np.newaxis, np.newaxis, :],
+        (n_channels, n_pings, 1),
+    ) + rng.uniform(-0.5, 0.5, (n_channels, n_pings, n_depth))
+
+    Sv = da.from_array(
+        rng.uniform(-80, -30, (n_channels, n_pings, n_depth)),
+        chunks=(n_channels, 50, n_depth),
+    )
+
+    lat_1d = np.linspace(10, 11, n_pings)
+    lon_1d = np.linspace(-170, -169, n_pings)
+
+    data_vars = {
+        "Sv": (["channel", "ping_time", "range_sample"], Sv),
+        "echo_range": (["channel", "ping_time", "range_sample"], echo_range),
+    }
+    coords = {
+        "channel": channels,
+        "ping_time": ping_time,
+        "range_sample": np.arange(n_depth),
+    }
+
+    if multidim_latlon:
+        data_vars["latitude"] = (
+            ["channel", "ping_time"],
+            np.tile(lat_1d[np.newaxis, :], (n_channels, 1)),
+        )
+        data_vars["longitude"] = (
+            ["channel", "ping_time"],
+            np.tile(lon_1d[np.newaxis, :], (n_channels, 1)),
+        )
+    elif latlon_as_coords:
+        coords["latitude"] = ("ping_time", lat_1d)
+        coords["longitude"] = ("ping_time", lon_1d)
+    else:
+        data_vars["latitude"] = (["ping_time"], lat_1d)
+        data_vars["longitude"] = (["ping_time"], lon_1d)
+
+    ds = xr.Dataset(data_vars=data_vars, coords=coords, attrs={"processing_level": "Level 2A"})
+    ds["frequency_nominal"] = xr.DataArray(
+        [38000 + i * 82000 for i in range(n_channels)], dims=["channel"]
+    )
+    return ds
+
+
+@_skip_no_echopype
+class TestMVBSXarray2026:
+    """Strict MVBS regression tests — no broad except blocks."""
+
+    @pytest.mark.parametrize(
+        "latlon_mode", ["1d_datavar", "multidim", "coords_only", "no_latlon"]
+    )
+    def test_compute_mvbs_latlon_modes(self, latlon_mode):
+        from oceanstream.echodata.compute import compute_mvbs
+
+        kw = {}
+        if latlon_mode == "multidim":
+            kw["multidim_latlon"] = True
+        elif latlon_mode == "coords_only":
+            kw["latlon_as_coords"] = True
+        ds = _make_sv_dataset(**kw)
+
+        if latlon_mode == "no_latlon":
+            ds = ds.drop_vars(["latitude", "longitude"])
+
+        mvbs = compute_mvbs(ds, range_bin="10m", ping_time_bin="20s")
+
+        assert "Sv" in mvbs
+        assert mvbs["Sv"].ndim == 3
+        assert mvbs.sizes["ping_time"] > 1
+        assert mvbs.sizes["echo_range"] > 1
+
+        if latlon_mode != "no_latlon":
+            assert "latitude" in mvbs, f"latitude missing for {latlon_mode}"
+            assert mvbs["latitude"].dims == ("ping_time",)
+            assert mvbs["latitude"].shape[0] == mvbs.sizes["ping_time"]
+
+    def test_compute_mvbs_bin_count(self):
+        from oceanstream.echodata.compute import compute_mvbs
+
+        ds = _make_sv_dataset(n_pings=100)
+        mvbs = compute_mvbs(ds, range_bin="50m", ping_time_bin="10s")
+
+        # 100 pings at 1s → 10s bins → 10 bins
+        assert mvbs.sizes["ping_time"] == 10
+        # 250m range / 50m bin → 5 or 6 bins (depending on boundary handling)
+        assert mvbs.sizes["echo_range"] in (5, 6)
+
+
+@_skip_no_echopype
+class TestNASCXarray2026:
+    """Strict NASC regression tests — no broad except blocks."""
+
+    @pytest.mark.parametrize(
+        "latlon_mode", ["1d_datavar", "multidim", "coords_only"]
+    )
+    def test_compute_nasc_latlon_modes(self, latlon_mode):
+        from oceanstream.echodata.compute import compute_nasc
+
+        kw = {}
+        if latlon_mode == "multidim":
+            kw["multidim_latlon"] = True
+        elif latlon_mode == "coords_only":
+            kw["latlon_as_coords"] = True
+        ds = _make_sv_dataset(**kw)
+        ds["depth"] = ds["echo_range"].copy()
+
+        nasc = compute_nasc(ds, range_bin="10m", dist_bin="0.5nmi")
+
+        assert "NASC" in nasc
+        assert "NASC_log" in nasc
+        assert nasc["NASC"].ndim == 3
+        assert nasc.sizes["distance"] > 1
+        assert nasc.sizes["depth"] > 1
+
+        assert "latitude" in nasc, f"latitude missing for {latlon_mode}"
+        assert "longitude" in nasc, f"longitude missing for {latlon_mode}"
+
+    def test_nasc_values_nonnegative(self):
+        from oceanstream.echodata.compute import compute_nasc
+
+        ds = _make_sv_dataset()
+        ds["depth"] = ds["echo_range"].copy()
+        nasc = compute_nasc(ds, range_bin="20m", dist_bin="0.5nmi")
+
+        # NASC values must be non-negative (acoustic energy integral)
+        assert float(nasc["NASC"].min()) >= 0

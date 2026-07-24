@@ -30,11 +30,11 @@ class TestSaildroneSensorDefinitions:
             assert sensor_id in SENSORS, f"Sensor {sensor_id} not found in SENSORS"
 
     def test_all_catalogue_sensors_loaded(self):
-        """Test that all 14 sensor definitions are loaded into the catalogue."""
+        """Test that all 15 sensor definitions are loaded into the catalogue."""
         catalogue = get_sensor_catalogue()
         all_sensors = catalogue.list_all()
-        assert len(all_sensors) >= 14, (
-            f"Expected at least 14 sensors, got {len(all_sensors)}"
+        assert len(all_sensors) >= 15, (
+            f"Expected at least 15 sensors, got {len(all_sensors)}"
         )
 
     def test_sbe37_odo_sensor(self):
@@ -187,6 +187,41 @@ class TestSaildroneSensorDefinitions:
         assert sensor.sensor_type == SensorType.WINCH
         assert "WIRE_OUT" in sensor.variables
 
+    def test_kipp_zonen_cgr_sensor(self):
+        """Test Kipp & Zonen CGR pyrgeometer (LWR) definition."""
+        catalogue = get_sensor_catalogue()
+        sensor = catalogue.get("kipp-zonen-cgr")
+        assert sensor is not None, "kipp-zonen-cgr not in catalogue"
+        assert sensor.name == "Kipp & Zonen CGR Series Pyrgeometer"
+        assert sensor.manufacturer == "Kipp & Zonen"
+        assert sensor.model == "CGR Series"
+        assert sensor.sensor_type == SensorType.RADIATION
+        assert "longwave" in sensor.description.lower()
+
+        expected_vars = [
+            "LW_IRRAD_MEAN",
+            "LW_NET_IRRAD_MEAN",
+            "TEMP_LW_MEAN",
+            "LW_NET_IRRAD_STDDEV",
+            "TEMP_LW_STDDEV",
+            "LW_QC",
+        ]
+        for var in expected_vars:
+            assert var in sensor.variables, f"Variable {var} not in CGR variables"
+
+        assert sensor.typical_depth == "0.2m above waterline"
+        assert sensor.typical_mount == "mast or wing, upper side"
+        assert sensor.documentation_url is not None
+        assert "spectral_range" in sensor.specifications
+
+    def test_kipp_zonen_cgr_detection_from_lwr_variables(self):
+        """Test that CGR pyrgeometer is detected from LWR variable names."""
+        catalogue = get_sensor_catalogue()
+        lwr_vars = {"LW_IRRAD_MEAN", "LW_NET_IRRAD_MEAN", "TEMP_LW_MEAN"}
+        detected = catalogue.detect_sensors(lwr_vars)
+        sensor_ids = {s.id for s in detected}
+        assert "kipp-zonen-cgr" in sensor_ids
+
     def test_all_sensors_registered_in_global_catalogue(self):
         """Test that all Saildrone sensors are registered in the global catalogue."""
         catalogue = get_sensor_catalogue()
@@ -321,18 +356,20 @@ class TestSaildroneSensorVariableCoverage:
         
         # Use actual Saildrone variable names - check each sensor individually
         rad_vars = {
-            "SW_IRRAD_TOTAL_MEAN",  # Kipp & Zonen
+            "SW_IRRAD_TOTAL_MEAN",  # Kipp & Zonen CMP
             "PAR_AIR_MEAN",  # LI-COR
-            "TEMP_IR_SEA_WING_UNCOMP_MEAN"  # Apogee
+            "TEMP_IR_SEA_WING_UNCOMP_MEAN",  # Apogee
+            "LW_IRRAD_MEAN",  # Kipp & Zonen CGR
         }
         
         detected = catalogue.detect_sensors(rad_vars)
-        assert len(detected) >= 3  # Should detect all 3 radiation sensors
+        assert len(detected) >= 4  # Should detect all 4 radiation sensors
         
         sensor_ids = {s.id for s in detected}
         assert "licor-li190r" in sensor_ids
         assert "kipp-zonen-cmp" in sensor_ids
         assert "apogee-si111" in sensor_ids
+        assert "kipp-zonen-cgr" in sensor_ids
 
     def test_wave_variables_coverage(self):
         """Test that wave variables are properly assigned."""

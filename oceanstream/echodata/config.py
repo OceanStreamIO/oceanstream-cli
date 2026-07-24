@@ -19,6 +19,34 @@ import os
 # Default parameters optimized for each frequency (in Hz)
 # Based on legacy code from _echodata-legacy-code/saildrone-echodata-processing
 FREQUENCY_PRESETS: dict[int, dict[str, dict]] = {
+    # 18 kHz - deepest penetration, lowest resolution
+    18000: {
+        "background": {
+            "range_window": 35,
+            "ping_window": 60,
+            "SNR_threshold": "3.0dB",
+            "background_noise_max": "-130.0dB",
+            "depth_stat": "quantile",
+            "depth_quantile": 0.15,
+        },
+        "transient": {
+            "exclude_above": 300.0,
+            "depth_bin": 15.0,
+            "n_pings": 25,
+            "thr_dB": 9.0,
+        },
+        "impulse": {
+            "vertical_bin_size": "6m",
+            "ping_lags": [1, 2],
+            "threshold_db": 10.0,
+        },
+        "attenuation": {
+            "upper_limit_sl": 250.0,
+            "lower_limit_sl": 500.0,
+            "num_side_pings": 15,
+            "threshold": 6.0,
+        },
+    },
     # 38 kHz - deeper penetration, lower resolution
     38000: {
         "background": {
@@ -260,7 +288,7 @@ class DenoiseConfig:
     impulse_ping_lags: list[int] = field(default_factory=lambda: [1])
     
     # Attenuation
-    attenuation_threshold: float = 0.8  # Correlation threshold
+    attenuation_threshold: float = 6.0  # dB below block median to flag
     attenuation_upper_limit: float = 180.0  # m
     attenuation_lower_limit: float = 280.0  # m
     attenuation_side_pings: int = 15
@@ -347,6 +375,86 @@ class DenoiseConfig:
             "threshold": self.attenuation_threshold,
         }
 
+    def to_frequency_keyed_params(self, method: str) -> dict[str, dict]:
+        """Build a frequency-keyed param dict for *_params_for_channel* dispatch.
+
+        Returns ``{"38000": {…}, "200000": {…}}`` where each value
+        contains the merged parameters for *method* at that frequency.
+
+        Merging order (last wins):
+          1. ``FREQUENCY_PRESETS[freq][method]`` (built-in defaults)
+          2. ``self.frequency_params[freq][method]`` (user overrides)
+
+        When ``self.frequency_params`` restricts to a subset of
+        frequencies, only those are included.  Otherwise every preset
+        frequency is included.
+        """
+        result: dict[str, dict] = {}
+
+        # Determine which frequencies to include
+        if self.frequency_params:
+            freq_keys = {int(k) for k in self.frequency_params}
+        else:
+            freq_keys = set(FREQUENCY_PRESETS.keys())
+
+        for freq_hz in freq_keys:
+            # Start from preset defaults if available
+            if freq_hz in FREQUENCY_PRESETS and method in FREQUENCY_PRESETS[freq_hz]:
+                params = FREQUENCY_PRESETS[freq_hz][method].copy()
+            else:
+                params = {}
+
+            # Layer user-provided overrides (try both int and str keys)
+            if self.frequency_params:
+                for key in (freq_hz, str(freq_hz)):
+                    if key in self.frequency_params:
+                        method_overrides = self.frequency_params[key]
+                        if isinstance(method_overrides, Mapping) and method in method_overrides:
+                            entry = method_overrides[method]
+                            if isinstance(entry, Mapping):
+                                params.update(entry)
+
+            if params:
+                result[str(freq_hz)] = params
+
+        return result
+
+
+@dataclass
+class ShoalConfig:
+    """Configuration for shoal/school detection."""
+
+    method: str = "weill"
+    thr: float = -70.0
+    # Weill-specific
+    maxvgap: int = 5
+    maxhgap: int = 0
+    minvlen: int = 0
+    minhlen: int = 0
+    # Echoview-specific
+    mincan: tuple[float, float] = (3.0, 10.0)
+    maxlink: tuple[float, float] = (3.0, 15.0)
+    minsho: tuple[float, float] = (3.0, 15.0)
+
+    def to_kwargs(self) -> dict:
+        """Return kwargs for detect_shoals()."""
+        if self.method == "weill":
+            return {
+                "method": "weill",
+                "thr": self.thr,
+                "maxvgap": self.maxvgap,
+                "maxhgap": self.maxhgap,
+                "minvlen": self.minvlen,
+                "minhlen": self.minhlen,
+            }
+        return {
+            "method": "echoview",
+            "thr": self.thr,
+            "mincan": self.mincan,
+            "maxlink": self.maxlink,
+            "minsho": self.minsho,
+        }
+
 
 @dataclass
 class MVBSConfig:
@@ -405,6 +513,7 @@ class EchodataConfig:
     
     # Sub-configurations
     denoise: DenoiseConfig = field(default_factory=DenoiseConfig)
+    shoal: ShoalConfig = field(default_factory=ShoalConfig)
     mvbs: MVBSConfig = field(default_factory=MVBSConfig)
     nasc: NASCConfig = field(default_factory=NASCConfig)
     
@@ -442,8 +551,19 @@ class EchodataConfig:
         
         # Parse denoise config
         denoise_data = echodata.get("denoise", {})
+
+        # Parse per-frequency overrides: [echodata.denoise.frequency_params.<freq>]
+        raw_freq_params = denoise_data.get("frequency_params", None)
+        parsed_freq_params = None
+        use_freq_specific = denoise_data.get("use_frequency_specific", False)
+        if raw_freq_params and isinstance(raw_freq_params, dict):
+            parsed_freq_params = {int(k): v for k, v in raw_freq_params.items()}
+            use_freq_specific = True
+
         denoise_config = DenoiseConfig(
             methods=denoise_data.get("methods", default_denoise.methods),
+            use_frequency_specific=use_freq_specific,
+            frequency_params=parsed_freq_params,
             background_num_side_pings=denoise_data.get(
                 "background", {}
             ).get("num_side_pings", default_denoise.background_num_side_pings),
