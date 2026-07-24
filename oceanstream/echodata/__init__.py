@@ -381,6 +381,9 @@ def __getattr__(name: str):
         "open_sv_from_azure",
         "is_azure_configured",
         "list_campaign_data",
+        "use_local_storage",
+        "use_azure_storage",
+        "is_local_storage",
     ):
         from oceanstream.echodata.storage import (
             get_azure_uri_and_options,
@@ -391,6 +394,9 @@ def __getattr__(name: str):
             open_sv_from_azure,
             is_azure_configured,
             list_campaign_data,
+            use_local_storage,
+            use_azure_storage,
+            is_local_storage,
         )
         return locals()[name]
     
