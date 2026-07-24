@@ -55,9 +55,16 @@ def _normalize_ecs_text(text: str) -> str:
     * ``SourceCal T1 (channel 2)`` → ``SourceCal T1_C2``
     * Other ``(...)`` annotations are stripped.
 
+    If the text lacks the required ECS file wrapper (header, version,
+    separator, SOURCECAL SETTINGS block), it is added automatically.
+
     The channel-suffix path keeps each block uniquely named when (as in
     Saildrone exports) the same transducer token is reused for every block.
     """
+    # Check if the text has the required ECS structure
+    has_ecs_header = "#" in text and "ECHOVIEW CALIBRATION SUPPLEMENT" in text.upper()
+    has_sourcecal_settings = "SOURCECAL SETTINGS" in text.upper()
+
     out_lines = []
     for line in text.splitlines(keepends=True):
         stripped = line.rstrip("\r\n")
@@ -75,7 +82,32 @@ def _normalize_ecs_text(text: str) -> str:
             out_lines.append(f"{m['kind']} {m['src']}{nl}")
             continue
         out_lines.append(line)
-    return "".join(out_lines)
+
+    body = "".join(out_lines)
+
+    # Wrap in full ECS structure if headers are missing
+    if not has_ecs_header or not has_sourcecal_settings:
+        body = (
+            "#========================================================================================#\n"
+            "#               ECHOVIEW CALIBRATION SUPPLEMENT (.ECS) FILE (Narrowband)                 #\n"
+            "#========================================================================================#\n"
+            "#                                                                                        #\n"
+            "#========================================================================================#\n"
+            "\n"
+            "Version 1.00\n"
+            "\n"
+            "#========================================================================================#\n"
+            "#                                    FILESET SETTINGS                                    #\n"
+            "#========================================================================================#\n"
+            "\n"
+            "#========================================================================================#\n"
+            "#                                   SOURCECAL SETTINGS                                   #\n"
+            "#========================================================================================#\n"
+            "\n"
+            f"{body}"
+        )
+
+    return body
 
 
 def _coerce_to_path(source: EcsSource) -> tuple[Path, bool]:
@@ -139,18 +171,117 @@ def parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> dict:
         try:
             parser.parse()
         except (TypeError, ValueError, AttributeError) as e:
-            logger.warning("ECS parse failed (%s) — skipping calibration", e)
-            return {"env": None, "cal": None, "cal_BB": None}
+            logger.warning("ECS echopype parser failed (%s), using fallback parser", e)
+            return _fallback_parse_ecs(source, sonar_type)
         ev_dict = parser.get_cal_params()
         if not ev_dict:
-            logger.warning("ECS parser returned empty dict — check ECS format")
-            return {"env": None, "cal": None, "cal_BB": None}
+            logger.warning("ECS parser returned empty dict — using fallback parser")
+            return _fallback_parse_ecs(source, sonar_type)
         ds_env, ds_cal, ds_cal_BB = ecs_ev2ep(ev_dict, sonar_type)
     finally:
         if is_temp:
             path.unlink(missing_ok=True)
 
     return {"env": ds_env, "cal": ds_cal, "cal_BB": ds_cal_BB}
+
+
+# ECS parameter name → echopype cal_params key mapping
+_ECS_CAL_MAP = {
+    "TransducerGain": "gain_correction",
+    "EK60SaCorrection": "sa_correction",
+    "MajorAxis3dbBeamAngle": "beamwidth_alongship",
+    "MinorAxis3dbBeamAngle": "beamwidth_athwartship",
+    "MajorAxisAngleOffset": "angle_offset_alongship",
+    "MinorAxisAngleOffset": "angle_offset_athwartship",
+    "TwoWayBeamAngle": "equivalent_beam_angle",
+}
+
+_ECS_ENV_MAP = {
+    "SoundSpeed": "sound_speed",
+    "Temperature": "temperature",
+    "Salinity": "salinity",
+    "AbsorptionDepth": "pressure",
+}
+
+_PARAM_LINE_RE = re.compile(
+    r"^\s+(?P<skip>#?)\s*(?P<param>\w+)\s*=\s*(?P<val>-?[\d.]+)",
+)
+
+
+def _fallback_parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> dict:
+    """Fallback ECS parser that extracts calibration params directly.
+
+    Works with partial ECS text (missing headers) that echopype's rigid
+    parser cannot handle.
+    """
+    import numpy as np
+    import xarray as xr
+
+    if isinstance(source, Path):
+        text = source.read_text(encoding="utf-8-sig")
+    elif isinstance(source, str):
+        if "\n" not in source and Path(source).exists():
+            text = Path(source).read_text(encoding="utf-8-sig")
+        else:
+            text = source
+    else:
+        return {"env": None, "cal": None, "cal_BB": None}
+
+    # Parse channels: collect uncommented params per channel
+    channels: list[dict[str, float]] = []
+    current_channel: dict[str, float] | None = None
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        # New SourceCal block
+        if _SOURCE_HEADER_RE.match(stripped) or _SOURCE_HEADER_NO_CHAN_RE.match(stripped):
+            if current_channel is not None:
+                channels.append(current_channel)
+            current_channel = {}
+            continue
+
+        if current_channel is None:
+            continue
+
+        m = _PARAM_LINE_RE.match(line)
+        if m and m["skip"] == "":  # not commented
+            try:
+                current_channel[m["param"]] = float(m["val"])
+            except ValueError:
+                pass
+
+    if current_channel is not None:
+        channels.append(current_channel)
+
+    if not channels:
+        logger.warning("Fallback ECS parser found no channels")
+        return {"env": None, "cal": None, "cal_BB": None}
+
+    # Build cal_params and env_params as flat dicts with arrays
+    n_ch = len(channels)
+    cal_params: dict[str, np.ndarray] = {}
+    env_params: dict[str, float] = {}
+
+    for ecs_key, ep_key in _ECS_CAL_MAP.items():
+        vals = [ch.get(ecs_key) for ch in channels]
+        if any(v is not None for v in vals):
+            cal_params[ep_key] = np.array(
+                [v if v is not None else np.nan for v in vals]
+            )
+
+    # Environment: take from first channel that has the value
+    for ecs_key, ep_key in _ECS_ENV_MAP.items():
+        for ch in channels:
+            if ecs_key in ch:
+                env_params[ep_key] = ch[ecs_key]
+                break
+
+    logger.info(
+        "Fallback ECS: %d channels, cal_params=%s, env_params=%s",
+        n_ch, list(cal_params.keys()), list(env_params.keys()),
+    )
+
+    return {"env": env_params or None, "cal": cal_params or None, "cal_BB": None}
 
 
 def build_cal_params_from_ecs(
@@ -214,6 +345,13 @@ def build_cal_params_from_ecs(
         only = parsed_short if parsed_short is not None else parsed_long
         env_ds = only.get("env")
         cal_ds = only.get("cal")
+
+        # Fallback parser returns plain dicts (not xarray Datasets)
+        if isinstance(cal_ds, dict):
+            return env_ds if isinstance(env_ds, dict) else {}, cal_ds
+        if isinstance(env_ds, dict):
+            env_ds = None
+
         env_dict = ecs_ds2dict(conform_channel_order(env_ds, freq_ref)) if env_ds is not None else {}
         cal_dict = ecs_ds2dict(conform_channel_order(cal_ds, freq_ref)) if cal_ds is not None else {}
         return env_dict, cal_dict
