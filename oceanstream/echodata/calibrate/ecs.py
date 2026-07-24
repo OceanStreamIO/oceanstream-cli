@@ -358,6 +358,51 @@ def build_cal_params_from_ecs(
 
     # Dual-pulse: detect per-channel pulse mode then merge the two sets
     import numpy as np
+
+    # If fallback parser returned plain dicts, merge them directly
+    short_cal = parsed_short.get("cal")
+    long_cal = parsed_long.get("cal")
+    if isinstance(short_cal, dict) or isinstance(long_cal, dict):
+        # Fallback path: merge per-channel using pulse mode detection
+        from oceanstream.echodata.calibrate.saildrone import detect_pulse_mode
+        modes = detect_pulse_mode(echodata)
+
+        def _merge_dicts(d_short, d_long, pick_short_mask):
+            """Merge two cal_params dicts per-channel based on pulse mode."""
+            if d_short is None:
+                return d_long or {}
+            if d_long is None:
+                return d_short or {}
+            merged = {}
+            all_keys = set(d_short.keys()) | set(d_long.keys())
+            for key in all_keys:
+                s_val = d_short.get(key)
+                l_val = d_long.get(key)
+                if s_val is not None and l_val is not None:
+                    merged[key] = np.where(pick_short_mask, s_val, l_val)
+                elif s_val is not None:
+                    merged[key] = s_val
+                else:
+                    merged[key] = l_val
+            return merged
+
+        pick_short = np.array([m == "short" for m in modes])
+        short_env = parsed_short.get("env") or {}
+        long_env = parsed_long.get("env") or {}
+        env_merged = _merge_dicts(
+            short_env if isinstance(short_env, dict) else {},
+            long_env if isinstance(long_env, dict) else {},
+            pick_short,
+        )
+        cal_merged = _merge_dicts(
+            short_cal if isinstance(short_cal, dict) else {},
+            long_cal if isinstance(long_cal, dict) else {},
+            pick_short,
+        )
+        logger.info("Built dual-pulse cal_params (fallback): modes=%s", modes)
+        return env_merged, cal_merged
+
+    # Standard path: xarray Datasets from echopype parser
     import xarray as xr
 
     from oceanstream.echodata.calibrate.saildrone import detect_pulse_mode
@@ -381,7 +426,6 @@ def build_cal_params_from_ecs(
         all_vars = set(ds_s.data_vars) | set(ds_l.data_vars)
         for var in all_vars:
             if var in ds_s and var in ds_l:
-                # Both sides present: pick per channel
                 vals = np.where(pick_short, ds_s[var].values, ds_l[var].values)
                 out[var] = xr.DataArray(
                     vals, dims=["channel"], coords={"channel": ds_s["channel"]}
