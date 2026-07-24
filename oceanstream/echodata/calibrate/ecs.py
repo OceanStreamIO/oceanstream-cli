@@ -171,7 +171,7 @@ def parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> dict:
         try:
             parser.parse()
         except (TypeError, ValueError, AttributeError) as e:
-            logger.warning("ECS echopype parser failed (%s), using fallback parser", e)
+            logger.debug("ECS echopype parser failed (%s), using fallback parser", e)
             return _fallback_parse_ecs(source, sonar_type)
         ev_dict = parser.get_cal_params()
         if not ev_dict:
