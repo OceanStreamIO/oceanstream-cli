@@ -265,9 +265,7 @@ def _fallback_parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> di
     for ecs_key, ep_key in _ECS_CAL_MAP.items():
         vals = [ch.get(ecs_key) for ch in channels]
         if any(v is not None for v in vals):
-            cal_params[ep_key] = np.array(
-                [v if v is not None else np.nan for v in vals]
-            )
+            cal_params[ep_key] = [v if v is not None else 0.0 for v in vals]
 
     # Environment: take from first channel that has the value
     for ecs_key, ep_key in _ECS_ENV_MAP.items():
@@ -379,7 +377,13 @@ def build_cal_params_from_ecs(
                 s_val = d_short.get(key)
                 l_val = d_long.get(key)
                 if s_val is not None and l_val is not None:
-                    merged[key] = np.where(pick_short_mask, s_val, l_val)
+                    # Per-channel selection as list
+                    s_list = s_val if isinstance(s_val, list) else [s_val]
+                    l_list = l_val if isinstance(l_val, list) else [l_val]
+                    merged[key] = [
+                        s_list[i] if pick_short_mask[i] else l_list[i]
+                        for i in range(len(pick_short_mask))
+                    ]
                 elif s_val is not None:
                     merged[key] = s_val
                 else:
