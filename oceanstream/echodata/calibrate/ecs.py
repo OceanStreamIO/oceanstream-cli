@@ -136,7 +136,11 @@ def parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> dict:
     path, is_temp = _coerce_to_path(source)
     try:
         parser = ECSParser(input_file=str(path))
-        parser.parse()
+        try:
+            parser.parse()
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.warning("ECS parse failed (%s) — skipping calibration", e)
+            return {"env": None, "cal": None, "cal_BB": None}
         ev_dict = parser.get_cal_params()
         if not ev_dict:
             logger.warning("ECS parser returned empty dict — check ECS format")
