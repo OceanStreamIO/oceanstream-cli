@@ -138,6 +138,9 @@ def parse_ecs(source: EcsSource, sonar_type: SonarType = "EK80") -> dict:
         parser = ECSParser(input_file=str(path))
         parser.parse()
         ev_dict = parser.get_cal_params()
+        if not ev_dict:
+            logger.warning("ECS parser returned empty dict — check ECS format")
+            return {"env": None, "cal": None, "cal_BB": None}
         ds_env, ds_cal, ds_cal_BB = ecs_ev2ep(ev_dict, sonar_type)
     finally:
         if is_temp:
@@ -205,9 +208,11 @@ def build_cal_params_from_ecs(
     # Single-pulse: align one set to channel order and return
     if parsed_short is None or parsed_long is None:
         only = parsed_short if parsed_short is not None else parsed_long
-        env_ds = conform_channel_order(only["env"], freq_ref)
-        cal_ds = conform_channel_order(only["cal"], freq_ref)
-        return ecs_ds2dict(env_ds), ecs_ds2dict(cal_ds)
+        env_ds = only.get("env")
+        cal_ds = only.get("cal")
+        env_dict = ecs_ds2dict(conform_channel_order(env_ds, freq_ref)) if env_ds is not None else {}
+        cal_dict = ecs_ds2dict(conform_channel_order(cal_ds, freq_ref)) if cal_ds is not None else {}
+        return env_dict, cal_dict
 
     # Dual-pulse: detect per-channel pulse mode then merge the two sets
     import numpy as np
