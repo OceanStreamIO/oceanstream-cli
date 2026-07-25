@@ -32,6 +32,31 @@ campaign_app = typer.Typer(
 _provider_obj = None
 
 
+mcp_app = typer.Typer(
+    help="MCP (Model Context Protocol) server management for AI assistant integration.",
+    no_args_is_help=True,
+) if typer else None
+
+
+def _check_mcp_prompt() -> None:
+    """Show a dismissable prompt suggesting MCP setup if not installed."""
+    import importlib.util
+
+    if os.environ.get("OCEANSTREAM_NO_MCP_PROMPT", "").strip() in ("1", "true", "yes"):
+        return
+    if importlib.util.find_spec("mcp") is not None:
+        return
+    try:
+        from rich import print as rprint
+        rprint(
+            "[dim]💡 MCP server available — run [bold]oceanstream mcp setup[/bold] "
+            "to enable AI assistant integration. "
+            "Set OCEANSTREAM_NO_MCP_PROMPT=1 to suppress this message.[/dim]"
+        )
+    except ImportError:
+        pass  # No rich = no prompt
+
+
 if typer:
     # Global callback to handle --config-file option
     @app.callback()
@@ -46,6 +71,7 @@ if typer:
         ),
     ) -> None:
         """OceanStream - Process oceanographic and acoustic data."""
+        _check_mcp_prompt()
         if config_file:
             # Load configuration from specified file
             from .configuration import get_config
@@ -59,6 +85,7 @@ if typer:
     # Register nested apps
     app.add_typer(process_app, name="process")
     app.add_typer(campaign_app, name="campaign")
+    app.add_typer(mcp_app, name="mcp")
     
     @app.command("providers")
     def providers_command() -> None:
@@ -69,6 +96,108 @@ if typer:
             provider_obj = get_provider(p)
             stationary = " (stationary)" if getattr(provider_obj, "is_stationary", False) else ""
             typer.echo(f"  - {p}{stationary}")
+
+    # --- MCP subcommands ---
+
+    @mcp_app.command("setup")
+    def mcp_setup_command(
+        install_deps: bool = typer.Option(True, "--install/--no-install", help="Install MCP dependencies"),
+    ) -> None:
+        """Install MCP dependencies and generate .vscode/mcp.json for AI assistant integration."""
+        import importlib.util
+        import subprocess
+        import json
+
+        # Step 1: Install MCP dependencies if needed
+        if install_deps and importlib.util.find_spec("mcp") is None:
+            typer.echo("Installing MCP dependencies...")
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "oceanstream[mcp]"],
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                )
+                typer.echo("✓ MCP dependencies installed")
+            except subprocess.CalledProcessError as e:
+                typer.echo(f"✗ Failed to install MCP dependencies: {e}", err=True)
+                raise typer.Exit(code=1)
+        elif importlib.util.find_spec("mcp") is not None:
+            typer.echo("✓ MCP dependencies already installed")
+
+        # Step 2: Generate .vscode/mcp.json
+        vscode_dir = Path(".vscode")
+        mcp_json_path = vscode_dir / "mcp.json"
+
+        mcp_config = {
+            "servers": {
+                "oceanstream": {
+                    "type": "stdio",
+                    "command": "oceanstream-mcp",
+                }
+            }
+        }
+
+        vscode_dir.mkdir(exist_ok=True)
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
+        typer.echo(f"✓ Generated {mcp_json_path}")
+
+        # Step 3: Print next steps
+        typer.echo("\n🎉 MCP server setup complete!\n")
+        typer.echo("Next steps:")
+        typer.echo("  • VS Code: Reload window — Copilot will auto-discover the MCP server")
+        typer.echo("  • Claude Desktop: Add to claude_desktop_config.json:")
+        typer.echo('    {"mcpServers": {"oceanstream": {"command": "oceanstream-mcp"}}}')
+        typer.echo("  • Test: Run 'oceanstream-mcp' to start in stdio mode")
+        typer.echo("  • HTTP: Run 'oceanstream-mcp --http --port 8060' for network access")
+
+    @mcp_app.command("start")
+    def mcp_start_command(
+        http: bool = typer.Option(False, "--http", help="Use HTTP transport instead of stdio"),
+        port: int = typer.Option(8060, "--port", "-p", help="Port for HTTP transport"),
+        host: str = typer.Option("0.0.0.0", "--host", help="Host for HTTP transport"),
+    ) -> None:
+        """Start the MCP server (stdio or HTTP transport)."""
+        import importlib.util
+
+        if importlib.util.find_spec("mcp") is None:
+            typer.echo("MCP dependencies not installed. Run 'oceanstream mcp setup' first.", err=True)
+            raise typer.Exit(code=1)
+
+        from .mcp_server.server import main as mcp_main
+
+        # Inject args for the mcp server
+        args = []
+        if http:
+            args.extend(["--http", "--port", str(port), "--host", host])
+        sys.argv = ["oceanstream-mcp"] + args
+        mcp_main()
+
+    @mcp_app.command("status")
+    def mcp_status_command() -> None:
+        """Check MCP server installation status."""
+        import importlib.util
+
+        typer.echo("OceanStream MCP Server Status\n")
+
+        # Check MCP deps
+        mcp_installed = importlib.util.find_spec("mcp") is not None
+        typer.echo(f"  MCP package:     {'✓ installed' if mcp_installed else '✗ not installed'}")
+
+        # Check optional processing deps
+        geotrack_ok = importlib.util.find_spec("geopandas") is not None
+        echodata_ok = importlib.util.find_spec("echopype") is not None
+        adcp_ok = importlib.util.find_spec("dolfyn") is not None
+        typer.echo(f"  Geotrack extras: {'✓ available' if geotrack_ok else '○ not installed'}")
+        typer.echo(f"  Echodata extras: {'✓ available' if echodata_ok else '○ not installed'}")
+        typer.echo(f"  ADCP extras:     {'✓ available' if adcp_ok else '○ not installed'}")
+
+        # Check .vscode/mcp.json
+        mcp_json = Path(".vscode/mcp.json")
+        typer.echo(f"  .vscode/mcp.json: {'✓ exists' if mcp_json.exists() else '○ not found (run oceanstream mcp setup)'}")
+
+        if not mcp_installed:
+            typer.echo("\nRun 'oceanstream mcp setup' to install and configure.")
+
     
     @campaign_app.command("create")
     def create_campaign_command(

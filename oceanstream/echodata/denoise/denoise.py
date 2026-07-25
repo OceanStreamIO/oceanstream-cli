@@ -468,6 +468,7 @@ def drop_noisy_pings(
     var_name: str = "Sv",
     drop_threshold: float = 1.0,
     freq_coord: str = "frequency_nominal",
+    multichannel_reduce: str = "min",
 ) -> "xr.Dataset":
     """
     Drop ping_time slices where the fraction of NaNs exceeds a threshold.
@@ -487,6 +488,16 @@ def drop_noisy_pings(
                        - 0.5 = remove pings with ≥50% NaN
                        - 0.0 = remove any ping with any NaN
         freq_coord: Name of the frequency coordinate (default: "frequency_nominal")
+        multichannel_reduce: How to combine NaN fractions across channels when
+                             multiple channels are present.
+                             - "min" (default): drop only if ALL channels agree
+                               the ping is dead. Correct for multi-frequency
+                               data where high-frequency channels (e.g. 200 kHz)
+                               naturally have many NaN samples at depth due to
+                               absorption — using "max" would drop nearly every
+                               ping.
+                             - "max": drop if ANY channel is dead. Only sensible
+                               for single-frequency or same-frequency arrays.
         
     Returns:
         Dataset with noisy pings removed along the ping_time axis.
@@ -525,9 +536,20 @@ def drop_noisy_pings(
     total = ds[var_name].sizes[range_dim]
     frac_nan = n_nan / total
     
-    # If there's a channel dim, take max across channels (most conservative)
+    # Reduce across channels. For multi-frequency data, "min" is correct: drop
+    # only pings where ALL channels agree the ping is dead. Using "max" would
+    # drop nearly every ping because higher-frequency channels (e.g. 200 kHz)
+    # naturally have most of the water column below their noise floor after
+    # denoising, giving them near-100% NaN fractions per ping.
     if "channel" in frac_nan.dims:
-        frac_nan = frac_nan.max(dim="channel")
+        if multichannel_reduce == "min":
+            frac_nan = frac_nan.min(dim="channel")
+        elif multichannel_reduce == "max":
+            frac_nan = frac_nan.max(dim="channel")
+        else:
+            raise ValueError(
+                f"multichannel_reduce must be 'min' or 'max', got {multichannel_reduce!r}"
+            )
     
     # Compute which pings to keep
     if hasattr(frac_nan, 'compute'):

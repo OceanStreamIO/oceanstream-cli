@@ -54,6 +54,7 @@ exclude = [
 
 [tool.poetry.scripts]
 oceanstream = "oceanstream.cli:app"
+oceanstream-mcp = "oceanstream.mcp_server.server:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
@@ -84,6 +85,9 @@ numcodecs = { version = "0.14.1", optional = true }
 bottleneck = { version = "1.5.0", optional = true }
 openpyxl = { version = ">=3.0", optional = true }
 adlfs = { version = ">=2024.4.0", optional = true }
+
+# MCP server
+mcp = { version = ">=1.9", extras = ["cli"], optional = true }
 
 # ADCP processing (dolfyn for RDI binary files)
 dolfyn = { version = ">=1.3", optional = true }
@@ -138,6 +142,7 @@ all = [
     "holoviews", "panel", "bokeh", "haversine", "erddapy",
     "dolfyn", "scipy", "setuptools"
 ]
+mcp = ["mcp"]
 geo = ["geopandas", "shapely", "pynmea2", "seabirdscientific"]  # Legacy alias for geotrack
 
 [tool.poetry.group.dev.dependencies]

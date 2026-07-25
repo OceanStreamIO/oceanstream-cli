@@ -60,6 +60,11 @@ class DenoiseParams:
     # Frequency-specific overrides
     use_frequency_specific: bool = False
     frequency_params: Optional[dict] = None
+    # Post-denoise sanity clip: mask Sv samples louder than this as NaN.
+    # Anything > -10 dB in the water column is not biology — it's residual
+    # cross-talk from adjacent instruments, electrical interference, or
+    # ring-down that the mask-based denoisers missed. Set to None to disable.
+    sv_clip_max_db: Optional[float] = -10.0
 
     def to_denoise_config(self):
         """Convert to ``oceanstream.echodata.config.DenoiseConfig``."""
@@ -100,6 +105,29 @@ class NASCParams:
 
     range_bin: str = "10m"
     dist_bin: str = "0.5nmi"
+
+
+@dataclass
+class PruneParams:
+    """Drop pings that are mostly NaN after denoising.
+
+    Runs between seabed masking and MVBS/NASC. Pings whose NaN fraction
+    exceeds ``drop_threshold`` are removed from the ping_time axis so that
+    downstream linear-space averaging (MVBS) isn't dominated by the residual
+    non-NaN samples of otherwise garbage pings.
+    """
+
+    enabled: bool = True
+    drop_threshold: float = 0.8  # drop pings with >= 80% NaN samples
+    # Cross-talk detection — flag pings where a "quiet" deep reference band has
+    # abnormally elevated Sv (a signature of interference from another
+    # echosounder, ADCP, or electrical source). The mesopelagic below the DSL
+    # at 38 kHz in tropical open ocean is near the noise floor; systematic
+    # elevation there means the ping is contaminated across the whole column.
+    crosstalk_enabled: bool = True
+    crosstalk_ref_depth_min: float = 800.0    # metres — start of reference band
+    crosstalk_ref_depth_max: float = 1200.0   # metres — end of reference band
+    crosstalk_threshold_db: float = 6.0       # elevation above median to flag
 
 
 @dataclass
@@ -174,6 +202,7 @@ class PipelineConfig:
     denoise: DenoiseParams = field(default_factory=DenoiseParams)
     mvbs: MVBSParams = field(default_factory=MVBSParams)
     nasc: NASCParams = field(default_factory=NASCParams)
+    prune: PruneParams = field(default_factory=PruneParams)
     chunks: ChunkConfig = field(default_factory=ChunkConfig)
     days_to_combine: int = 1  # 1 = per-day concatenation
     # ── Raw conversion (process_from_raw.py) ─────────────────────
@@ -192,6 +221,7 @@ class PipelineConfig:
     per_file_netcdf: bool = False       # export per-file NetCDF in Stage 2
     per_file_echograms: bool = False    # generate per-file echograms in Stage 2
     build_campaign_zarr: bool = True
+    skip_campaign_echograms: bool = False  # skip only the campaign echogram loop (keep campaign zarr)
     build_campaign_sv_zarr: bool = False  # experimental
     category_parallel: bool = True  # parallelize short_pulse/long_pulse within each day
     resume_stage: int = 0               # resume from this stage (0 = start from beginning)\n    keep_raw: bool = False              # keep downloaded raw files after conversion
