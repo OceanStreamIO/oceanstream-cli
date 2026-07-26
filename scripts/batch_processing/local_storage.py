@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,34 @@ logger = logging.getLogger(__name__)
 _OUTPUT_ROOT: Path = Path("/tmp/oceanstream/local_output")
 
 
+def _robust_rmtree(path: Path, max_attempts: int = 5, delay: float = 0.5) -> None:
+    """Delete a directory tree tolerating exFAT-on-macOS ENOENT flakiness.
+
+    exFAT on macOS occasionally reports directory entries that vanish
+    between listdir() and unlink() — retry a few times before giving up.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            # Either the whole path is gone (success) or a nested entry
+            # vanished mid-walk — retry to handle inconsistent state.
+            if not path.exists():
+                return
+            if attempt == max_attempts:
+                raise
+            time.sleep(delay)
+        except OSError as e:
+            if attempt == max_attempts:
+                raise
+            logger.warning(
+                "rmtree attempt %d/%d failed for %s: %s — retrying",
+                attempt, max_attempts, path, e,
+            )
+            time.sleep(delay)
+
+
 # ── replacement functions ────────────────────────────────────────────────
 
 def save_dataset_to_azure(
@@ -32,7 +61,12 @@ def save_dataset_to_azure(
     container: Optional[str] = None,
     connection_string: str | None = None,
 ) -> str:
-    """Save dataset to local zarr store (replaces Azure version)."""
+    """Save dataset to local zarr store (replaces Azure version).
+
+    Retries the write on transient FS errors — exFAT-on-macOS periodically
+    reports ENOENT on freshly-created chunk directories, and shutil.rmtree
+    can see phantom entries during directory teardown.
+    """
     import dask
     from oceanstream.echodata.utils.encoding import fix_chunking
 
@@ -41,10 +75,34 @@ def save_dataset_to_azure(
 
     logger.info("Saving dataset locally: %s", dest)
     dataset = fix_chunking(dataset)
-    # Use synchronous scheduler for local saves to avoid sending large
-    # in-memory graphs through the distributed scheduler (1+ GiB overhead).
-    with dask.config.set(scheduler="synchronous"):
-        dataset.to_zarr(str(dest), mode="w")
+
+    max_attempts = 3
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if dest.exists():
+                _robust_rmtree(dest)
+            # Use synchronous scheduler for local saves to avoid sending large
+            # in-memory graphs through the distributed scheduler (1+ GiB overhead).
+            with dask.config.set(scheduler="synchronous"):
+                dataset.to_zarr(str(dest), mode="w-")
+            return str(dest)
+        except (FileNotFoundError, FileExistsError, OSError) as e:
+            last_exc = e
+            if attempt == max_attempts:
+                logger.error(
+                    "to_zarr failed for %s after %d attempts: %s",
+                    dest, attempt, e,
+                )
+                raise
+            logger.warning(
+                "to_zarr attempt %d/%d failed for %s: %s — retrying",
+                attempt, max_attempts, dest, e,
+            )
+            time.sleep(1.0)
+    # Unreachable, but keep type-checker happy
+    if last_exc:
+        raise last_exc
     return str(dest)
 
 

@@ -1,15 +1,32 @@
 #!/usr/bin/env python3
-"""Denoise experiments for 2023-07-21 long_pulse data.
+"""Denoise experiments for one day of Sv data.
 
 Tests different denoising method combinations and parameter variations,
 generating EK500-colormap echograms for visual comparison.
 
 Usage:
-    cd scripts/batch_processing
+    # Default: 2023-07-21 long_pulse (legacy defaults)
     python denoise_experiment.py
+
+    # Custom day + zarr (e.g. 2023-10-10 long_pulse from external volume)
+    python denoise_experiment.py \\
+        --zarr /Volumes/RP60/tpos_saildrone_2023/_experiment/local-raw-10oct/2023-10-10/2023-10-10--long_pulse.zarr \\
+        --day 2023-10-10 \\
+        --out-dir /Volumes/RP60/tpos_saildrone_2023/_experiment/denoised_experiments/2023-10-10--long_pulse
+
+    # Short-pulse (both 38 kHz and 200 kHz channels)
+    python denoise_experiment.py \\
+        --zarr .../2023-10-10--short_pulse.zarr \\
+        --day 2023-10-10 \\
+        --channels 0 1 \\
+        --out-dir .../denoised_experiments/2023-10-10--short_pulse
+
+    # Run only a subset of experiments
+    python denoise_experiment.py --experiments 00_raw 01_full_pipeline 13_all_relaxed
 """
 from __future__ import annotations
 
+import argparse
 import gc
 import logging
 import sys
@@ -37,12 +54,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("denoise_exp")
 
-# ── Paths ────────────────────────────────────────────────────────
-ZARR_PATH = Path("/tmp/2023-07-21--long_pulse.zarr")
-OUT_DIR = Path(__file__).parent / "denoised_experiments"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-DAY = "2023-07-21"
+# ── Legacy defaults (kept for backward compatibility when script is run with no args) ──
+DEFAULT_ZARR_PATH = Path("/tmp/2023-07-21--long_pulse.zarr")
+DEFAULT_OUT_DIR = Path(__file__).parent / "denoised_experiments"
+DEFAULT_DAY = "2023-07-21"
 
 # ── EK500 colormap ──────────────────────────────────────────────
 _EK500_COLORS = [
@@ -104,6 +119,7 @@ def render_echogram(
     depth: np.ndarray,
     title: str,
     out_path: Path,
+    day: str,
 ) -> None:
     """Render a time-proportional echogram and save to file."""
     # Trim depth
@@ -121,7 +137,7 @@ def render_echogram(
     n_total = len(ping_time)
 
     # Time-proportional x-axis
-    day_start = np.datetime64(DAY, "D")
+    day_start = np.datetime64(day, "D")
     x_hours = (ping_time - day_start).astype("timedelta64[s]").astype(float) / 3600.0
 
     time_span = x_hours[-1] - x_hours[0]
@@ -138,7 +154,7 @@ def render_echogram(
     # NaN percentage
     nan_pct = 100 * np.isnan(sv_plot).mean()
     ax.set_title(
-        f"{DAY} — {title}\n"
+        f"{day} — {title}\n"
         f"{n_valid}/{n_total} valid pings | {nan_pct:.1f}% NaN",
         fontsize=11, fontweight="bold",
     )
@@ -348,13 +364,20 @@ EXPERIMENTS = [
 ]
 
 
-def run_experiment(ds: xr.Dataset, exp: Experiment, ch_idx: int = 0) -> None:
+def run_experiment(
+    ds: xr.Dataset,
+    exp: Experiment,
+    ch_idx: int,
+    day: str,
+    out_dir: Path,
+    freq_label: str,
+) -> None:
     """Run one denoising experiment and save echogram."""
     t0 = time.perf_counter()
-    fname = f"{DAY}--{exp.name}--38kHz--ek500.png"
-    out_path = OUT_DIR / fname
+    fname = f"{day}--{exp.name}--{freq_label}--ek500.png"
+    out_path = out_dir / fname
 
-    log.info("Experiment: %s", exp.name)
+    log.info("Experiment: %s [%s]", exp.name, freq_label)
 
     ds_work = ds.copy(deep=True)
 
@@ -371,7 +394,7 @@ def run_experiment(ds: xr.Dataset, exp: Experiment, ch_idx: int = 0) -> None:
 
     # Interpolate and render
     sv_interp, pt, depth = interpolate_to_depth(ds_work, ch_idx)
-    render_echogram(sv_interp, pt, depth, exp.name.replace("_", " "), out_path)
+    render_echogram(sv_interp, pt, depth, exp.name.replace("_", " "), out_path, day)
 
     elapsed = time.perf_counter() - t0
     log.info("  Done in %.1fs", elapsed)
@@ -380,25 +403,110 @@ def run_experiment(ds: xr.Dataset, exp: Experiment, ch_idx: int = 0) -> None:
     gc.collect()
 
 
+def _freq_label_for_channel(ds: xr.Dataset, ch_idx: int) -> str:
+    """Return a filename-friendly frequency label like '38kHz' for the given channel index."""
+    try:
+        freq_hz = float(ds["frequency_nominal"].isel(channel=ch_idx).values)
+        khz = int(round(freq_hz / 1000.0))
+        return f"{khz}kHz"
+    except Exception:
+        # Fall back to channel name (may contain '|' etc, sanitise)
+        try:
+            name = str(ds["channel"].values[ch_idx])
+            return name.replace("|", "_").replace("/", "_")
+        except Exception:
+            return f"ch{ch_idx}"
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Run denoise experiments on a per-day Sv Zarr.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    p.add_argument("--zarr", type=Path, default=DEFAULT_ZARR_PATH,
+                   help=f"Path to the input Sv zarr store (default: {DEFAULT_ZARR_PATH})")
+    p.add_argument("--day", default=None,
+                   help="Day label used in filenames + x-axis (YYYY-MM-DD). "
+                        "If omitted, inferred from --zarr filename or falls back to default.")
+    p.add_argument("--out-dir", type=Path, default=None,
+                   help="Output directory for echograms. "
+                        f"Default: {DEFAULT_OUT_DIR}/<day>--<pulse-category>")
+    p.add_argument("--channels", type=int, nargs="+", default=None,
+                   help="Channel indices to process (default: all channels in the zarr)")
+    p.add_argument("--experiments", nargs="+", default=None,
+                   help="Subset of experiment names to run (default: all). "
+                        "Names match the leading digits, e.g. '00_raw' or '13_all_relaxed'.")
+    return p.parse_args()
+
+
+def _infer_day(zarr_path: Path, explicit_day: str | None) -> str:
+    if explicit_day:
+        return explicit_day
+    # Try to extract YYYY-MM-DD from the zarr filename
+    import re
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", zarr_path.name)
+    if m:
+        return m.group(1)
+    return DEFAULT_DAY
+
+
 def main():
-    log.info("Loading %s ...", ZARR_PATH)
-    ds = xr.open_zarr(str(ZARR_PATH))
+    args = _parse_args()
+
+    zarr_path = args.zarr
+    day = _infer_day(zarr_path, args.day)
+
+    # Choose output dir: <default>/<zarr-stem> when not explicit, so multiple
+    # zarrs (long_pulse, short_pulse, different days) don't collide.
+    if args.out_dir is None:
+        out_dir = DEFAULT_OUT_DIR / zarr_path.stem
+    else:
+        out_dir = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Filter experiments by name if requested
+    if args.experiments:
+        selected = [e for e in EXPERIMENTS if e.name in args.experiments]
+        missing = set(args.experiments) - {e.name for e in selected}
+        if missing:
+            log.warning("Unknown experiment names ignored: %s", sorted(missing))
+        experiments = selected
+    else:
+        experiments = EXPERIMENTS
+
+    log.info("Zarr:        %s", zarr_path)
+    log.info("Day:         %s", day)
+    log.info("Out dir:     %s", out_dir)
+    log.info("Experiments: %d", len(experiments))
+
+    log.info("Loading %s ...", zarr_path)
+    ds = xr.open_zarr(str(zarr_path))
     ds = ds.load()
     log.info("Loaded: %s", dict(ds.sizes))
 
-    # Find 38kHz channel
     chans = [str(c) for c in ds.channel.values]
     log.info("Channels: %s", chans)
-    ch_idx = 0  # long_pulse has only 1 channel (38kHz)
 
-    for exp in EXPERIMENTS:
-        try:
-            run_experiment(ds, exp, ch_idx)
-        except Exception as e:
-            log.error("FAILED %s: %s", exp.name, e, exc_info=True)
+    ch_indices = args.channels if args.channels else list(range(len(chans)))
+    log.info("Processing channel indices: %s", ch_indices)
+
+    for ch_idx in ch_indices:
+        if ch_idx < 0 or ch_idx >= len(chans):
+            log.error("Channel index %d out of range (0..%d) — skipping", ch_idx, len(chans) - 1)
+            continue
+
+        freq_label = _freq_label_for_channel(ds, ch_idx)
+        log.info("=== Channel %d (%s) ===", ch_idx, freq_label)
+
+        for exp in experiments:
+            try:
+                run_experiment(ds, exp, ch_idx, day, out_dir, freq_label)
+            except Exception as e:
+                log.error("FAILED %s [%s]: %s", exp.name, freq_label, e, exc_info=True)
 
     ds.close()
-    log.info("All experiments complete. Results in %s", OUT_DIR)
+    log.info("All experiments complete. Results in %s", out_dir)
 
 
 if __name__ == "__main__":

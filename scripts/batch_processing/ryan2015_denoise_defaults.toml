@@ -1,0 +1,96 @@
+# Denoise configuration based on Ryan et al. (2015)
+# "Reducing bias due to noise and attenuation in open-ocean echo integration data"
+# ICES Journal of Marine Science, 72(8), 2482–2493. doi:10.1093/icesjms/fsv121
+#
+# Load with:  python process_single_day.py --denoise-config ryan2015_denoise_defaults.toml
+#
+# This file is loaded by process_single_day.py and converted to an
+# oceanstream.echodata.config.DenoiseConfig with per-frequency parameters.
+#
+# Parameter reference:
+#   IN  — Anderson et al. (2005) two-sided comparison (Tables 3)
+#   AS  — DSL reference layer comparison (Table 4)
+#   TN  — Median comparison with surrounding block (Table 5)
+#   BN  — De Robertis & Higginbottom (2007) SNR-based removal
+#
+# Missing frequency sections inherit from [38000] at runtime.
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# Processing order: impulse → attenuation → transient → background
+# (matches the filter sequence in Ryan et al. Figure 2)
+methods = ["impulse", "attenuation", "transient", "background"]
+
+use_frequency_specific = true
+
+# ── 38 kHz — baseline values from Ryan et al. (2015) ────────────
+#
+# Impulse Noise (IN):  Table 3
+#   vertical_bin_size = 5m    (resample before filter)
+#   ping_lags = [1, 2]       (n=2 recommended over n=1 for robustness)
+#   threshold_db = 10.0      (d=10 dB, both Anderson 2005 and Ryan 2015)
+#
+# Attenuated Signal (AS):  Table 4
+#   upper_limit_sl = 400m    (R1, upper bound of DSL reference layer)
+#   lower_limit_sl = 500m    (R2, lower bound of DSL reference layer)
+#   num_side_pings = 100     (n=30-300; 100 balances AS persistence vs variability)
+#   threshold = 8.0          (d=8 dB, ping median < block median by d → removed)
+#
+# Transient Noise (TN):  Table 5
+#   exclude_above = 250m     (TN filter not applied above this depth)
+#   n_pings = 50             (m=50 pings, horizontal block window)
+#   depth_bin = 20.0         (n=20m, vertical block window)
+#   thr_dB = 12.0            (d=12 dB threshold)
+#   percentile = 15          (p=15%, lower percentile for block median)
+#
+# Background Noise (BN):  De Robertis & Higginbottom (2007)
+#   SNR_threshold = 6.0 dB   (samples below this SNR set to -999 dB)
+#   background_noise_max = -125 dB (38 kHz typical noise floor)
+#   Logging range must be 1800m to ensure noise-dominated samples at far range.
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, percentile = 15 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+# ── 120 kHz — adapted for higher absorption / shorter range ─────
+# Absorption ~4× higher than 38 kHz; effective range ≈ 400-600m.
+# Tighter thresholds (lower d values) because SNR degrades faster.
+# DSL reference layer shifted shallower.
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 10.0, percentile = 15 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+# ── 200 kHz — much shorter range, tighter thresholds ────────────
+# Absorption ~10× higher than 38 kHz; effective range ≈ 150-300m.
+# DSL is typically out of range; use shallower reference layer.
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, percentile = 15 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }
+
+# ── 333 kHz — shortest range, tightest thresholds ───────────────
+# Effective range ≈ 50-100m.  Rarely penetrates beyond 150m.
+
+[echodata.denoise.frequency_params.333000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1], threshold_db = 7.0 }
+attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 40, threshold = 5.0 }
+transient   = { exclude_above = 50.0, depth_bin = 5.0, n_pings = 20, thr_dB = 8.0, percentile = 15 }
+background  = { range_window = 10, ping_window = 30, SNR_threshold = "6.0dB", background_noise_max = "-105.0dB" }
+
+[echodata.mvbs]
+range_bin = "1m"
+ping_time_bin = "10s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"

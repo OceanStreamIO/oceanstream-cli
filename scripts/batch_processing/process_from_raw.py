@@ -103,6 +103,7 @@ from process_campaign import (
     run_echogram_generation,
     run_mvbs_computation,
     run_nasc_computation,
+    run_pruning,
     run_seabed_masking,
     run_tiles_and_cog,
     run_campaign_aggregation,
@@ -390,21 +391,14 @@ def process_raw_files(
 ) -> list[tuple[str, str, str]]:
     """Download and convert raw files to EchoData Zarrs.
 
-    Downloads in batches to limit disk usage, then converts in parallel.
+    Downloads in batches to limit disk usage, then converts sequentially.
     Each raw file is deleted after conversion to free disk space.
 
     Returns list of (category, echodata_zarr_path, file_name).
     """
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-
     results = []
     total = len(files_list)
     batch_size = min(cfg.raw.download_batch_size, total)
-
-    # Use parallel conversion — CPU-bound (EK80 binary parsing).
-    # Limit workers to avoid overwhelming disk I/O.
-    convert_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=4.0), 12)
-    logger.info("Conversion parallelism: %d workers", convert_workers)
 
     for batch_start in range(0, total, batch_size):
         batch = files_list[batch_start:batch_start + batch_size]
@@ -413,38 +407,29 @@ def process_raw_files(
         # Download this batch in parallel
         local_paths = download_all_raw_files(batch, cfg)
 
-        # Convert files in parallel using ProcessPoolExecutor
-        futures = {}
-        with ProcessPoolExecutor(max_workers=convert_workers) as pool:
-            for idx, (raw_filename, rec) in enumerate(batch, batch_start + 1):
-                if raw_filename not in local_paths:
-                    logger.error("  File %s not downloaded — skipping", rec["file_name"])
-                    results.append(("unknown", "", rec["file_name"]))
-                    continue
+        # Convert each file in the batch
+        for idx, (raw_filename, rec) in enumerate(batch, batch_start + 1):
+            if raw_filename not in local_paths:
+                logger.error("  File %s not downloaded — skipping", rec["file_name"])
+                results.append(("unknown", "", rec["file_name"]))
+                continue
 
-                logger.info("Submitting file %d/%d: %s", idx, total, rec["file_name"])
-                fut = pool.submit(
-                    convert_and_save_echodata,
+            logger.info("Converting file %d/%d: %s", idx, total, rec["file_name"])
+            try:
+                result = convert_and_save_echodata(
                     local_raw_path=local_paths[raw_filename],
                     file_record=rec,
                     cfg=cfg,
                     echodata_dir=echodata_dir,
                 )
-                futures[fut] = (raw_filename, rec)
-
-            for fut in as_completed(futures):
-                raw_filename, rec = futures[fut]
-                try:
-                    result = fut.result()
-                    results.append(result)
-                    logger.info("  Converted %s [%s]", rec["file_name"], result[0])
-                except Exception as e:
-                    logger.error("  FAILED: %s — %s", rec["file_name"], e)
-                    results.append(("unknown", "", rec["file_name"]))
-                finally:
-                    # Delete raw file after conversion to free disk space
-                    if not cfg.keep_raw and raw_filename in local_paths:
-                        local_paths[raw_filename].unlink(missing_ok=True)
+                results.append(result)
+            except Exception as e:
+                logger.error("  FAILED: %s — %s", rec["file_name"], e)
+                results.append(("unknown", "", rec["file_name"]))
+            finally:
+                # Delete raw file after conversion to free disk space
+                if not cfg.keep_raw:
+                    local_paths[raw_filename].unlink(missing_ok=True)
 
     successful = sum(1 for _, zp, _ in results if zp)
     logger.info("Converted %d/%d files to EchoData", successful, total)
@@ -524,10 +509,6 @@ def run_echodata_combine(
 
     day_echodata: dict[str, dict[str, str]] = {}
 
-    # Parallel combine across all day×category pairs
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    combine_tasks = []
     for day_key, day_files in day_groups.items():
         by_category: dict[str, list[str]] = defaultdict(list)
         for _, rec in day_files:
@@ -535,33 +516,35 @@ def run_echodata_combine(
             if fn in file_info:
                 cat, zp = file_info[fn]
                 by_category[cat].append(zp)
-        for category, zarr_paths in by_category.items():
-            combine_tasks.append((day_key, category, zarr_paths))
 
-    max_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=8.0), len(combine_tasks))
-    logger.info("Combining %d day×category pairs with %d workers", len(combine_tasks), max_workers)
+        day_echodata[day_key] = {}
 
-    futures = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        for day_key, category, zarr_paths in combine_tasks:
-            fut = pool.submit(
-                combine_echodata_day,
-                ed_zarr_paths=zarr_paths,
-                day_key=day_key,
-                category=category,
-                echodata_dir=echodata_dir,
-            )
-            futures[fut] = (day_key, category)
+        if cfg.category_parallel and len(by_category) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        for fut in as_completed(futures):
-            day_key, cat = futures[fut]
-            try:
-                result = fut.result()
-                if day_key not in day_echodata:
-                    day_echodata[day_key] = {}
-                day_echodata[day_key][cat] = result
-            except Exception as e:
-                logger.error("Combine failed %s/%s: %s", day_key, cat, e)
+            with ThreadPoolExecutor(max_workers=len(by_category)) as pool:
+                futures = {}
+                for category, zarr_paths in by_category.items():
+                    fut = pool.submit(
+                        combine_echodata_day,
+                        ed_zarr_paths=zarr_paths,
+                        day_key=day_key,
+                        category=category,
+                        echodata_dir=echodata_dir,
+                    )
+                    futures[fut] = category
+                for fut in as_completed(futures):
+                    cat = futures[fut]
+                    day_echodata[day_key][cat] = fut.result()
+        else:
+            for category, zarr_paths in by_category.items():
+                combined_zarr = combine_echodata_day(
+                    ed_zarr_paths=zarr_paths,
+                    day_key=day_key,
+                    category=category,
+                    echodata_dir=echodata_dir,
+                )
+                day_echodata[day_key][category] = combined_zarr
 
     logger.info("EchoData combine complete: %d days", len(day_echodata))
     return day_echodata
@@ -854,13 +837,11 @@ def run_sv_computation(
     gps_df: pd.DataFrame | None = None,
 ) -> dict[str, dict[str, str]]:
     """Compute Sv for all day EchoData. Returns {day_key: {category: sv_zarr_path}}."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     sv_zarrs: dict[str, dict[str, str]] = {}
 
-    # Build list of all (day_key, category, ed_zarr_path, day_gps) tasks
-    sv_tasks = []
     for day_key, categories in day_echodata.items():
+        sv_zarrs[day_key] = {}
+
         # Filter GPS to this day ±1 hour buffer
         day_gps = None
         if gps_df is not None and not gps_df.empty:
@@ -875,35 +856,36 @@ def run_sv_computation(
             else:
                 logger.info("  GPS for %s: %d points", day_key, len(day_gps))
 
-        for category, ed_zarr_path in categories.items():
-            sv_tasks.append((day_key, category, ed_zarr_path, day_gps))
+        if cfg.category_parallel and len(categories) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    max_workers = min(cfg.effective_parallel_workers(mem_per_worker_gb=12.0), len(sv_tasks))
-    logger.info("Sv computation: %d tasks with %d workers", len(sv_tasks), max_workers)
-
-    futures = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        for day_key, category, ed_zarr_path, day_gps in sv_tasks:
-            fut = pool.submit(
-                compute_sv_day,
-                ed_zarr_path=ed_zarr_path,
-                day_key=day_key,
-                category=category,
-                cfg=cfg,
-                output_container=output_container,
-                gps_df=day_gps,
-            )
-            futures[fut] = (day_key, category)
-
-        for fut in as_completed(futures):
-            day_key, cat = futures[fut]
-            try:
-                sv_path = fut.result()
-                if day_key not in sv_zarrs:
-                    sv_zarrs[day_key] = {}
-                sv_zarrs[day_key][cat] = sv_path
-            except Exception as e:
-                logger.error("Sv failed %s/%s: %s", day_key, cat, e)
+            with ThreadPoolExecutor(max_workers=len(categories)) as pool:
+                futures = {}
+                for category, ed_zarr_path in categories.items():
+                    fut = pool.submit(
+                        compute_sv_day,
+                        ed_zarr_path=ed_zarr_path,
+                        day_key=day_key,
+                        category=category,
+                        cfg=cfg,
+                        output_container=output_container,
+                        gps_df=day_gps,
+                    )
+                    futures[fut] = category
+                for fut in as_completed(futures):
+                    cat = futures[fut]
+                    sv_zarrs[day_key][cat] = fut.result()
+        else:
+            for category, ed_zarr_path in categories.items():
+                sv_path = compute_sv_day(
+                    ed_zarr_path=ed_zarr_path,
+                    day_key=day_key,
+                    category=category,
+                    cfg=cfg,
+                    output_container=output_container,
+                    gps_df=day_gps,
+                )
+                sv_zarrs[day_key][category] = sv_path
 
     logger.info("Sv computation complete: %d days", len(sv_zarrs))
     return sv_zarrs
@@ -1010,7 +992,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             for dk in list(source_day_zarrs.keys()):
                 source_day_zarrs[dk] = {
                     cat: zp for cat, zp in source_day_zarrs[dk].items()
-                    if "--denoised" not in zp and "--mvbs" not in zp and "--nasc" not in zp
+                    if all(marker not in zp for marker in (
+                        "--denoised", "--masked", "--pruned", "--mvbs", "--nasc",
+                    ))
                 }
             logger.info("Stages 1-5 skipped (resume=%d)", resume)
 
@@ -1021,7 +1005,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             for dk in list(source_day_zarrs.keys()):
                 source_day_zarrs[dk] = {
                     cat: zp for cat, zp in source_day_zarrs[dk].items()
-                    if "--denoised" not in zp and "--mvbs" not in zp and "--nasc" not in zp
+                    if all(marker not in zp for marker in (
+                        "--denoised", "--masked", "--pruned", "--mvbs", "--nasc",
+                    ))
                 }
             logger.info("Stages 1-4 skipped (resume=%d)", resume)
 
@@ -1110,10 +1096,23 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                 client, denoised_day_zarrs, cfg, output_container
             )
             logger.info("STAGE 6 complete: seabed masking (%.1fs)", time.time() - t0)
-            mvbs_input = masked_day_zarrs
+            pre_prune_input = masked_day_zarrs
         else:
             logger.info("STAGE 6 skipped: seabed masking disabled (%.1fs)", time.time() - t0)
-            mvbs_input = denoised_day_zarrs
+            pre_prune_input = denoised_day_zarrs
+
+        # Stage 6b: Prune noisy pings (drops pings that are mostly NaN so MVBS/NASC
+        # are computed on an analysis-ready Sv dataset)
+        t0 = time.time()
+        if cfg.prune.enabled:
+            pruned_day_zarrs = run_pruning(
+                client, pre_prune_input, cfg, output_container
+            )
+            logger.info("STAGE 6b complete: pruning (%.1fs)", time.time() - t0)
+            mvbs_input = pruned_day_zarrs
+        else:
+            logger.info("STAGE 6b skipped: pruning disabled (%.1fs)", time.time() - t0)
+            mvbs_input = pre_prune_input
 
         # Stage 7+8: MVBS + NASC
         t0 = time.time()
@@ -1250,6 +1249,43 @@ def parse_args() -> PipelineConfig:
     parser.add_argument("--skip-nasc", action="store_true")
     parser.add_argument("--skip-mvbs", action="store_true")
     parser.add_argument(
+        "--skip-pruning", action="store_true",
+        help="Skip Stage 6b (drop noisy pings) — feed denoised/masked Sv directly to MVBS/NASC",
+    )
+    parser.add_argument(
+        "--prune-threshold", type=float, default=0.8,
+        help="NaN fraction above which a ping is dropped (default: 0.8 = drop pings ≥80%% NaN)",
+    )
+    parser.add_argument(
+        "--no-crosstalk", action="store_true",
+        help="Disable the cross-talk detector in Stage 6b (keeps NaN-fraction pruning)",
+    )
+    parser.add_argument(
+        "--crosstalk-ref-depth-min", type=float, default=800.0,
+        help="Start of the reference band used for cross-talk detection (metres). "
+             "At 38 kHz in tropical open ocean, ~800m sits below the DSL and should be quiet. "
+             "Default: 800",
+    )
+    parser.add_argument(
+        "--crosstalk-ref-depth-max", type=float, default=1200.0,
+        help="End of the reference band (metres). Default: 1200",
+    )
+    parser.add_argument(
+        "--crosstalk-threshold-db", type=float, default=6.0,
+        help="Elevation above the median reference-band Sv (in dB) that flags a ping as cross-talk. "
+             "Default: 6 dB. Lower = stricter (drops more pings); higher = permissive.",
+    )
+    parser.add_argument(
+        "--skip-campaign-echograms", action="store_true",
+        help="Skip Stage 11's campaign MVBS echogram rendering (keeps campaign zarr build)",
+    )
+    parser.add_argument(
+        "--sv-clip-max-db", type=float, default=-10.0,
+        help="Sanity clip: mask Sv samples louder than this (dB) as NaN after denoising. "
+             "Catches residual cross-talk/electrical noise the mask denoisers miss. "
+             "Default: -10 dB. Pass a very high value (e.g. 100) to disable.",
+    )
+    parser.add_argument(
         "--denoise-config",
         help="TOML file with per-frequency denoise parameters (loads EchodataConfig.from_toml)",
     )
@@ -1313,19 +1349,6 @@ def parse_args() -> PipelineConfig:
         help="Process locally for speed, then bulk-upload to Azure at the end. "
              "Uses --local-save dir (or /mnt/data/output) during processing.",
     )
-    parser.add_argument(
-        "--background-sync",
-        action="store_true",
-        help="Continuously sync local output to Azure in the background while "
-             "processing. Implies --upload-after. Syncs every 120s by default.",
-    )
-    parser.add_argument(
-        "--sync-interval",
-        type=int,
-        default=120,
-        metavar="SECS",
-        help="Interval between background sync sweeps (default: 120s).",
-    )
 
     # Surface exclusion
     parser.add_argument(
@@ -1375,6 +1398,14 @@ def parse_args() -> PipelineConfig:
     cfg.skip_pmtiles = args.skip_pmtiles
     cfg.skip_nasc = args.skip_nasc
     cfg.skip_mvbs = args.skip_mvbs
+    cfg.prune.enabled = not args.skip_pruning
+    cfg.prune.drop_threshold = args.prune_threshold
+    cfg.prune.crosstalk_enabled = not args.no_crosstalk
+    cfg.prune.crosstalk_ref_depth_min = args.crosstalk_ref_depth_min
+    cfg.prune.crosstalk_ref_depth_max = args.crosstalk_ref_depth_max
+    cfg.prune.crosstalk_threshold_db = args.crosstalk_threshold_db
+    cfg.skip_campaign_echograms = args.skip_campaign_echograms
+    cfg.denoise.sv_clip_max_db = args.sv_clip_max_db
     cfg.save_to_netcdf = args.save_netcdf
     cfg.save_nasc_to_netcdf = args.save_nasc_netcdf or cfg.save_nasc_to_netcdf
     cfg.save_mvbs_to_netcdf = args.save_mvbs_netcdf or cfg.save_mvbs_to_netcdf
@@ -1399,10 +1430,8 @@ def parse_args() -> PipelineConfig:
     cfg.keep_raw = args.keep_raw
 
     # Local save mode
-    cfg.upload_after = args.upload_after or args.background_sync
-    cfg.background_sync = args.background_sync
-    cfg.sync_interval = args.sync_interval
-    if cfg.upload_after and not args.local_save:
+    cfg.upload_after = args.upload_after
+    if args.upload_after and not args.local_save:
         # Default to /mnt/data/output for fast local NVMe processing
         cfg.local_save_dir = Path("/mnt/data/output")
     else:
@@ -1432,15 +1461,28 @@ def parse_args() -> PipelineConfig:
             methods=echo_cfg.denoise.methods,
             use_frequency_specific=echo_cfg.denoise.use_frequency_specific,
             frequency_params=echo_cfg.denoise.frequency_params,
+            # Background
             background_num_side_pings=echo_cfg.denoise.background_num_side_pings,
+            background_range_window=echo_cfg.denoise.background_range_window,
+            background_ping_window=echo_cfg.denoise.background_ping_window,
             background_snr_threshold=echo_cfg.denoise.background_snr_threshold,
+            background_noise_max=echo_cfg.denoise.background_noise_max,
+            # Impulse
             impulse_threshold_db=echo_cfg.denoise.impulse_threshold_db,
             impulse_num_lags=echo_cfg.denoise.impulse_num_lags,
+            impulse_vertical_bin=echo_cfg.denoise.impulse_vertical_bin,
+            impulse_ping_lags=list(echo_cfg.denoise.impulse_ping_lags),
+            # Transient
             transient_n=echo_cfg.denoise.transient_n,
             transient_exclude_above=echo_cfg.denoise.transient_exclude_above,
+            transient_depth_bin=echo_cfg.denoise.transient_depth_bin,
+            transient_n_pings=echo_cfg.denoise.transient_n_pings,
+            transient_threshold_db=echo_cfg.denoise.transient_threshold_db,
+            # Attenuation
             attenuation_threshold=echo_cfg.denoise.attenuation_threshold,
             attenuation_upper_limit=echo_cfg.denoise.attenuation_upper_limit,
             attenuation_lower_limit=echo_cfg.denoise.attenuation_lower_limit,
+            attenuation_side_pings=echo_cfg.denoise.attenuation_side_pings,
         )
 
     return cfg
@@ -1564,10 +1606,7 @@ def main():
         f"{cfg.gps_container}/{cfg.gps_blob_path or cfg.cruise_id + '/'}" if cfg.gps_container else "(none)",
     )
     if cfg.local_save_dir and cfg.upload_after:
-        if cfg.background_sync:
-            logger.info("Storage: LOCAL → %s (background sync to Azure every %ds)", cfg.local_save_dir, cfg.sync_interval)
-        else:
-            logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
+        logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
     elif cfg.local_save_dir:
         logger.info("Storage: LOCAL → %s", cfg.local_save_dir)
     else:
@@ -1579,17 +1618,6 @@ def main():
         from local_storage import patch_storage
         patch_storage(cfg.local_save_dir)
 
-    # Start background sync if requested
-    syncer = None
-    if cfg.background_sync and cfg.local_save_dir:
-        from background_sync import BackgroundSync
-        syncer = BackgroundSync(
-            local_dir=cfg.local_save_dir,
-            container=cfg.output_container,
-            interval=cfg.sync_interval,
-        )
-        syncer.start()
-
     try:
         run_pipeline(cfg)
     except KeyboardInterrupt:
@@ -1597,14 +1625,9 @@ def main():
     except Exception:
         logger.exception("Pipeline failed with error")
         raise
-    finally:
-        # Stop background sync and do final sweep
-        if syncer is not None:
-            syncer.stop()
-            syncer.join(timeout=300)
 
-    # Bulk upload to Azure after local processing (if not background-synced)
-    if cfg.upload_after and cfg.local_save_dir and not cfg.background_sync:
+    # Bulk upload to Azure after local processing
+    if cfg.upload_after and cfg.local_save_dir:
         _bulk_upload_to_azure(cfg.local_save_dir, cfg.output_container)
 
     if cfg.azure_vm.auto_deallocate:

@@ -615,12 +615,14 @@ def denoise_day(
     category: str,
     cruise_id: str,
     save_netcdf: bool = False,
+    sv_clip_max_db: float | None = None,
 ) -> str:
     """Apply denoising to a day Zarr and save the result.
 
     Matches the Prefect flow denoise pattern:
     1. Apply mask-based denoising (impulse, transient, attenuation)
     2. Apply echopype background noise removal per channel
+    3. Optional sanity clip: mask Sv > sv_clip_max_db as NaN
 
     Returns the denoised zarr path.
     """
@@ -696,6 +698,22 @@ def denoise_day(
             ds_denoised["Sv"] = sv_clean
             logger.info("  Background noise removal applied per channel")
 
+        # Sanity clip — mask Sv samples louder than sv_clip_max_db as NaN.
+        # Catches residual electrical noise / cross-talk / ring-down that the
+        # mask-based denoisers miss (they threshold on gradients, not absolute
+        # values). Legitimate biology sits well below the default -10 dB clip.
+        if sv_clip_max_db is not None and "Sv" in ds_denoised:
+            import numpy as np
+            n_before = int(np.isfinite(ds_denoised["Sv"].values).sum())
+            ds_denoised["Sv"] = ds_denoised["Sv"].where(ds_denoised["Sv"] <= sv_clip_max_db)
+            n_after = int(np.isfinite(ds_denoised["Sv"].values).sum())
+            n_clipped = n_before - n_after
+            pct = (n_clipped / n_before * 100) if n_before > 0 else 0.0
+            logger.info(
+                "  Sv clip @ %.1f dB: masked %d samples (%.4f%% of finite)",
+                sv_clip_max_db, n_clipped, pct,
+            )
+
         # Rechunk to uniform sizes — denoising/groupby operations produce
         # non-uniform chunks at concatenation boundaries that Zarr cannot write.
         output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
@@ -761,6 +779,7 @@ def run_denoising(
                     category=category,
                     cruise_id=cfg.cruise_id,
                     save_netcdf=cfg.save_to_netcdf,
+                    sv_clip_max_db=cfg.denoise.sv_clip_max_db,
                 )
                 futures[fut] = (day_key, category)
 
@@ -849,7 +868,174 @@ def run_seabed_masking(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STAGE 6: Compute MVBS
+# STAGE 6b: Prune noisy pings (drop pings that are mostly NaN)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def prune_day(
+    zarr_path: str,
+    output_container: str,
+    chunks: dict,
+    day_key: str,
+    category: str,
+    drop_threshold: float,
+    crosstalk_enabled: bool = True,
+    crosstalk_ref_depth_min: float = 800.0,
+    crosstalk_ref_depth_max: float = 1200.0,
+    crosstalk_threshold_db: float = 6.0,
+) -> str:
+    """Drop pings whose NaN fraction exceeds ``drop_threshold`` and
+    (optionally) pings whose deep reference band shows cross-talk.
+
+    Runs after denoising/seabed-masking so that MVBS/NASC are computed on
+    an "analysis-ready" Sv dataset with junk pings excluded. Saves output
+    to ``{day}--{category}--pruned.zarr``.
+    """
+    import dask
+    import numpy as np
+    from oceanstream.echodata.denoise import drop_noisy_pings
+    from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
+
+    logger.info("Pruning %s/%s (threshold=%.0f%% NaN)", day_key, category, drop_threshold * 100)
+
+    ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
+
+    n_before = ds.sizes.get("ping_time", 0)
+
+    # ── Step 1: NaN-fraction drop (existing behaviour) ────────────
+    with dask.config.set(scheduler="synchronous"):
+        ds_pruned = drop_noisy_pings(ds, drop_threshold=drop_threshold)
+    n_after_nan = ds_pruned.sizes.get("ping_time", 0)
+    n_dropped_nan = n_before - n_after_nan
+    pct = (n_dropped_nan / n_before * 100) if n_before > 0 else 0.0
+    logger.info("  Dropped %d/%d pings via NaN fraction (%.1f%%)", n_dropped_nan, n_before, pct)
+
+    # ── Step 2: Cross-talk detection ──────────────────────────────
+    # Flag pings whose mean Sv in a deep reference band (typically empty at
+    # 38 kHz in tropical open ocean) is elevated above the campaign median.
+    # This catches cross-instrument interference — full-column echoes from
+    # other Saildrones, ADCPs, or electrical sources that the mask denoisers
+    # (impulse/transient/attenuation) miss because they look for local
+    # discontinuities, not systemic per-ping elevation.
+    if crosstalk_enabled and "Sv" in ds_pruned and "depth" in ds_pruned:
+        try:
+            depth = ds_pruned["depth"]
+            # Build reference-band mask; depth may be (channel, ping_time, range_sample)
+            # or a broadcast of the 3D coord.
+            ref_mask = (depth >= crosstalk_ref_depth_min) & (depth < crosstalk_ref_depth_max)
+            sv_ref = ds_pruned["Sv"].where(ref_mask)
+            # Reduce over range_sample: mean in LINEAR space (energy)
+            linear = 10 ** (sv_ref / 10.0)
+            reduce_dims = [d for d in linear.dims if d not in ("channel", "ping_time")]
+            if reduce_dims:
+                mean_linear = linear.mean(dim=reduce_dims, skipna=True)
+            else:
+                mean_linear = linear
+            # Reduce channels: min across channels (least permissive — only flag
+            # pings that are elevated in ALL channels; single-freq interference
+            # is legit for a specific transducer).
+            if "channel" in mean_linear.dims:
+                mean_linear = mean_linear.min(dim="channel", skipna=True)
+            # Back to dB
+            mean_db = 10 * np.log10(mean_linear.compute().values)
+
+            finite = np.isfinite(mean_db)
+            if finite.sum() > 100:  # need enough pings for a stable median
+                median_db = float(np.median(mean_db[finite]))
+                elevated = np.zeros_like(mean_db, dtype=bool)
+                elevated[finite] = mean_db[finite] > (median_db + crosstalk_threshold_db)
+                n_flagged = int(elevated.sum())
+                if n_flagged > 0:
+                    logger.info(
+                        "  Cross-talk detection [%d-%dm ref band]: median=%.1f dB, "
+                        "flagging %d pings > %.1f dB elevated",
+                        int(crosstalk_ref_depth_min), int(crosstalk_ref_depth_max),
+                        median_db, n_flagged, crosstalk_threshold_db,
+                    )
+                    ds_pruned = ds_pruned.isel(ping_time=~elevated)
+                else:
+                    logger.info(
+                        "  Cross-talk detection: no pings flagged "
+                        "(all within %.1f dB of median=%.1f dB)",
+                        crosstalk_threshold_db, median_db,
+                    )
+            else:
+                logger.info(
+                    "  Cross-talk detection skipped: too few finite reference-band pings"
+                )
+        except Exception as e:
+            logger.warning("  Cross-talk detection failed for %s/%s: %s — skipping", day_key, category, e)
+
+    n_after = ds_pruned.sizes.get("ping_time", 0)
+    total_dropped = n_before - n_after
+    pct_total = (total_dropped / n_before * 100) if n_before > 0 else 0.0
+    logger.info("  Total dropped: %d/%d pings (%.1f%%)", total_dropped, n_before, pct_total)
+
+    if n_after == 0:
+        logger.warning("  All pings dropped for %s/%s — keeping unpruned zarr", day_key, category)
+        ds.close()
+        del ds, ds_pruned
+        _release_memory()
+        return zarr_path  # fall back to input path
+
+    # Re-chunk uniformly along ping_time and drop stale zarr chunk-encoding
+    # inherited from the source zarr (drop_noisy_pings leaves a ragged final
+    # chunk which xarray's zarr writer rejects as misaligned with encoding).
+    rechunk = {"ping_time": min(1000, n_after)}
+    if "range_sample" in ds_pruned.dims:
+        rechunk["range_sample"] = -1
+    ds_pruned = ds_pruned.chunk(rechunk)
+    for var in ds_pruned.variables.values():
+        var.encoding.pop("chunks", None)
+        var.encoding.pop("preferred_chunks", None)
+
+    output_zarr = f"{day_key}/{day_key}--{category}--pruned.zarr"
+    save_dataset_to_azure(ds_pruned, zarr_path=output_zarr, container=output_container)
+    logger.info("  Saved pruned: %s", output_zarr)
+
+    ds.close()
+    del ds, ds_pruned
+    _release_memory()
+
+    return output_zarr
+
+
+def run_pruning(
+    client,
+    day_zarrs: dict[str, dict[str, str]],
+    cfg: PipelineConfig,
+    output_container: str,
+) -> dict[str, dict[str, str]]:
+    """Prune noisy pings from all day Zarrs."""
+    if not cfg.prune.enabled:
+        logger.info("Skipping pruning")
+        return day_zarrs
+
+    chunks = cfg.chunks.as_dict()
+    pruned_zarrs: dict[str, dict[str, str]] = {}
+
+    for day_key, categories in day_zarrs.items():
+        pruned_zarrs[day_key] = {}
+        for category, zarr_path in categories.items():
+            pruned_path = prune_day(
+                zarr_path=zarr_path,
+                output_container=output_container,
+                chunks=chunks,
+                day_key=day_key,
+                category=category,
+                drop_threshold=cfg.prune.drop_threshold,
+                crosstalk_enabled=cfg.prune.crosstalk_enabled,
+                crosstalk_ref_depth_min=cfg.prune.crosstalk_ref_depth_min,
+                crosstalk_ref_depth_max=cfg.prune.crosstalk_ref_depth_max,
+                crosstalk_threshold_db=cfg.prune.crosstalk_threshold_db,
+            )
+            pruned_zarrs[day_key][category] = pruned_path
+
+    logger.info("Pruning complete")
+    return pruned_zarrs
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 7: Compute MVBS
 # ═══════════════════════════════════════════════════════════════════════════
 
 def compute_mvbs_day(
@@ -882,6 +1068,16 @@ def compute_mvbs_day(
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
 
+    # Snapshot frequency_nominal BEFORE .where() — otherwise it gets broadcast
+    # to all masked dims and turns into a NaN-filled 3D array.
+    freq_nominal = None
+    if "frequency_nominal" in ds:
+        fn = ds["frequency_nominal"]
+        non_ch_dims = [d for d in fn.dims if d != "channel"]
+        if non_ch_dims:
+            fn = fn.isel({d: 0 for d in non_ch_dims})
+        freq_nominal = fn.reset_coords(drop=True).load()
+
     # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
@@ -889,6 +1085,24 @@ def compute_mvbs_day(
 
     with dask.config.set(scheduler="synchronous"):
         ds_mvbs = compute_mvbs(ds, range_bin=range_bin, ping_time_bin=ping_time_bin)
+
+    # Re-attach the clean 1D (channel,) frequency_nominal so plot code can label
+    # channels correctly. compute_mvbs otherwise drops it; the pre-.where()
+    # snapshot avoids the broadcast-NaN problem.
+    if freq_nominal is not None and "frequency_nominal" not in ds_mvbs:
+        ds_mvbs = ds_mvbs.assign_coords(frequency_nominal=freq_nominal)
+
+    # Drop fully-empty ping_time bins (0 raw pings fell in the 10s window,
+    # typically at raw-file boundaries — visible as white vertical stripes
+    # in echograms). Keeps the ping_time axis honest by preserving the actual
+    # UTC timestamps of the remaining bins.
+    if "Sv" in ds_mvbs and "ping_time" in ds_mvbs["Sv"].dims:
+        reduce_dims = [d for d in ds_mvbs["Sv"].dims if d != "ping_time"]
+        all_nan = ds_mvbs["Sv"].isnull().all(dim=reduce_dims).compute().values
+        n_empty = int(all_nan.sum())
+        if n_empty > 0:
+            ds_mvbs = ds_mvbs.isel(ping_time=~all_nan)
+            logger.info("  Dropped %d empty MVBS ping_time bins (all-NaN)", n_empty)
 
     output_zarr = f"{day_key}/{day_key}--{category}--mvbs.zarr"
     save_dataset_to_azure(ds_mvbs, zarr_path=output_zarr, container=output_container)
@@ -916,42 +1130,26 @@ def run_mvbs_computation(
         logger.info("Skipping MVBS computation")
         return {}
 
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-
     chunks = cfg.chunks.as_dict()
     mvbs_zarrs: dict[str, dict[str, str]] = {}
 
-    max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
-    logger.info("MVBS computation with %d parallel workers (ProcessPool)", max_workers)
-
-    futures: dict = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
-        for day_key, categories in day_zarrs.items():
-            mvbs_zarrs[day_key] = {}
-            for category, zarr_path in categories.items():
-                fut = pool.submit(
-                    compute_mvbs_day,
-                    zarr_path=zarr_path,
-                    output_container=output_container,
-                    chunks=chunks,
-                    range_bin=cfg.mvbs.range_bin,
-                    ping_time_bin=cfg.mvbs.ping_time_bin,
-                    day_key=day_key,
-                    category=category,
-                    cruise_id=cfg.cruise_id,
-                    save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
-                    surface_exclusion_depth=cfg.surface_exclusion_depth,
-                )
-                futures[fut] = (day_key, category)
-
-        for fut in as_completed(futures):
-            day_key, category = futures[fut]
-            try:
-                mvbs_path = fut.result()
-                if mvbs_path:
-                    mvbs_zarrs[day_key][category] = mvbs_path
-            except Exception as e:
-                logger.warning("MVBS failed for %s/%s: %s", day_key, category, e)
+    for day_key, categories in day_zarrs.items():
+        mvbs_zarrs[day_key] = {}
+        for category, zarr_path in categories.items():
+            # Run in main process to avoid nested-task deadlock.
+            mvbs_path = compute_mvbs_day(
+                zarr_path=zarr_path,
+                output_container=output_container,
+                chunks=chunks,
+                range_bin=cfg.mvbs.range_bin,
+                ping_time_bin=cfg.mvbs.ping_time_bin,
+                day_key=day_key,
+                category=category,
+                cruise_id=cfg.cruise_id,
+                save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
+                surface_exclusion_depth=cfg.surface_exclusion_depth,
+            )
+            mvbs_zarrs[day_key][category] = mvbs_path
 
     logger.info("MVBS computation complete")
     return mvbs_zarrs
@@ -1003,6 +1201,15 @@ def compute_nasc_day(
         ds.close()
         return ""
 
+    # Snapshot frequency_nominal BEFORE .where() (see compute_mvbs_day for details).
+    freq_nominal = None
+    if "frequency_nominal" in ds:
+        fn = ds["frequency_nominal"]
+        non_ch_dims = [d for d in fn.dims if d != "channel"]
+        if non_ch_dims:
+            fn = fn.isel({d: 0 for d in non_ch_dims})
+        freq_nominal = fn.reset_coords(drop=True).load()
+
     # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
@@ -1010,6 +1217,21 @@ def compute_nasc_day(
 
     with dask.config.set(scheduler="synchronous"):
         ds_nasc = compute_nasc(ds, range_bin=range_bin, dist_bin=dist_bin)
+
+    # Re-attach the clean 1D (channel,) frequency_nominal.
+    if freq_nominal is not None and "frequency_nominal" not in ds_nasc:
+        ds_nasc = ds_nasc.assign_coords(frequency_nominal=freq_nominal)
+
+    # Drop fully-empty distance bins (all-NaN NASC values along depth+channel).
+    # NASC bins by along-track distance; empty bins would leave visible gaps.
+    nasc_var = "NASC" if "NASC" in ds_nasc else ("Sv" if "Sv" in ds_nasc else None)
+    if nasc_var is not None and "distance" in ds_nasc[nasc_var].dims:
+        reduce_dims = [d for d in ds_nasc[nasc_var].dims if d != "distance"]
+        all_nan = ds_nasc[nasc_var].isnull().all(dim=reduce_dims).compute().values
+        n_empty = int(all_nan.sum())
+        if n_empty > 0:
+            ds_nasc = ds_nasc.isel(distance=~all_nan)
+            logger.info("  Dropped %d empty NASC distance bins (all-NaN)", n_empty)
 
     output_zarr = f"{day_key}/{day_key}--{category}--nasc.zarr"
     save_dataset_to_azure(ds_nasc, zarr_path=output_zarr, container=output_container)
@@ -1037,16 +1259,16 @@ def run_nasc_computation(
         logger.info("Skipping NASC computation")
         return {}
 
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     chunks = cfg.chunks.as_dict()
     nasc_zarrs: dict[str, dict[str, str]] = {}
 
     max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
-    logger.info("NASC computation with %d parallel workers (ProcessPool)", max_workers)
+    logger.info("NASC computation with %d parallel workers", max_workers)
 
     futures: dict = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for day_key, categories in day_zarrs.items():
             nasc_zarrs[day_key] = {}
             for category, zarr_path in categories.items():
@@ -1388,7 +1610,7 @@ def run_echogram_generation(
 
     chunks = cfg.chunks.as_dict()
 
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Build union of all day/category combos across source, denoised, and
     # MVBS zarrs so we don't skip combos that are missing a source zarr.
@@ -1398,26 +1620,17 @@ def run_echogram_generation(
             all_keys.setdefault(dk, set()).update(cats.keys())
 
     # Parallelize echogram generation — each day/category is independent.
-    # Use ProcessPoolExecutor: matplotlib rendering is CPU-bound C code
-    # that holds the GIL, making ThreadPoolExecutor ineffective.
+    # Workers overlap Azure I/O with matplotlib rendering (Agg backend
+    # is used throughout, safe for concurrent use).
     max_workers = cfg.effective_parallel_workers(mem_per_worker_gb=2.0)
-    logger.info("Echogram generation with %d parallel workers (ProcessPool)", max_workers)
-
-    # Check local output for existing echograms (skip Azure API calls)
-    local_save_dir = getattr(cfg, 'local_save_dir', None)
+    logger.info("Echogram generation with %d parallel workers", max_workers)
 
     futures: dict = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for day_key in sorted(all_keys):
             for category in sorted(all_keys[day_key]):
-                # Skip if echograms already exist (local check or Azure)
-                if local_save_dir:
-                    from pathlib import Path
-                    local_day = Path(local_save_dir) / output_container / day_key
-                    prefix = f"{day_key}--{category}"
-                    existing = len(list(local_day.glob(f"{prefix}*.png"))) if local_day.exists() else 0
-                else:
-                    existing = _count_existing_echograms(output_container, day_key, category)
+                # Skip if echograms already exist in Azure
+                existing = _count_existing_echograms(output_container, day_key, category)
                 if existing > 0:
                     logger.info("  Skipping %s/%s — %d echograms already exist", day_key, category, existing)
                     continue
@@ -1460,7 +1673,7 @@ def run_echogram_generation(
     # ── NASC echograms (also parallelized) ────────────────────────
     if nasc_zarrs:
         futures = {}
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             for day_key in sorted(nasc_zarrs):
                 for category, nasc_zarr in sorted(nasc_zarrs[day_key].items()):
                     fut = pool.submit(
@@ -1713,30 +1926,6 @@ def run_tiles_and_cog(
 # STAGE 10: Campaign-wide Zarr aggregation
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _normalize_string_dtypes(ds) -> "xr.Dataset":
-    """Convert all object/StringDType variables and coords to fixed-length U strings.
-
-    Zarr v3 with numpy 2.0 introduces ``StringDType()`` which is incompatible
-    with the ``object`` dtype stored by earlier writes.  Normalizing both to
-    ``<U`` (fixed-length Unicode) prevents "Mismatched dtypes" errors when
-    appending to an existing zarr store.
-    """
-    import numpy as np
-    import xarray as xr
-
-    for name in list(ds.coords) + list(ds.data_vars):
-        arr = ds[name]
-        if arr.dtype == object or (hasattr(arr.dtype, 'kind') and arr.dtype.kind == 'T'):
-            vals = arr.values
-            if isinstance(vals, np.ndarray):
-                str_vals = vals.astype(str)
-                if name in ds.coords:
-                    ds = ds.assign_coords({name: (arr.dims, str_vals)})
-                else:
-                    ds[name] = xr.DataArray(str_vals, dims=arr.dims)
-    return ds
-
-
 def build_campaign_zarr(
     day_zarrs: dict[str, dict[str, str]],
     product_suffix: str,
@@ -1790,10 +1979,6 @@ def build_campaign_zarr(
                     ds[var].encoding.clear()
                 for coord in ds.coords:
                     ds[coord].encoding.clear()
-
-                # Normalize string/object dtypes to plain str to avoid
-                # zarr v3 StringDType vs object mismatch on append.
-                ds = _normalize_string_dtypes(ds)
 
                 if first:
                     store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="w")
@@ -1980,7 +2165,7 @@ def run_campaign_aggregation(
         )
 
     # Campaign MVBS echograms — generate with both default and jet colormaps
-    if campaign_mvbs_zarrs:
+    if campaign_mvbs_zarrs and not cfg.skip_campaign_echograms:
         cmaps = [cfg.colormap]
         if "jet" not in cmaps:
             cmaps.append("jet")
@@ -2000,6 +2185,8 @@ def run_campaign_aggregation(
                     )
                 except Exception as e:
                     logger.warning("Failed campaign echogram (%s/%s): %s", category, cmap, e)
+    elif cfg.skip_campaign_echograms:
+        logger.info("Skipping campaign MVBS echograms (--skip-campaign-echograms)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2245,15 +2432,28 @@ def parse_args() -> PipelineConfig:
             methods=echo_cfg.denoise.methods,
             use_frequency_specific=echo_cfg.denoise.use_frequency_specific,
             frequency_params=echo_cfg.denoise.frequency_params,
+            # Background
             background_num_side_pings=echo_cfg.denoise.background_num_side_pings,
+            background_range_window=echo_cfg.denoise.background_range_window,
+            background_ping_window=echo_cfg.denoise.background_ping_window,
             background_snr_threshold=echo_cfg.denoise.background_snr_threshold,
+            background_noise_max=echo_cfg.denoise.background_noise_max,
+            # Impulse
             impulse_threshold_db=echo_cfg.denoise.impulse_threshold_db,
             impulse_num_lags=echo_cfg.denoise.impulse_num_lags,
+            impulse_vertical_bin=echo_cfg.denoise.impulse_vertical_bin,
+            impulse_ping_lags=list(echo_cfg.denoise.impulse_ping_lags),
+            # Transient
             transient_n=echo_cfg.denoise.transient_n,
             transient_exclude_above=echo_cfg.denoise.transient_exclude_above,
+            transient_depth_bin=echo_cfg.denoise.transient_depth_bin,
+            transient_n_pings=echo_cfg.denoise.transient_n_pings,
+            transient_threshold_db=echo_cfg.denoise.transient_threshold_db,
+            # Attenuation
             attenuation_threshold=echo_cfg.denoise.attenuation_threshold,
             attenuation_upper_limit=echo_cfg.denoise.attenuation_upper_limit,
             attenuation_lower_limit=echo_cfg.denoise.attenuation_lower_limit,
+            attenuation_side_pings=echo_cfg.denoise.attenuation_side_pings,
         )
 
     # Azure VM
