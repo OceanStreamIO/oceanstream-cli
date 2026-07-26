@@ -2432,15 +2432,28 @@ def parse_args() -> PipelineConfig:
             methods=echo_cfg.denoise.methods,
             use_frequency_specific=echo_cfg.denoise.use_frequency_specific,
             frequency_params=echo_cfg.denoise.frequency_params,
+            # Background
             background_num_side_pings=echo_cfg.denoise.background_num_side_pings,
+            background_range_window=echo_cfg.denoise.background_range_window,
+            background_ping_window=echo_cfg.denoise.background_ping_window,
             background_snr_threshold=echo_cfg.denoise.background_snr_threshold,
+            background_noise_max=echo_cfg.denoise.background_noise_max,
+            # Impulse
             impulse_threshold_db=echo_cfg.denoise.impulse_threshold_db,
             impulse_num_lags=echo_cfg.denoise.impulse_num_lags,
+            impulse_vertical_bin=echo_cfg.denoise.impulse_vertical_bin,
+            impulse_ping_lags=list(echo_cfg.denoise.impulse_ping_lags),
+            # Transient
             transient_n=echo_cfg.denoise.transient_n,
             transient_exclude_above=echo_cfg.denoise.transient_exclude_above,
+            transient_depth_bin=echo_cfg.denoise.transient_depth_bin,
+            transient_n_pings=echo_cfg.denoise.transient_n_pings,
+            transient_threshold_db=echo_cfg.denoise.transient_threshold_db,
+            # Attenuation
             attenuation_threshold=echo_cfg.denoise.attenuation_threshold,
             attenuation_upper_limit=echo_cfg.denoise.attenuation_upper_limit,
             attenuation_lower_limit=echo_cfg.denoise.attenuation_lower_limit,
+            attenuation_side_pings=echo_cfg.denoise.attenuation_side_pings,
         )
 
     # Azure VM

@@ -47,12 +47,26 @@ PARALLEL_WORKERS="${PARALLEL_WORKERS:-0}"
 # -40 → aggressive; may remove upper end of legit fish-school echoes.
 SV_CLIP_MAX_DB="${SV_CLIP_MAX_DB:--10}"
 
+# Denoise config TOML. Loading a file flips on per-frequency dispatch
+# (use_frequency_specific=true) and gives 200 kHz its own tuning — the
+# attenuation ref-band 400–500 m in the global defaults is out of range at
+# 200 kHz and returns an empty mask. The tropical_pacific config uses
+# 50–150 m for 200 kHz and preserves the weak TPOS DSL at 38 kHz by relaxing
+# background SNR from 5 → 3 dB. Set to "" to fall back to the Ryan 2015 @
+# 38 kHz global defaults baked into scripts/batch_processing/config.py.
+DENOISE_CONFIG="${DENOISE_CONFIG:-$SCRIPT_DIR/tropical_pacific_denoise.toml}"
+
 mkdir -p "$EXPERIMENT_ROOT" "$RAW_CACHE"
 
 # Print output live to stdout AND capture it in the log file.
 # PYTHONWARNINGS=ignore above keeps the volume manageable (no zarr warning flood).
 # NOTE: run in a real Terminal.app / iTerm2 window — VS Code's terminal buffer
 # can OOM if the output volume ever spikes.
+DENOISE_ARGS=()
+if [[ -n "$DENOISE_CONFIG" ]]; then
+  DENOISE_ARGS=(--denoise-config "$DENOISE_CONFIG")
+fi
+
 python -u process_from_raw.py \
   --local-test \
   --start-date 2023-10-10 \
@@ -68,6 +82,7 @@ python -u process_from_raw.py \
   --resume-stage "$RESUME_STAGE" \
   --parallel-workers "$PARALLEL_WORKERS" \
   --sv-clip-max-db "$SV_CLIP_MAX_DB" \
+  "${DENOISE_ARGS[@]}" \
   --n-workers 1 \
   --memory-limit 12GB \
   2>&1 | tee "$LOG_FILE"

@@ -1,0 +1,54 @@
+# Denoise configuration for TPOS 2023 — deep central tropical Pacific
+#
+# Water column: ~4500m depth, oligotrophic, weak DSL (300-600m day, 50-200m night)
+# Short pulse mode: 38 kHz (range ~1800m) + 200 kHz (range ~250m)
+# Platform: Saildrone USV (hull-mounted transducers, depth offset 1.9m)
+#
+# Tuning notes vs Ryan2015 defaults:
+#   - Relaxed thresholds (tropical Pacific has lower backscatter overall)
+#   - 200 kHz: short effective range due to absorption (~10 dB/km at 200 kHz)
+#   - Attenuation filter reference layer: 400-500m for 38 kHz (DSL depths)
+#   - Background noise: conservative SNR to preserve weak scattering layers
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# All four methods in Ryan et al. (2015) sequence:
+# impulse → attenuation → transient → background
+methods = ["impulse", "attenuation", "transient", "background"]
+
+use_frequency_specific = true
+
+# ── 38 kHz — deep-range channel ─────────────────────────────────
+# Effective range ~1800m in tropical Pacific (low absorption ~10 dB/km).
+# DSL at 300-600m during daytime; weak migrating layers at night.
+# Parameters follow Ryan et al. (2015) Tables 3-5 with minor relaxation
+# for oligotrophic waters where overall backscatter is lower.
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 600.0, num_side_pings = 100, threshold = 8.0 }
+transient   = { exclude_above = 250.0, depth_bin = 20.0, n_pings = 50, thr_dB = 12.0, percentile = 15 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+
+# ── 200 kHz — short-range, high-resolution channel ──────────────
+# Effective range ~150-250m (absorption ~50 dB/km at 200 kHz).
+# Primary targets: near-surface scattering layers, zooplankton, gas bubbles.
+# Tighter spatial windows; DSL is typically beyond usable range.
+# Relaxed attenuation threshold since signal fades rapidly with range.
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 80.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, percentile = 15 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
+
+[echodata.mvbs]
+range_bin = "1m"
+ping_time_bin = "10s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"

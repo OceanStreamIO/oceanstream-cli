@@ -36,38 +36,88 @@ class ChunkConfig:
 
 @dataclass
 class DenoiseParams:
-    """Denoise method toggles and frequency-specific parameters.
+    """Denoise method toggles and per-stage parameters.
 
-    Maps to ``oceanstream.echodata.config.DenoiseConfig`` but is kept
-    separate so the processing script can build the config object at
-    runtime vs being tied to TOML loading.
+    Global defaults follow Ryan et al. (2015), "Reducing bias due to noise and
+    attenuation in open-ocean echo integration data" (ICES J. Mar. Sci. 72(8)),
+    tuned to 38 kHz. Values match the ``[echodata.denoise.frequency_params.38000]``
+    section of ``ryan2015_denoise_defaults.toml``, so running the shell script
+    without ``--denoise-config`` gives equivalent behaviour to loading that TOML
+    in global mode.
+
+    Assumes a Saildrone-class deployment reaching ≥600 m at 38 kHz. Higher
+    frequencies (120/200/333 kHz) that cannot see the 400–500 m attenuation
+    reference band get an empty AS mask (safe fallback in
+    :func:`attenuation_mask`). For proper per-frequency tuning use
+    ``--denoise-config ryan2015_denoise_defaults.toml`` which flips
+    ``use_frequency_specific=True``.
+
+    Maps to :class:`oceanstream.echodata.config.DenoiseConfig`.
     """
 
     enabled: bool = True
+
+    # Processing order per Ryan et al. (2015) Figure 2:
+    #   impulse → attenuation → transient → background
+    # In :func:`denoise_day` the three mask methods (impulse/attenuation/
+    # transient) are ORed together in one pass; ``background`` is applied
+    # last as an echopype Sv-domain subtraction. Order in this list only
+    # selects which filters run.
     methods: list[str] = field(
-        default_factory=lambda: ["background", "impulse", "transient", "attenuation"]
+        default_factory=lambda: ["impulse", "attenuation", "transient", "background"]
     )
-    # Global defaults (used when use_frequency_specific is False)
-    background_num_side_pings: int = 25
-    background_snr_threshold: float = 3.0
-    impulse_threshold_db: float = 10.0
-    impulse_num_lags: int = 3
-    transient_n: int = 5
-    transient_exclude_above: float = 250.0
-    attenuation_threshold: float = 0.8
-    attenuation_upper_limit: float = 180.0
-    attenuation_lower_limit: float = 280.0
-    # Frequency-specific overrides
+
+    # Frequency-specific overrides (optional — flips per-channel dispatch on)
     use_frequency_specific: bool = False
     frequency_params: Optional[dict] = None
-    # Post-denoise sanity clip: mask Sv samples louder than this as NaN.
-    # Anything > -10 dB in the water column is not biology — it's residual
-    # cross-talk from adjacent instruments, electrical interference, or
-    # ring-down that the mask-based denoisers missed. Set to None to disable.
+
+    # ── Background noise — De Robertis & Higginbottom (2007) ────────────
+    # Ryan 2015 @ 38 kHz: 30-sample × 50-ping block, SNR ≥ 5 dB,
+    # background_noise_max = −125 dB (typical 38 kHz noise floor cap).
+    # Without background_noise_max the estimated noise can spike in quiet
+    # blocks and smear/lift the near-surface Sv floor after subtraction.
+    background_range_window: int = 30
+    background_ping_window: int = 50
+    background_snr_threshold: float = 5.0            # dB
+    background_noise_max: Optional[float] = -125.0   # dB, cap on estimated noise
+    background_num_side_pings: int = 25              # unused by echopype path; kept for API compat
+
+    # ── Impulse noise — multi-lag comparison ────────────────────────────
+    # Ryan 2015: 5 m vertical bin, ping_lags = [1, 2], threshold = 10–12 dB.
+    # Two lags are recommended over one for robustness against paired spikes.
+    impulse_threshold_db: float = 12.0
+    impulse_vertical_bin: float = 5.0                # metres
+    impulse_ping_lags: list[int] = field(default_factory=lambda: [1, 2])
+    impulse_num_lags: int = 2                        # informational; ping_lags drives behaviour
+
+    # ── Transient noise — Fielding upward-stepping filter ───────────────
+    # Ryan 2015 @ 38 kHz: exclude_above = 200 m, depth_bin = 20 m,
+    # n_pings = 50, thr_dB = 15. Aggressive thresholds (< 12 dB) tend to
+    # smear surface reverberation downward, so keep this ≥ 12.
+    transient_exclude_above: float = 200.0           # metres
+    transient_depth_bin: float = 20.0                # metres
+    transient_n_pings: int = 50
+    transient_threshold_db: float = 15.0             # dB
+    transient_n: int = 5                             # legacy field, unused by Fielding filter
+
+    # ── Attenuated signal (AS) — full-ping rejection ────────────────────
+    # Ryan 2015 @ 38 kHz: reference layer 400–500 m, 100 side pings,
+    # threshold 8–10 dB below block median flags the whole ping.
+    # NOTE: earlier releases shipped 0.8 dB here which flagged ~8% of
+    # pings on normal DSL variability — do NOT lower below ~6 dB.
+    attenuation_threshold: float = 10.0              # dB
+    attenuation_upper_limit: float = 400.0           # metres, top of reference band
+    attenuation_lower_limit: float = 500.0           # metres, bottom of reference band
+    attenuation_side_pings: int = 100
+
+    # ── Post-denoise sanity clip ────────────────────────────────────────
+    # Anything > sv_clip_max_db in the water column is not biology — it's
+    # residual cross-talk, electrical interference, or ring-down that the
+    # mask-based denoisers missed. Set to None to disable.
     sv_clip_max_db: Optional[float] = -10.0
 
     def to_denoise_config(self):
-        """Convert to ``oceanstream.echodata.config.DenoiseConfig``."""
+        """Convert to :class:`oceanstream.echodata.config.DenoiseConfig`."""
         from oceanstream.echodata.config import DenoiseConfig
 
         # Normalize frequency_params keys to int (TOML produces str keys)
@@ -79,15 +129,28 @@ class DenoiseParams:
             methods=self.methods,
             use_frequency_specific=self.use_frequency_specific,
             frequency_params=freq_params,
+            # Background
             background_num_side_pings=self.background_num_side_pings,
+            background_range_window=self.background_range_window,
+            background_ping_window=self.background_ping_window,
             background_snr_threshold=self.background_snr_threshold,
+            background_noise_max=self.background_noise_max,
+            # Impulse
             impulse_threshold_db=self.impulse_threshold_db,
             impulse_num_lags=self.impulse_num_lags,
+            impulse_vertical_bin=self.impulse_vertical_bin,
+            impulse_ping_lags=list(self.impulse_ping_lags),
+            # Transient
             transient_n=self.transient_n,
             transient_exclude_above=self.transient_exclude_above,
+            transient_depth_bin=self.transient_depth_bin,
+            transient_n_pings=self.transient_n_pings,
+            transient_threshold_db=self.transient_threshold_db,
+            # Attenuation
             attenuation_threshold=self.attenuation_threshold,
             attenuation_upper_limit=self.attenuation_upper_limit,
             attenuation_lower_limit=self.attenuation_lower_limit,
+            attenuation_side_pings=self.attenuation_side_pings,
         )
 
 
