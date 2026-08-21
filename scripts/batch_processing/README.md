@@ -109,6 +109,77 @@ python process_campaign.py --denoise-config denoise.toml
 
 See `denoise_example.toml` for the parameter format.
 
+## Denoise preset sensitivity case study (2023-10-10)
+
+A reproducible 3-preset comparison run from stage 5 against **one immutable**
+stage-4 Sv source. Scope is a single-operational-day sensitivity study — it
+measures how far the products move when the preset changes. It does **not**
+rank presets.
+
+```bash
+# 1. Pilot: short pulse only, one preset, peak RSS + disk measured
+./run-denoise-comparison-10oct.sh pilot
+
+# 2. Full matrix: three presets, both pulse categories
+./run-denoise-comparison-10oct.sh run
+
+# 3. Metrics + report (results.md, results.pdf, figures)
+./run-denoise-comparison-10oct.sh report
+```
+
+| Preset key | TOML | Output container |
+|---|---|---|
+| `ryan-inspired` | `ryan2015_denoise_defaults.toml` | `local-raw-10oct-ryan` |
+| `tpv1` | `tropical_pacific_denoise.toml` | `local-raw-10oct-tpv1` |
+| `tpv3` | `tropical_pacific_denoise_v3.toml` | `local-raw-10oct-tpv3` |
+
+Guarantees enforced by the runner:
+
+* the source container is opened read-only and its recursive content hash is
+  re-verified after every arm;
+* each arm runs with `--strict`, so a filter that could not run, a missing
+  pulse category, or a failed required product aborts with a non-zero exit;
+* `run-manifest.json` is written **only** after the artifact matrix validates,
+  so its presence certifies the arm is comparable;
+* a non-empty output container is refused unless `--force` is passed.
+
+Report dependencies (cartopy, cmocean) are pinned in
+`requirements-report.txt`.
+
+**Report output formats**
+
+| File | Needs | Notes |
+|---|---|---|
+| `results.md` | pandoc only for downstream steps | Always produced |
+| `results.html` | `pandoc` | Self-contained (figures inlined). **No TeX required** — print to PDF from any browser |
+| `results.pdf` | `pandoc` + a TeX engine | Typeset, hyperlinked TOC |
+
+PDF engines are tried in order: **`tectonic`** → `xelatex` → `lualatex`.
+Tectonic is preferred because it is self-contained and fetches only the
+packages a document actually needs (~59 MB cached here) instead of the ~7 GB a
+full MacTeX install costs:
+
+```bash
+brew install tectonic       # macOS, ~50 MB
+cargo install tectonic      # anywhere with Rust
+```
+
+Nothing is ever auto-installed: the build preflights the tools and prints
+platform-specific instructions if none are present. Markdown, figures and HTML
+all build independently of the PDF step.
+
+### Relevant flags on `process_from_raw.py`
+
+| Flag | Purpose |
+|---|---|
+| `--sv-source-container` | Read stage-4 Sv from a separate immutable container (requires `--resume-stage >= 5`) |
+| `--stop-after-stage` | Stop after stage N (use 9 for single-day runs) |
+| `--strict` | Fail instead of warn on any filter/category/product failure |
+| `--force` | Allow writing into a non-empty output container |
+| `--emit-denoise-diagnostics` | Emit `--denoise_stats.json` + a separate `--masks.zarr`, and drop masks from the data path |
+| `--preset-key` | Preset identifier recorded in the diagnostics artifacts |
+| `--expected-categories` | Pulse categories this run handles (also used as the resume filter) |
+
 ## Azure VM management
 
 ```bash
@@ -153,7 +224,16 @@ python infra.py delete            # Delete VM entirely
 | File | Purpose |
 |------|---------|
 | `process_campaign.py` | Main pipeline orchestrator |
+| `process_from_raw.py` | Raw EK80 → products pipeline (zarr v3) |
 | `config.py` | Configuration dataclasses |
 | `export_gps.py` | GPS data export from PostgresDB |
 | `infra.py` | Azure VM provisioning/deallocation |
 | `denoise_example.toml` | Example denoise configuration |
+| `experiment_contract.py` | Frozen contract for the preset comparison: fingerprints, schemas, tolerances, artifact-matrix validation |
+| `denoise_diagnostics.py` | Per-day denoise statistics (denominators, overlaps, inert TOML fields) |
+| `run-denoise-comparison-10oct.sh` | 3-preset comparison runner (pilot / run / report) |
+| `generate_denoise_report.py` | `metrics.json` → `results.md` → `results.pdf` |
+| `denoise_report_figures.py` | Report figures on fixed shared scales |
+| `denoise_report_text.py` | Report markdown assembly |
+| `report_assets/` | LaTeX header include, report CSS, `references.bib`, Natural Earth cache |
+| `requirements-report.txt` | Pinned report dependencies |

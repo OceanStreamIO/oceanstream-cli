@@ -1,0 +1,174 @@
+# TPOS 2023 denoise config — v2 (2026-07-30)
+# ============================================================================
+#
+# ⚠️  DEPRECATED — DO NOT USE FOR NEW RUNS ⚠️
+#
+# Superseded by tropical_pacific_denoise_v3.toml. This file is kept as a
+# record of a failed experiment (moving the 38 kHz AS reference band from
+# 400-600 m to 900-1300 m).
+#
+# What went wrong:
+#   The AS (attenuated signal) filter detects transducer-face attenuation
+#   by comparing per-ping median Sv in a reference band against a running
+#   median of neighbouring pings. For this to work, the reference band
+#   MUST contain acoustic scatterers whose backscatter is affected by
+#   transducer attenuation.
+#
+#   At 900-1300 m in oligotrophic TPOS there is essentially no biology.
+#   The received Sv at that depth is dominated by the receiver's ELECTRONIC
+#   NOISE FLOOR (~-90 dB on the WBT-Mini), which is decoupled from
+#   transducer face fouling. During a bubble sweep-down event the ref-band
+#   Sv is UNCHANGED, so the filter sees no anomaly and flags 0%.
+#
+#   Empirical result on 2023-10-09:
+#     - v1 (400-600 m ref band, in DSL):  AS 0.2% flagged
+#     - v2 (900-1300 m ref band):         AS 0.0% flagged — regression
+#
+#   Ryan et al. 2015 §2.2's deep ref band recommendation applies to
+#   surveys with persistent biology at that depth (temperate/subpolar
+#   SSLs). It does not apply to tropical oligotrophic open ocean.
+#
+# What v3 kept from v2:
+#   The transient noise (TN) tightening (thr_dB 12 -> 8, n_pings 50 -> 30)
+#   was independently valid and is preserved in v3.
+#
+# ============================================================================
+#
+# Original v2 header follows below for reference.
+# ============================================================================
+#
+# Water column: ~4500m depth, oligotrophic, weak DSL (300-600m day, 50-200m night)
+# Short pulse mode: 38 kHz (range ~1800m) + 200 kHz (range ~250m)
+# Platform: Saildrone USV, hull-mounted transducers, depth offset 1.9m
+#
+# ----------------------------------------------------------------------------
+# Changelog vs v1 (tropical_pacific_denoise.toml)
+# ----------------------------------------------------------------------------
+#
+# The v1 config had TWO tuning issues discovered when reviewing 2023-10-09
+# together with NOAA PIFSC:
+#
+# (1) AS (attenuation) filter reference band overlapped the DSL.
+#     v1 used 400-600 m at 38 kHz — that is exactly where the daytime DSL
+#     sits in TPOS. The AS filter's running median then tracks biological
+#     variability instead of noise, so:
+#         - real attenuation events (bubble sweep-down) fall below threshold
+#         - DSL fluctuations trigger false positives on other pings
+#     Ryan et al. 2015 §2.2 requires the ref band to sit BELOW biology and
+#     ABOVE the noise floor. Fix: move to 900-1300 m — well below the TPOS
+#     DSL, well within the 38 kHz effective range (~1800 m).
+#
+# (2) Transient noise (TN) filter was too lenient AND too wide.
+#     v1 used thr_dB = 12 (Ryan default is 6) and n_pings = 50. Result: the
+#     TN filter flagged 0.0% on 2023-10-09 and missed the 12:40-12:55 UTC
+#     narrow broadband transient. Fix: thr_dB 12 -> 8, n_pings 50 -> 30.
+#     This should catch multi-minute broadband spikes without over-flagging
+#     legitimate DSL variability (still more conservative than the Ryan
+#     default of 6 dB).
+#
+# ----------------------------------------------------------------------------
+# What these filters CAN and CANNOT catch — for stakeholder alignment
+# ----------------------------------------------------------------------------
+#
+# The Ryan 2015 filter cascade is designed for LOCAL noise patterns. It is
+# NOT a general artifact detector. Understanding the scope of each filter
+# prevents unrealistic expectations of the denoise stage:
+#
+#   Impulse    : single-ping high-Sv anomalies vs immediate neighbours.
+#                Catches: individual electrical spikes, ping-timing hits.
+#                Misses:  multi-ping bursts, sustained interference.
+#
+#   Attenuation: pings whose reference-band Sv is REDUCED below the running
+#                median. Catches: bubble sweep-down (transducer face fouling
+#                by air-entrained bubbles in high sea state), transient
+#                mechanical fouling. Misses: elevated-Sv events, sustained
+#                events longer than the running-median window.
+#
+#   Transient  : pings whose upper-water Sv is ELEVATED above the running
+#                median (spans up to n_pings). Catches: brief broadband
+#                bursts (passing vessel echosounders, lightning EMI, short
+#                comms transients). Misses: events longer than n_pings
+#                (they contaminate the running median).
+#
+#   Background : static per-channel noise floor removal via echopype's
+#                remove_background_noise. Catches: uniform electronic noise.
+#                Misses: time-varying noise floors.
+#
+# Events that require the QC-flag catalog (tpos_2023_qc.json) rather than
+# automated denoising:
+#
+#   - Multi-minute sustained attenuation from persistent bubble sweep-down
+#     (e.g. 2023-10-09 08:00-09:00 UTC event)
+#   - Rain / squall broadband noise lasting > n_pings
+#   - Long cross-talk sessions from co-located vessels
+#   - Any artifact where "which pings" is a scientific judgment call
+#
+# See qc.py schema documentation for how the visual overlays / JSON get
+# consumed by downstream biomass workflows.
+# ============================================================================
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# Ryan et al. (2015) cascade order
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+# ────────────────────────────────────────────────────────────────────────
+# 38 kHz — deep-range channel (~1800 m effective range)
+# DSL: 300-600 m daytime, 50-200 m nighttime (migrated)
+# ────────────────────────────────────────────────────────────────────────
+
+[echodata.denoise.frequency_params.38000]
+
+# IMPULSE: unchanged from v1 (matches Ryan 2015 Table 3)
+impulse = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+
+# ATTENUATION: ref band moved 400-600 m -> 900-1300 m (see changelog)
+# Threshold kept at 8 dB (mid-way between Ryan 8-10 dB and the noisier
+# tropical Pacific baseline). num_side_pings 100 gives a 200-ping running
+# median which is stable enough to track slow variations without being
+# fooled by 30-min bubble events.
+attenuation = { upper_limit_sl = 900.0, lower_limit_sl = 1300.0, num_side_pings = 100, threshold = 8.0 }
+
+# TRANSIENT: threshold 12 -> 8 dB, n_pings 50 -> 30, depth_bin unchanged
+# Tighter running median (30 pings ~= 90 s at 3 Hz) and stricter threshold
+# should catch narrow broadband spikes like the 2023-10-09 12:40-12:55 UTC
+# event without over-flagging DSL variability. exclude_above = 250 m still
+# protects near-surface from surface reverb.
+transient = { exclude_above = 250.0, depth_bin = 20.0, n_pings = 30, thr_dB = 8.0, percentile = 15 }
+
+# BACKGROUND: unchanged from v1
+# SNR = 3 dB deliberately relaxed to preserve weak TPOS DSL.
+# noise_max = -125 dB matches the physical EK80 noise floor at 38 kHz.
+background = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+
+# ────────────────────────────────────────────────────────────────────────
+# 200 kHz — short-range channel (~150-250 m effective range)
+# Primary targets: near-surface scattering layers, zooplankton
+# ────────────────────────────────────────────────────────────────────────
+#
+# Most 200 kHz params kept from v1. The AS ref band 50-150 m does overlap
+# with productive near-surface waters, but:
+#   - 200 kHz effective range is only ~250 m, so pushing ref band deeper
+#     narrows the useful diagnostic window drastically
+#   - TPOS oligotrophic waters have relatively weak 200 kHz backscatter
+#     even in the productive layer, so the AS running median is stable
+#
+# The TN threshold IS tightened (9 -> 7 dB) for consistency with 38 kHz.
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 80.0, depth_bin = 10.0, n_pings = 20, thr_dB = 7.0, percentile = 15 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
+
+[echodata.mvbs]
+range_bin = "1m"
+ping_time_bin = "10s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"

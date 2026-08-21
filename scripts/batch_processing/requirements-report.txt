@@ -1,0 +1,26 @@
+# Pinned dependencies for the denoise comparison report (Phase 5).
+#
+# Installed on top of the processing environment:
+#     pip install -r scripts/batch_processing/requirements-report.txt
+#
+# cartopy and cmocean were already imported by plot_nasc.py without being
+# declared anywhere — this file is where they are now declared.
+#
+# Versions below are the ones actually resolved and used to build the
+# 2023-10-10 report; they are not aspirational.
+#
+# pandoc and a TeX engine are NOT installable from pip and are deliberately not
+# auto-installed. generate_denoise_report.py preflights them and prints
+# platform-specific install instructions if they are missing.
+#
+# Engine preference: tectonic → xelatex → lualatex.
+#   brew install tectonic     # ~50 MB, fetches packages on demand
+#   brew install --cask mactex-no-gui   # ~7 GB, only if you want full TeX Live
+# results.html requires no TeX engine at all.
+
+matplotlib==3.10.8
+cartopy==0.25.0
+cmocean==3.0.3
+shapely==2.1.2
+pyshp==3.1.6
+pyproj==3.7.2

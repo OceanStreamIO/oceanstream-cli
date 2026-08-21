@@ -111,6 +111,7 @@ def plot_sv_data(
     vmin: float = -80,
     vmax: float = -50,
     dpi: int = 180,
+    qc_windows: Optional[list] = None,
 ) -> list[Path]:
     """
     Plot Sv data for each channel and save the echogram plots.
@@ -152,6 +153,7 @@ def plot_sv_data(
                 vmin=vmin,
                 vmax=vmax,
                 dpi=dpi,
+                qc_windows=qc_windows,
             )
             echogram_files.append(path)
         except Exception as e:
@@ -173,6 +175,7 @@ def plot_sv_data(
                     vmin=vmin,
                     vmax=vmax,
                     dpi=dpi,
+                    qc_windows=qc_windows,
                 )
                 echogram_files.append(path)
             except Exception as e:
@@ -200,6 +203,7 @@ def plot_sv_channel(
     height_in: float = 12.0,
     min_aspect_short: float = 1.8,
     target_aspect_24h: float = 3.2,
+    qc_windows: Optional[list] = None,
 ) -> Path:
     """
     Plot and save echogram for a single channel.
@@ -223,7 +227,10 @@ def plot_sv_channel(
         height_in: Base figure height (inches)
         min_aspect_short: Aspect ratio for short time series
         target_aspect_24h: Aspect ratio for 24h time series
-        
+        qc_windows: Optional list of QCWindow objects to overlay on the plot
+            (already filtered for this channel/category). See
+            ``oceanstream.echodata.plot.qc`` for schema and helpers.
+
     Returns:
         Path to the saved echogram file
     """
@@ -273,7 +280,20 @@ def plot_sv_channel(
         end = t[-1].ceil("1H")
         for dt in pd.date_range(start, end, freq="1H"):
             ax.axvline(dt, color="k", lw=0.6, alpha=0.18, zorder=3)
-    
+
+    # Overlay QC flag bands (e.g. weather-induced dropouts, cross-talk bursts)
+    if qc_windows and meta["xdim"] == "ping_time":
+        try:
+            from oceanstream.echodata.plot.qc import draw_qc_overlay
+            n = draw_qc_overlay(
+                ax, qc_windows,
+                ping_time_min=t[0], ping_time_max=t[-1],
+            )
+            if n > 0:
+                logger.info("Drew %d QC flag(s) on echogram", n)
+        except Exception as exc:
+            logger.warning("QC overlay failed: %s", exc)
+
     # Styling
     ax.set_facecolor("#f9f9f9")
     ax.spines["top"].set_visible(False)
@@ -303,7 +323,9 @@ def plot_sv_channel(
         title_template.format(channel_label=meta["ch_label"]),
         fontsize=18,
         fontweight="bold",
-        pad=16,
+        # Extra pad so QC flag captions (drawn just above the axes at
+        # y=1.0 + 4pt) don't overlap the title text.
+        pad=36,
     )
     ax.tick_params(which="major", length=6, width=1, labelsize=11)
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
@@ -1136,6 +1158,7 @@ def plot_and_upload_echograms(
     title_template: str = "{channel_label}",
     depth_var: str | None = None,
     connection_string: str | None = None,
+    qc_windows: Optional[list] = None,
 ) -> list[str]:
     """Generate echograms and optionally upload them to Azure Blob Storage.
 
@@ -1175,6 +1198,10 @@ def plot_and_upload_echograms(
         Depth variable name override.
     connection_string : str, optional
         Azure connection string override.
+    qc_windows : list, optional
+        Pre-filtered list of ``QCWindow`` objects to overlay on the echogram
+        (see :func:`oceanstream.echodata.plot.qc.load_qc_windows` and
+        :func:`~oceanstream.echodata.plot.qc.filter_qc_windows`).
 
     Returns
     -------
@@ -1200,6 +1227,7 @@ def plot_and_upload_echograms(
         cmap=cmap,
         channel=channel,
         title_template=title_template,
+        qc_windows=qc_windows,
     )
 
     if create_interactive_pages:

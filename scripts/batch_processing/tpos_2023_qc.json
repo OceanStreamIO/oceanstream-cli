@@ -1,0 +1,28 @@
+{
+  "$schema_version": "1",
+  "campaign_id": "tpos_saildrone_2023",
+  "description": "Quality-control flags for known data artifacts. Windows are visualized as translucent bands on generated echograms; underlying Sv data is NOT masked out (flag-don't-drop convention, per ICES CRR 259). Downstream biomass / NASC consumers should read this file and honor the 'action' hint per window.",
+  "retracted_windows": [
+    {
+      "date": "2023-10-09",
+      "start_utc": "2023-10-09T08:00:00Z",
+      "end_utc":   "2023-10-09T09:00:00Z",
+      "type":       "attenuation_event",
+      "cause":      "bubble_sweepdown_high_seas",
+      "retracted_reason": "Initial diagnosis was incorrect. On re-processing, the pale vertical band that looked like bubble sweep-down was found to be a DATA GAP — the initial run silently skipped the 08:00 UTC raw file, leaving 1425 pings missing from the 08:00-08:59 hour. matplotlib's pcolormesh renders the empty columns with the light/background colour of the colormap, producing a signature visually similar to sustained attenuation. The current run has full 1425 pings in that hour and no unusual acoustic signature is present. See conversation notes from 2026-07-30 for the full diagnosis (Sv percentiles match to within 0.2 dB across runs; only ping count differs)."
+    }
+  ],
+  "flagged_windows": [
+    {
+      "date": "2023-10-09",
+      "start_utc": "2023-10-09T12:40:00Z",
+      "end_utc":   "2023-10-09T12:55:00Z",
+      "categories": ["long_pulse", "short_pulse"],
+      "channels":   ["*"],
+      "type":       "cross_talk",
+      "cause":      "narrow_broadband_transient",
+      "action":     "exclude_from_biomass",
+      "notes":      "Narrow (~5-15 min) vertical spike with elevated Sv from surface to mid-water. Signature is consistent with a passing vessel echosounder, a single transient EMI burst, or a brief lightning event. Not caught by the cross-talk detector (below its 6 dB elevation threshold at the 800-1200m reference band) or by the impulse/transient mask filters (event is too narrow to shift the running median but too broad for the single-ping impulse filter)."
+    }
+  ]
+}

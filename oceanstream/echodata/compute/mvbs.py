@@ -15,6 +15,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Index of the first vertical bin in MVBS/NASC products.
+#:
+#: Range/depth bins are built with ``np.arange(0, max, bin)`` regardless of the
+#: transducer depth offset, so bin 0 spans ``[0, bin_size)`` while the data only
+#: starts at ``depth_offset`` (1.9 m on Saildrone). Bin 0 therefore averages
+#: over fewer samples than a full bin and under-integrates — measured at ~19%
+#: for a 10 m NASC bin with a 1.9 m offset.
+#:
+#: Policy: bin 0 is kept in the stored products (so the grid stays regular and
+#: reproducible) but is **excluded from integrated comparisons**. Consumers
+#: should slice it off via ``isel({range_var: slice(SURFACE_BIN_INDEX + 1, None)})``
+#: before summing over depth.
+SURFACE_BIN_INDEX = 0
+
 
 def compute_mvbs(
     sv_dataset: Union[Path, "xr.Dataset"],
@@ -63,11 +77,8 @@ def compute_mvbs(
     # --- Replicate echopype compute_MVBS setup (api.py lines 100-140) ---
     ds_Sv, range_bin_val = _setup_and_validate(sv_dataset, range_var, range_bin, "left")
 
-    # Range bins
-    # TODO: bins start at 0 regardless of transducer depth. When depth is used
-    # (e.g. depth starts at 1.9m for Saildrone), the first bin(s) are empty or
-    # partial. For NASC this causes ~19% underestimate in the surface layer.
-    # Investigate starting bins at min(depth) or accepting a depth_offset param.
+    # Range bins start at 0 regardless of transducer depth, so the first bin is
+    # partial when ``depth`` is used. See SURFACE_BIN_INDEX for the policy.
     range_var_max = float(ds_Sv[range_var].max(skipna=True))
     range_interval = np.arange(0, range_var_max + range_bin_val, range_bin_val)
 

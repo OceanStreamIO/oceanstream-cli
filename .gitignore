@@ -73,3 +73,5 @@ _oceanstream-website-static/
 web_app
 coverage.json
 scripts/batch_processing/raw_cache/
+scripts/batch_processing/report_assets/
+*.out

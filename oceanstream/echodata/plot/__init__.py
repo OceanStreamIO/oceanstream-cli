@@ -21,6 +21,22 @@ from oceanstream.echodata.plot.echogram import (
     create_interactive_echogram,
     plot_sv_with_seabed,
 )
+from oceanstream.echodata.plot.qc import (
+    QCWindow,
+    load_qc_windows,
+    filter_qc_windows,
+    draw_qc_overlay,
+)
+from oceanstream.echodata.plot.colormaps import (
+    CANONICAL_COLORMAP_NAMES,
+    get_colormap,
+    resolve_colormap_list,
+)
+from oceanstream.echodata.plot.combined import (
+    CombinedDataset,
+    combine_38khz_day,
+    render_combined_echogram,
+)
 
 __all__ = [
     "plot_sv_data",
@@ -36,4 +52,17 @@ __all__ = [
     # Interactive & seabed overlay
     "create_interactive_echogram",
     "plot_sv_with_seabed",
+    # QC flag overlay
+    "QCWindow",
+    "load_qc_windows",
+    "filter_qc_windows",
+    "draw_qc_overlay",
+    # Colormap presets
+    "CANONICAL_COLORMAP_NAMES",
+    "get_colormap",
+    "resolve_colormap_list",
+    # Combined long+short pulse 38 kHz
+    "CombinedDataset",
+    "combine_38khz_day",
+    "render_combined_echogram",
 ]

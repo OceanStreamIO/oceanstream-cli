@@ -7,6 +7,7 @@ dispatch and pulse-length selection.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Hashable, Mapping, Optional, Union
@@ -83,6 +84,7 @@ def apply_denoising(
     output_path: Optional[Path] = None,
     merge_masks: bool = False,
     return_stage_masks: bool = False,
+    return_status: bool = False,
 ) -> Union["xr.Dataset", tuple["xr.Dataset", dict]]:
     """
     Apply denoising pipeline to Sv dataset.
@@ -102,10 +104,14 @@ def apply_denoising(
         output_path: Optional path to save denoised dataset
         merge_masks: If True, include individual masks in output dataset
         return_stage_masks: If True, return (dataset, stage_masks_dict)
+        return_status: If True, also return the per-stage/per-channel
+            execution status dict
         
     Returns:
         Denoised Sv dataset with noise masks applied.
-        If return_stage_masks=True, returns (dataset, stage_masks_dict).
+        Extra elements are appended in the order
+        ``(dataset, stage_masks, stage_status)`` for whichever of
+        *return_stage_masks* / *return_status* are True.
         
     Example:
         denoised = apply_denoising(sv_path, methods=["background", "impulse"])
@@ -129,11 +135,12 @@ def apply_denoising(
     logger.info(f"Applying denoising methods: {methods}")
     
     # Build combined mask using per-channel approach
-    combined_mask, stage_cubes = build_full_mask(
+    combined_mask, stage_cubes, stage_status = build_full_mask(
         sv_dataset,
         methods=methods,
         config=config,
         return_stage_masks=True,
+        return_status=True,
     )
     
     # Apply mask
@@ -164,8 +171,12 @@ def apply_denoising(
         logger.info(f"Saving denoised Sv to {output_path}")
         denoised.to_zarr(output_path, mode="w")
     
+    if return_stage_masks and return_status:
+        return denoised, stage_cubes, stage_status
     if return_stage_masks:
         return denoised, stage_cubes
+    if return_status:
+        return denoised, stage_status
     
     return denoised
 
@@ -179,6 +190,7 @@ def build_full_mask(
     return_stage_masks: bool = True,
     mask_unfeasible: bool = False,
     pulse_length: str | None = None,
+    return_status: bool = False,
 ) -> Union["xr.DataArray", tuple["xr.DataArray", dict]]:
     """Build combined noise mask using per-channel processing.
 
@@ -214,10 +226,13 @@ def build_full_mask(
         mask_unfeasible: If True, OR the unfeasible mask into the stage mask.
         pulse_length: ``"short_pulse"`` or ``"long_pulse"`` for pulse-length
             dispatch.
+        return_status: If True, also return a per-stage/per-channel execution
+            status dict (``"ran"``, ``"skipped_no_params"``, ``"failed: ..."``).
 
     Returns:
-        Combined mask DataArray, or ``(mask, stage_cubes_dict)`` if
-        *return_stage_masks* is True.
+        Combined mask DataArray. Extra elements are appended in the order
+        ``(mask, stage_cubes, stage_status)`` for whichever of
+        *return_stage_masks* / *return_status* are True.
     """
     import xarray as xr
 
@@ -269,11 +284,17 @@ def build_full_mask(
 
     n_ch = ds.sizes.get("channel", 1)
     stage_masks: dict[str, list] = {name: [] for name in stages}
+    # Per-stage, per-channel execution status. "ran" and "skipped_no_params"
+    # are NOT interchangeable: a stage that ran and found nothing contributes a
+    # genuine all-False mask, while a stage that could not run contributes no
+    # information at all. Downstream statistics must be able to tell them apart.
+    stage_status: dict[str, dict[str, str]] = {name: {} for name in stages}
     ch_masks: list[xr.DataArray] = []
 
     for ch in range(n_ch):
         ch_ds = ds.isel(channel=ch)
         reference = ds[var_name].isel(channel=ch)
+        ch_label = str(ds["channel"].values[ch])
         stage_or = None
 
         for stage_name, spec in stages.items():
@@ -283,6 +304,7 @@ def build_full_mask(
             # Resolve parameters for this channel
             pars = _params_for_channel(param_sets, ch_ds, pulse_length)
             if pars is None:
+                stage_status[stage_name][ch_label] = "skipped_no_params"
                 continue
 
             try:
@@ -291,6 +313,7 @@ def build_full_mask(
                 logger.warning(
                     f"Error computing {stage_name} mask for channel {ch}: {e}"
                 )
+                stage_status[stage_name][ch_label] = f"failed: {e}"
                 continue
 
             # All denoise functions now return (mask, unfeasible) tuples
@@ -303,6 +326,7 @@ def build_full_mask(
                 stage_mask = result
 
             if stage_mask is None:
+                stage_status[stage_name][ch_label] = "returned_none"
                 continue
 
             # Align coordinates
@@ -319,6 +343,7 @@ def build_full_mask(
             stage_mask = stage_mask & ~reference.isnull().expand_dims(channel=[ch_value])
 
             stage_masks[stage_name].append(stage_mask)
+            stage_status[stage_name][ch_label] = "ran"
             stage_or = stage_mask if stage_or is None else (stage_or | stage_mask)
 
         if stage_or is not None:
@@ -340,28 +365,54 @@ def build_full_mask(
             dims=ds[var_name].dims,
             coords=ds[var_name].coords,
         )
-        if return_stage_masks:
-            return full_mask, {}
-        return full_mask
+        return _pack_mask_result(
+            full_mask, {}, stage_status, return_stage_masks, return_status
+        )
 
     full_mask = xr.concat(ch_masks, dim="channel")
-    full_mask = full_mask.broadcast_like(ds[var_name])
+    full_mask = full_mask.broadcast_like(ds[var_name]).astype(bool)
     full_mask.name = "combined_mask"
 
     pct_flagged = float(full_mask.mean().values) * 100
     logger.info(f"Combined mask: {pct_flagged:.1f}% flagged as noise")
 
-    if not return_stage_masks:
+    if not return_stage_masks and not return_status:
         return full_mask
 
+    all_channels = ds["channel"].values
     stage_cubes: dict[str, xr.DataArray] = {}
     for name, m_list in stage_masks.items():
-        if m_list:
-            cube = xr.concat(m_list, dim="channel")
-            cube = cube.broadcast_like(ds[var_name])
-            stage_cubes[name] = cube
+        if not m_list:
+            continue
+        cube = xr.concat(m_list, dim="channel")
+        # Channels where this stage was skipped or failed must reindex to
+        # False, not NaN. A NaN fill silently upcasts the cube to float and
+        # then evaluates as True in every downstream boolean reduction.
+        cube = cube.reindex(channel=all_channels, fill_value=False)
+        cube = cube.broadcast_like(ds[var_name]).fillna(False).astype(bool)
+        cube.attrs["channel_status"] = json.dumps(stage_status.get(name, {}))
+        stage_cubes[name] = cube
 
-    return full_mask, stage_cubes
+    return _pack_mask_result(
+        full_mask, stage_cubes, stage_status, return_stage_masks, return_status
+    )
+
+
+def _pack_mask_result(
+    full_mask: "xr.DataArray",
+    stage_cubes: dict,
+    stage_status: dict,
+    return_stage_masks: bool,
+    return_status: bool,
+):
+    """Assemble the ``build_full_mask`` return value for the requested flags."""
+    if return_stage_masks and return_status:
+        return full_mask, stage_cubes, stage_status
+    if return_stage_masks:
+        return full_mask, stage_cubes
+    if return_status:
+        return full_mask, stage_status
+    return full_mask
 
 
 def build_noise_mask(

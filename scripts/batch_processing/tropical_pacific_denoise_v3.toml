@@ -1,0 +1,211 @@
+# TPOS 2023 denoise config — v3 (2026-07-30)
+# ============================================================================
+#
+# Water column: ~4500m depth, oligotrophic, weak DSL (300-600m day, 50-200m night)
+# Short pulse mode: 38 kHz (range ~1800m) + 200 kHz (range ~250m)
+# Platform: Saildrone USV, hull-mounted transducers, depth offset 1.9m
+#
+# ----------------------------------------------------------------------------
+# IMPORTANT: 2023-10-09 08:00 UTC "attenuation event" was NOT a real event
+# ----------------------------------------------------------------------------
+#
+# The pale vertical band that appeared in the initial (v1 pipeline) ek500 raw
+# echograms at 08:00-09:00 UTC turned out to be a DATA GAP, not an acoustic
+# artifact. On the initial run, the 08:00 UTC raw file was silently skipped
+# (conversion / download failure), leaving 1425 pings missing from that hour.
+# matplotlib's pcolormesh renders empty time columns with the light background
+# colour of the colormap, producing a signature visually similar to sustained
+# bubble sweep-down attenuation.
+#
+# After re-running with all files intact, the 08:00-08:59 window has the
+# expected 1425 pings and shows normal DSL structure with no unusual
+# acoustic signature. The QC catalog entry for that window has been
+# retracted (see retracted_windows in tpos_2023_qc.json).
+#
+# This has two implications for the AS filter tuning below:
+#   (i)  The rationale "AS is needed to catch bubble sweep-down at 08:00" no
+#        longer applies to that specific event
+#   (ii) The general rationale for keeping AS enabled — it still catches
+#        occasional single-ping attenuation from wave slaps and brief
+#        transducer occlusion — remains valid, so v3's config stays as
+#        chosen. The Sv percentile comparison between v1 and current runs
+#        matched within 0.2 dB, confirming Sv computation is stable.
+#
+# The 12:40-12:55 UTC narrow broadband transient is a REAL event and is
+# still flagged in tpos_2023_qc.json (also visible in both v1 and current
+# ek500 renders as a bright vertical spike).
+#
+# ----------------------------------------------------------------------------
+# Changelog vs v2
+# ----------------------------------------------------------------------------
+#
+# v2 moved the 38 kHz AS reference band from 400-600 m to 900-1300 m following
+# a generic reading of Ryan et al. 2015 §2.2 ("ref band below biology, above
+# noise floor"). This was WRONG for TPOS conditions. Empirical result on
+# 2023-10-09: AS filter went from 0.2% (v1) -> 0.0% (v2). See "Why v2 was
+# wrong" below for the physics.
+#
+#   v3 changes vs v2:
+#     - 38 kHz AS ref band: 900-1300 m -> 400-600 m       (revert to v1)
+#     - 38 kHz TN thr_dB / n_pings: kept at 8 / 30        (v2 improvement retained)
+#     - 200 kHz TN thr_dB / n_pings: kept at 7 / 20       (v2 improvement retained)
+#
+# v3 is therefore essentially "v1 with the TN tightening from v2".
+#
+# ----------------------------------------------------------------------------
+# Why v2 was wrong: the AS filter needs SCATTERERS in the reference band
+# ----------------------------------------------------------------------------
+#
+# The AS (attenuated signal) filter detects bubble sweep-down and similar
+# transducer-face events by looking for pings whose reference-band Sv is
+# REDUCED below the running median of neighbors. For this to work, the
+# reference band must contain actual acoustic scatterers whose backscatter
+# is affected by transducer attenuation.
+#
+# In oligotrophic central tropical Pacific at 900-1300 m:
+#   - Essentially no acoustic biology (below DSL, above bathymetric features)
+#   - The received Sv at that depth is DOMINATED BY THE RECEIVER'S ELECTRONIC
+#     NOISE FLOOR (roughly -90 dB at 38 kHz on the WBT-Mini), NOT by acoustic
+#     energy from scatterers
+#   - Electronic noise is decoupled from transducer face fouling — bubbles
+#     do not affect the ADC/preamp noise floor
+#   - Therefore, during a bubble sweep-down event, the 900-1300 m Sv is
+#     UNCHANGED, and the AS filter sees no anomaly to flag.
+#
+# The Ryan et al. 2015 recommendation of a deep ref band applies to surveys
+# where a persistent SSL / biological layer exists at that depth (temperate/
+# subpolar surveys, on-shelf work, etc.). For tropical oligotrophic open
+# ocean the AS reference band must be shallow enough to include the DSL,
+# accepting some DSL-variability-driven false positives as the cost of
+# having any acoustic signal to compare against.
+#
+# ----------------------------------------------------------------------------
+# What these filters CAN and CANNOT catch — for stakeholder alignment
+# ----------------------------------------------------------------------------
+#
+# The Ryan 2015 filter cascade is designed for LOCAL noise patterns using
+# per-ping running medians. It is NOT a general artifact detector.
+#
+#   Impulse    : single-ping high-Sv anomalies vs immediate neighbours.
+#                Catches: individual electrical spikes, ping-timing hits,
+#                external EMI (lightning strikes, passing vessel echosounders).
+#                Misses:  multi-ping bursts, sustained interference.
+#
+#   Attenuation: pings whose reference-band Sv is REDUCED below the running
+#                median (201-ping window at num_side_pings=100).
+#                Catches: single-ping to few-ping attenuation events (isolated
+#                wave slaps, brief transducer occlusion, individual bubble
+#                clouds crossing the beam).
+#                Misses:
+#                  - Elevated-Sv events (looks only for reduction)
+#                  - SUSTAINED attenuation lasting more than ~30 s (running
+#                    median gets contaminated → all pings look "normal")
+#                  - Events where the ref band has no biology to attenuate
+#                    (see "Why v2 was wrong" above)
+#
+#   Transient  : pings whose upper-water Sv is ELEVATED above the running
+#                median across n_pings.
+#                Catches: brief broadband bursts spanning up to n_pings/2
+#                (passing vessel echosounders, lightning EMI, short comms
+#                transients).
+#                Misses: events longer than n_pings — the running median
+#                gets contaminated. At n_pings=30 (~10 s at 3 Hz), max
+#                detectable event duration is ~5 s.
+#
+#   Background : static per-channel noise floor removal via echopype's
+#                remove_background_noise. Catches: uniform electronic noise
+#                floor.
+#                Misses: time-varying noise floors, transient interference.
+#
+# Events that require the QC-flag catalog (tpos_2023_qc.json) rather than
+# automated denoising:
+#
+#   - Multi-minute sustained attenuation from persistent bubble sweep-down
+#     (hypothetical example; we thought 2023-10-09 08:00-09:00 UTC was
+#     such an event, but it turned out to be a data gap — see the header
+#     of this file for the retraction)
+#   - Rain / squall broadband noise lasting > n_pings (30 pings ≈ 10 s)
+#   - Long cross-talk sessions from co-located vessels (e.g. 2023-10-09
+#     12:40-12:55 UTC event — 15 min elevated broadband)
+#   - Any artifact where "which pings" is a scientific judgment call
+#
+# The independent CROSS-TALK DETECTOR at the prune stage (see prune_day() in
+# process_campaign.py) uses a GLOBAL DAILY MEDIAN rather than a running
+# median, so it CAN catch sustained multi-minute events. It flags ~5.2% of
+# 2023-10-09 long_pulse pings (1707/32778) — mainly the 12:40 broadband
+# transient plus scattered impulse events across the day. NOTE: earlier
+# versions of these comments claimed this detector caught "the 08:00
+# attenuation cluster" — that claim was based on the mis-diagnosed data
+# gap and is not correct.
+#
+# See qc.py schema documentation for how the visual overlays / JSON get
+# consumed by downstream biomass workflows.
+# ============================================================================
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+# Ryan et al. (2015) cascade order
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+# ────────────────────────────────────────────────────────────────────────
+# 38 kHz — deep-range channel (~1800 m effective range)
+# DSL: 300-600 m daytime, 50-200 m nighttime (migrated)
+# ────────────────────────────────────────────────────────────────────────
+
+[echodata.denoise.frequency_params.38000]
+
+# IMPULSE: unchanged (matches Ryan 2015 Table 3). Catches single-ping
+# transients from lightning, passing vessels, onboard EMI. Runs ~0.2%
+# on TPOS 2023 Oct-9 — expected for open ocean with occasional traffic.
+impulse = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+
+# ATTENUATION: ref band reverted to 400-600 m (v1) after v2's 900-1300 m
+# was proved wrong for TPOS (see header). This overlaps with the daytime
+# DSL, so:
+#   - Real DSL variability will trigger occasional false positives
+#   - The filter can catch single-ping attenuation events (isolated wave
+#     slaps) but is architecturally blind to sustained events (>~30 s)
+# Accept the small false-positive rate as the cost of having the filter
+# operational at all. Sustained events like the 08:00 bubble sweep-down
+# are handled by the QC catalog + cross-talk detector at prune stage.
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 600.0, num_side_pings = 100, threshold = 8.0 }
+
+# TRANSIENT: threshold 8 dB (v1 was 12), n_pings 30 (v1 was 50).
+# Retained from v2. Stricter running median (30 pings ≈ 90 s at 3 Hz)
+# catches narrower broadband spikes; threshold 8 vs Ryan's default 6
+# still protects legitimate DSL variability.
+transient = { exclude_above = 250.0, depth_bin = 20.0, n_pings = 30, thr_dB = 8.0, percentile = 15 }
+
+# BACKGROUND: unchanged from v1/v2.
+# SNR = 3 dB deliberately relaxed to preserve weak TPOS DSL.
+# noise_max = -125 dB matches the physical EK80 noise floor at 38 kHz.
+background = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+
+# ────────────────────────────────────────────────────────────────────────
+# 200 kHz — short-range channel (~150-250 m effective range)
+# Primary targets: near-surface scattering layers, zooplankton
+# ────────────────────────────────────────────────────────────────────────
+#
+# 200 kHz AS ref band 50-150 m sits in the productive layer, which is the
+# only depth where there's biology to compare. Same rationale as 38 kHz:
+# without acoustic scatterers in the ref band, the filter cannot detect
+# attenuation. Pushing the band deeper narrows the useful window to
+# essentially nothing given the 200 kHz range of ~250 m.
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 80.0, depth_bin = 10.0, n_pings = 20, thr_dB = 7.0, percentile = 15 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
+
+[echodata.mvbs]
+range_bin = "1m"
+ping_time_bin = "10s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"

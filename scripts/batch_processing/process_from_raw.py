@@ -48,7 +48,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -891,12 +891,22 @@ def run_sv_computation(
     return sv_zarrs
 
 
-def _reconstruct_day_zarrs(output_container: str, suffix: str = ".zarr") -> dict:
+def _reconstruct_day_zarrs(
+    output_container: str,
+    suffix: str = ".zarr",
+    start_date: "datetime | None" = None,
+    end_date: "datetime | None" = None,
+) -> dict:
     """List zarrs in Azure container and reconstruct day→category→path dict.
 
     *suffix* controls what to match:
       - '.zarr'            → source (concatenated) day zarrs
       - '--denoised.zarr'  → denoised day zarrs
+
+    When *start_date* / *end_date* are given, only days inside that inclusive
+    range are returned. A resume run must reconstruct exactly the days it was
+    asked for: silently picking up neighbouring days already in the container
+    turns a single-day comparison into a multi-day one.
     """
     import re
     from oceanstream.echodata.storage import get_azure_filesystem
@@ -917,6 +927,23 @@ def _reconstruct_day_zarrs(output_container: str, suffix: str = ".zarr") -> dict
         r"(\d{4}-\d{2}-\d{2})/\d{4}-\d{2}-\d{2}--(\w+)" + escaped_suffix + r"$"
     )
 
+    def _in_range(day_key: str) -> bool:
+        if start_date is None and end_date is None:
+            return True
+        try:
+            day = datetime.fromisoformat(day_key)
+        except ValueError:
+            return False
+        if start_date is not None and day < start_date.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ):
+            return False
+        if end_date is not None and day > end_date.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ):
+            return False
+        return True
+
     for top_path in top_level:
         # Each top_path like: container/2023-06-25
         try:
@@ -929,6 +956,8 @@ def _reconstruct_day_zarrs(output_container: str, suffix: str = ".zarr") -> dict
             m = pattern.search(rel)
             if m:
                 day_key, category = m.group(1), m.group(2)
+                if not _in_range(day_key):
+                    continue
                 day_zarrs.setdefault(day_key, {})[category] = rel
 
     logger.info("Reconstructed %d days from %s/*%s", len(day_zarrs), output_container, suffix)
@@ -938,9 +967,212 @@ def _reconstruct_day_zarrs(output_container: str, suffix: str = ".zarr") -> dict
     return day_zarrs
 
 
+def _filter_categories(day_zarrs: dict, categories: list[str]) -> dict:
+    """Keep only *categories*, so a run processes exactly what it declares.
+
+    Used for restricted runs (e.g. the short-pulse-only pilot) where the source
+    container holds more categories than the run is meant to touch.
+    """
+    if not categories:
+        return day_zarrs
+    allowed = set(categories)
+    return {
+        day: {cat: path for cat, path in cats.items() if cat in allowed}
+        for day, cats in day_zarrs.items()
+    }
+
+
+def _expected_day_keys(cfg: PipelineConfig) -> list[str]:
+    """Every calendar day in ``[start_date, end_date]``, inclusive."""
+    if cfg.start_date is None or cfg.end_date is None:
+        return []
+    days = []
+    current = cfg.start_date.date()
+    last = cfg.end_date.date()
+    while current <= last:
+        days.append(current.isoformat())
+        current += timedelta(days=1)
+    return days
+
+
+def _require_expected_days(
+    day_zarrs: dict, cfg: PipelineConfig, container: str, what: str
+) -> None:
+    """Fail (not warn) when the reconstructed set is missing an expected day.
+
+    A comparison that silently runs on one pulse category because the other was
+    never reconstructed produces plausible-looking but incomparable products.
+    """
+    expected_days = _expected_day_keys(cfg)
+    if not expected_days:
+        if not day_zarrs:
+            raise RuntimeError(
+                f"No {what} reconstructed from container {container!r}."
+            )
+        return
+
+    missing: list[str] = []
+    for day in expected_days:
+        found = day_zarrs.get(day, {})
+        if not found:
+            missing.append(f"{day} (no categories)")
+            continue
+        for category in cfg.expected_categories:
+            if category not in found:
+                missing.append(f"{day}/{category}")
+
+    if missing:
+        raise RuntimeError(
+            f"Missing expected {what} in container {container!r}: "
+            + ", ".join(missing)
+            + ". Re-run the earlier stages or correct --start-date/--end-date."
+        )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _container_root(container: str) -> Path | None:
+    """Local filesystem root for *container*, or ``None`` for Azure-backed runs."""
+    from oceanstream.echodata.storage import get_zarr_store_uri
+
+    try:
+        uri = get_zarr_store_uri("", container=container)
+    except Exception:
+        return None
+    path = Path(uri)
+    return path if path.is_absolute() and "://" not in uri else None
+
+
+def _guard_output_container(
+    cfg: PipelineConfig, output_container: str, sv_source_container: str
+) -> None:
+    """Refuse to write into a non-empty output container unless ``--force``.
+
+    A comparison arm that silently merges with a previous run's leftovers is
+    indistinguishable from a clean one in the artifact matrix.
+    """
+    if cfg.force:
+        return
+    root = _container_root(output_container)
+    if root is None or not root.exists():
+        return
+    entries = [p for p in root.iterdir() if p.name != ".DS_Store"]
+    if entries:
+        raise RuntimeError(
+            f"Output container {output_container!r} is not empty "
+            f"({len(entries)} entries at {root}). Remove it or pass --force. "
+            f"The Sv source {sv_source_container!r} is never modified."
+        )
+
+
+def _finalise_run(
+    cfg: PipelineConfig,
+    *,
+    output_container: str,
+    sv_source_container: str,
+    day_zarrs: dict,
+) -> None:
+    """Validate the artifact matrix and write ``run-manifest.json`` atomically.
+
+    The manifest is the run's certificate of completeness: it is written only
+    after every required artifact has been observed, so its presence means the
+    run can be compared against the other arms.
+    """
+    if not cfg.emit_denoise_diagnostics and not cfg.strict:
+        return
+
+    from experiment_contract import (
+        CORE_PRODUCTS,
+        REQUIRED_PRODUCTS,
+        RUN_MANIFEST_SCHEMA,
+        capture_code_revision,
+        capture_environment,
+        hash_file,
+        validate_artifact_matrix,
+        write_json_atomic,
+    )
+
+    root = _container_root(output_container)
+    if root is None:
+        logger.info("Non-local output container — skipping artifact-matrix validation")
+        return
+
+    required = REQUIRED_PRODUCTS if cfg.emit_denoise_diagnostics else CORE_PRODUCTS
+    days = _expected_day_keys(cfg) or sorted(day_zarrs.get("denoised", {}))
+    missing: list[str] = []
+    for day in days:
+        missing.extend(
+            f"{day}: {m}"
+            for m in validate_artifact_matrix(
+                root, day=day, categories=cfg.expected_categories, required=required
+            )
+        )
+
+    if missing:
+        message = "Incomplete artifact matrix: " + "; ".join(missing)
+        if cfg.strict:
+            raise RuntimeError(message)
+        logger.warning("%s — run-manifest.json not written", message)
+        return
+
+    preset_toml = Path(cfg.preset_toml) if cfg.preset_toml else None
+    manifest = {
+        "schema": RUN_MANIFEST_SCHEMA,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "preset": cfg.preset_key or None,
+        "preset_toml": str(preset_toml) if preset_toml else None,
+        "preset_toml_sha256": (
+            hash_file(preset_toml) if preset_toml and preset_toml.is_file() else None
+        ),
+        "output_container": output_container,
+        "sv_source_container": sv_source_container,
+        "days": days,
+        "categories": list(cfg.expected_categories),
+        "cli_args": sys.argv[1:],
+        "resume_stage": cfg.resume_stage,
+        "stop_after_stage": cfg.stop_after_stage,
+        "strict": cfg.strict,
+        "resolved_config": _serialisable_config(cfg),
+        "artifacts": {
+            kind: {d: dict(sorted(c.items())) for d, c in sorted(mapping.items())}
+            for kind, mapping in day_zarrs.items()
+        },
+        "code": capture_code_revision(),
+        "environment": capture_environment(),
+    }
+    path = write_json_atomic(root / "run-manifest.json", manifest)
+    logger.info("Wrote %s", path)
+
+
+def _serialisable_config(cfg: PipelineConfig) -> dict:
+    """Config snapshot with the fields that change what the run produces."""
+    from dataclasses import asdict
+
+    def _coerce(value):
+        if isinstance(value, dict):
+            return {str(k): _coerce(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_coerce(v) for v in value]
+        if isinstance(value, (Path, datetime)):
+            return str(value)
+        return value
+
+    return {
+        "cruise_id": cfg.cruise_id,
+        "start_date": str(cfg.start_date) if cfg.start_date else None,
+        "end_date": str(cfg.end_date) if cfg.end_date else None,
+        "denoise": _coerce(asdict(cfg.denoise)),
+        "mvbs": _coerce(asdict(cfg.mvbs)),
+        "nasc": _coerce(asdict(cfg.nasc)),
+        "prune": _coerce(asdict(cfg.prune)),
+        "chunks": cfg.chunks.as_dict(),
+        "surface_exclusion_depth": cfg.surface_exclusion_depth,
+        "apply_seabed_mask": cfg.apply_seabed_mask,
+        "parallel_workers": cfg.parallel_workers,
+    }
 
 
 def run_pipeline(cfg: PipelineConfig) -> None:
@@ -967,8 +1199,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     output_container = cfg.output_container
     if not output_container:
         output_container = generate_container_name(cfg.cruise_id)
+
+    # Resolve (and validate) the immutable Sv source before creating anything.
+    sv_source_container = cfg.resolve_sv_source_container(output_container)
+    split_source = sv_source_container != output_container
+
+    _guard_output_container(cfg, output_container, sv_source_container)
     ensure_container_exists(output_container, public_access="container")
     logger.info("Output container: %s", output_container)
+    if split_source:
+        logger.info("Sv source container (read-only): %s", sv_source_container)
 
     # EchoData intermediate directory — use local save dir when available
     if cfg.local_save_dir:
@@ -981,14 +1221,24 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     client = setup_dask_client(cfg)
 
     resume = cfg.resume_stage
+    stop_after = cfg.stop_after_stage or 99
+
+    def _stage_enabled(stage: int) -> bool:
+        return stage <= stop_after
 
     try:
         # ── Resume logic — skip early stages ──────────────────────
         if resume >= 6:
             # Reconstruct from existing output zarrs
             logger.info("RESUMING from stage %d — reconstructing paths", resume)
-            source_day_zarrs = _reconstruct_day_zarrs(output_container, suffix=".zarr")
-            denoised_day_zarrs = _reconstruct_day_zarrs(output_container, suffix="--denoised.zarr")
+            source_day_zarrs = _reconstruct_day_zarrs(
+                sv_source_container, suffix=".zarr",
+                start_date=cfg.start_date, end_date=cfg.end_date,
+            )
+            denoised_day_zarrs = _reconstruct_day_zarrs(
+                output_container, suffix="--denoised.zarr",
+                start_date=cfg.start_date, end_date=cfg.end_date,
+            )
             for dk in list(source_day_zarrs.keys()):
                 source_day_zarrs[dk] = {
                     cat: zp for cat, zp in source_day_zarrs[dk].items()
@@ -996,12 +1246,23 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                         "--denoised", "--masked", "--pruned", "--mvbs", "--nasc",
                     ))
                 }
+            source_day_zarrs = _filter_categories(source_day_zarrs, cfg.expected_categories)
+            denoised_day_zarrs = _filter_categories(denoised_day_zarrs, cfg.expected_categories)
+            _require_expected_days(
+                source_day_zarrs, cfg, sv_source_container, "source Sv zarrs"
+            )
+            _require_expected_days(
+                denoised_day_zarrs, cfg, output_container, "denoised zarrs"
+            )
             logger.info("Stages 1-5 skipped (resume=%d)", resume)
 
         elif resume >= 5:
             # Resume from Stage 5 (denoise): reconstruct source Sv zarrs
             logger.info("RESUMING from stage %d — reconstructing source zarrs", resume)
-            source_day_zarrs = _reconstruct_day_zarrs(output_container, suffix=".zarr")
+            source_day_zarrs = _reconstruct_day_zarrs(
+                sv_source_container, suffix=".zarr",
+                start_date=cfg.start_date, end_date=cfg.end_date,
+            )
             for dk in list(source_day_zarrs.keys()):
                 source_day_zarrs[dk] = {
                     cat: zp for cat, zp in source_day_zarrs[dk].items()
@@ -1009,12 +1270,17 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                         "--denoised", "--masked", "--pruned", "--mvbs", "--nasc",
                     ))
                 }
+            source_day_zarrs = _filter_categories(source_day_zarrs, cfg.expected_categories)
+            _require_expected_days(
+                source_day_zarrs, cfg, sv_source_container, "source Sv zarrs"
+            )
             logger.info("Stages 1-4 skipped (resume=%d)", resume)
 
             # Stage 5: Denoise
             t0 = time.time()
             denoised_day_zarrs = run_denoising(
-                client, source_day_zarrs, cfg, output_container
+                client, source_day_zarrs, cfg, output_container,
+                source_container=sv_source_container,
             )
             logger.info("STAGE 5 complete: denoising (%.1fs)", time.time() - t0)
 
@@ -1104,6 +1370,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         # Stage 6b: Prune noisy pings (drops pings that are mostly NaN so MVBS/NASC
         # are computed on an analysis-ready Sv dataset)
         t0 = time.time()
+        pruned_day_zarrs: dict = {}
         if cfg.prune.enabled:
             pruned_day_zarrs = run_pruning(
                 client, pre_prune_input, cfg, output_container
@@ -1117,8 +1384,14 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         # Stage 7+8: MVBS + NASC
         t0 = time.time()
         if resume >= 9:
-            mvbs_zarrs = _reconstruct_day_zarrs(output_container, suffix="--mvbs.zarr")
-            nasc_zarrs = _reconstruct_day_zarrs(output_container, suffix="--nasc.zarr")
+            mvbs_zarrs = _reconstruct_day_zarrs(
+                output_container, suffix="--mvbs.zarr",
+                start_date=cfg.start_date, end_date=cfg.end_date,
+            )
+            nasc_zarrs = _reconstruct_day_zarrs(
+                output_container, suffix="--nasc.zarr",
+                start_date=cfg.start_date, end_date=cfg.end_date,
+            )
             logger.info("STAGE 7+8 skipped (resume=%d), reconstructed %d MVBS, %d NASC zarrs",
                         resume,
                         sum(len(v) for v in mvbs_zarrs.values()),
@@ -1134,8 +1407,8 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
         # Stage 9: Echograms
         t0 = time.time()
-        if resume >= 11:
-            logger.info("STAGE 9 skipped (resume=%d)", resume)
+        if resume >= 11 or not _stage_enabled(9):
+            logger.info("STAGE 9 skipped (resume=%d, stop_after=%d)", resume, stop_after)
         else:
             run_echogram_generation(
                 client,
@@ -1145,13 +1418,15 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                 cfg,
                 output_container,
                 nasc_zarrs=nasc_zarrs,
+                source_container=sv_source_container,
+                pruned_day_zarrs=pruned_day_zarrs,
             )
             logger.info("STAGE 9 complete: echograms (%.1fs)", time.time() - t0)
 
         # Stage 10: PMTiles + COG
         t0 = time.time()
-        if resume >= 11:
-            logger.info("STAGE 10 skipped (resume=%d)", resume)
+        if resume >= 11 or not _stage_enabled(10):
+            logger.info("STAGE 10 skipped (resume=%d, stop_after=%d)", resume, stop_after)
         else:
             run_tiles_and_cog(
                 client, nasc_zarrs, mvbs_zarrs, cfg, output_container
@@ -1160,10 +1435,26 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
         # Stage 11: Campaign aggregation
         t0 = time.time()
-        run_campaign_aggregation(
-            client, mvbs_input, mvbs_zarrs, cfg, output_container
+        if not _stage_enabled(11):
+            logger.info("STAGE 11 skipped (stop_after=%d)", stop_after)
+        else:
+            run_campaign_aggregation(
+                client, mvbs_input, mvbs_zarrs, cfg, output_container
+            )
+            logger.info("STAGE 11 complete: campaign Zarr (%.1fs)", time.time() - t0)
+
+        _finalise_run(
+            cfg,
+            output_container=output_container,
+            sv_source_container=sv_source_container,
+            day_zarrs={
+                "source": source_day_zarrs,
+                "denoised": denoised_day_zarrs,
+                "pruned": pruned_day_zarrs,
+                "mvbs": mvbs_zarrs,
+                "nasc": nasc_zarrs,
+            },
         )
-        logger.info("STAGE 11 complete: campaign Zarr (%.1fs)", time.time() - t0)
 
     finally:
         if client is not None:
@@ -1249,6 +1540,12 @@ def parse_args() -> PipelineConfig:
     parser.add_argument("--skip-nasc", action="store_true")
     parser.add_argument("--skip-mvbs", action="store_true")
     parser.add_argument(
+        "--skip-combined-echograms",
+        action="store_true",
+        help="Skip the combined long+short pulse 38 kHz 24h per-day echograms. "
+             "The per-category echograms still run.",
+    )
+    parser.add_argument(
         "--skip-pruning", action="store_true",
         help="Skip Stage 6b (drop noisy pings) — feed denoised/masked Sv directly to MVBS/NASC",
     )
@@ -1301,6 +1598,42 @@ def parse_args() -> PipelineConfig:
         "--resume-stage", type=int, default=0,
         help="Resume from stage N (5=denoise, 6=after denoise, 9=after MVBS/NASC, 11=campaign zarr only). "
              "Reconstructs intermediate data from existing output zarrs.",
+    )
+    parser.add_argument(
+        "--sv-source-container", default="",
+        help="Container holding the stage-4 Sv zarrs to resume from. Defaults to "
+             "--output-container. Set it to share one immutable Sv source across "
+             "several runs; requires --resume-stage >= 5 and must differ from the "
+             "output container. The source container is never written to.",
+    )
+    parser.add_argument(
+        "--stop-after-stage", type=int, default=0,
+        help="Stop after stage N (0 = run everything). Use 9 for single-day runs "
+             "so the campaign-aggregation stages are skipped.",
+    )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help="Abort with a non-zero exit on any configured filter/channel failure, "
+             "missing expected day/category, or failed required product, instead of "
+             "warning and continuing.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Allow writing into a non-empty output container.",
+    )
+    parser.add_argument(
+        "--emit-denoise-diagnostics", action="store_true",
+        help="Emit per-day denoise stats JSON and a separate compressed masks zarr. "
+             "Masks are then dropped from the denoised/pruned/MVBS/NASC data path.",
+    )
+    parser.add_argument(
+        "--preset-key", default="",
+        help="Preset identifier recorded in the diagnostics artifacts (e.g. 'tpv3').",
+    )
+    parser.add_argument(
+        "--expected-categories", default="long_pulse,short_pulse",
+        help="Comma-separated pulse categories every expected day must provide "
+             "when resuming (default: long_pulse,short_pulse).",
     )
     parser.add_argument("--save-netcdf", action="store_true")
     parser.add_argument("--save-nasc-netcdf", action="store_true")
@@ -1367,6 +1700,24 @@ def parse_args() -> PipelineConfig:
     # Output
     parser.add_argument("--output-dir", default="/tmp/oceanstream/batch_output")
     parser.add_argument("--colormap", default="ocean_r")
+    parser.add_argument(
+        "--colormaps",
+        default="",
+        metavar="LIST",
+        help="Comma-separated list of colormap names to render each echogram in. "
+             "Supported: any matplotlib built-in (ocean_r, jet, viridis, …) plus "
+             "EK500 (the legacy Simrad palette). Filename gets a '--{cmap}' suffix "
+             "when >1 colormap is requested. When empty, falls back to --colormap.",
+    )
+    parser.add_argument(
+        "--qc-file",
+        type=str,
+        default="",
+        metavar="PATH",
+        help="Path to QC JSON file with flagged time windows to overlay on "
+             "echograms (see oceanstream.echodata.plot.qc for schema). "
+             "Overlays are visual-only — data is NOT masked out.",
+    )
 
     args = parser.parse_args()
 
@@ -1393,11 +1744,21 @@ def parse_args() -> PipelineConfig:
     # Common overrides
     cfg.resume_stage = args.resume_stage
     cfg.output_container = args.output_container or cfg.output_container
+    cfg.sv_source_container = args.sv_source_container
+    cfg.stop_after_stage = args.stop_after_stage
+    cfg.strict = args.strict
+    cfg.force = args.force
+    cfg.emit_denoise_diagnostics = args.emit_denoise_diagnostics
+    cfg.preset_key = args.preset_key
+    cfg.expected_categories = [
+        c.strip() for c in args.expected_categories.split(",") if c.strip()
+    ]
     cfg.skip_denoising = args.skip_denoising
     cfg.skip_echograms = args.skip_echograms
     cfg.skip_pmtiles = args.skip_pmtiles
     cfg.skip_nasc = args.skip_nasc
     cfg.skip_mvbs = args.skip_mvbs
+    cfg.skip_combined_echograms = args.skip_combined_echograms
     cfg.prune.enabled = not args.skip_pruning
     cfg.prune.drop_threshold = args.prune_threshold
     cfg.prune.crosstalk_enabled = not args.no_crosstalk
@@ -1410,6 +1771,8 @@ def parse_args() -> PipelineConfig:
     cfg.save_nasc_to_netcdf = args.save_nasc_netcdf or cfg.save_nasc_to_netcdf
     cfg.save_mvbs_to_netcdf = args.save_mvbs_netcdf or cfg.save_mvbs_to_netcdf
     cfg.colormap = args.colormap
+    cfg.colormaps = [c.strip() for c in args.colormaps.split(",") if c.strip()]
+    cfg.qc_file = Path(args.qc_file) if args.qc_file else None
     cfg.local_output_dir = Path(args.output_dir)
 
     # MVBS / NASC
@@ -1455,6 +1818,7 @@ def parse_args() -> PipelineConfig:
     if args.denoise_config:
         from oceanstream.echodata.config import EchodataConfig
 
+        cfg.preset_toml = str(Path(args.denoise_config).resolve())
         echo_cfg = EchodataConfig.from_toml(Path(args.denoise_config))
         cfg.denoise = type(cfg.denoise)(
             enabled=True,
@@ -1622,6 +1986,7 @@ def main():
         run_pipeline(cfg)
     except KeyboardInterrupt:
         logger.info("Pipeline interrupted by user")
+        raise SystemExit(130)
     except Exception:
         logger.exception("Pipeline failed with error")
         raise

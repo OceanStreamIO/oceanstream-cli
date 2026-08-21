@@ -252,6 +252,11 @@ class PipelineConfig:
     cruise_id: str = "SD_TPOS2023_v03"
     source_container: str = "processed"
     output_container: str = ""  # empty → auto-generate
+    # Container holding the stage-4 Sv zarrs to resume from. Empty → same as
+    # ``output_container`` (the historical single-container behaviour). Setting
+    # it lets several runs share one immutable Sv source while writing their
+    # own products elsewhere. Only valid with ``resume_stage >= 5``.
+    sv_source_container: str = ""
     gps_data_file: Optional[str] = None  # path to exported GPS JSON
     gps_container: str = ""  # Azure blob container for GPS GeoParquet (e.g. "gpsdata")
     gps_blob_path: str = ""  # path within gps_container (default: {cruise_id}/)
@@ -278,6 +283,11 @@ class PipelineConfig:
     skip_pmtiles: bool = False
     skip_nasc: bool = False
     skip_mvbs: bool = False
+    # Skip the combined long+short pulse 38 kHz 24h echograms (an additional
+    # per-day figure that merges the two pulse modes onto a common depth grid
+    # and adds a pulse-mode indicator bar). Independent of ``skip_echograms``:
+    # when the per-category loop still runs, only the combined stage is skipped.
+    skip_combined_echograms: bool = False
     save_to_netcdf: bool = False
     save_nasc_to_netcdf: bool = False
     save_mvbs_to_netcdf: bool = False
@@ -288,9 +298,34 @@ class PipelineConfig:
     build_campaign_sv_zarr: bool = False  # experimental
     category_parallel: bool = True  # parallelize short_pulse/long_pulse within each day
     resume_stage: int = 0               # resume from this stage (0 = start from beginning)\n    keep_raw: bool = False              # keep downloaded raw files after conversion
+    # Stop after this stage (0 = run everything). Single-day comparison runs
+    # set this to 9 so the campaign-aggregation stages don't run on one day.
+    stop_after_stage: int = 0
+    # Strict mode: any configured filter/channel failure, missing expected
+    # day/category, or failed required product aborts the run with a non-zero
+    # exit instead of logging a warning and continuing.
+    strict: bool = False
+    # Pulse categories every expected day must provide when resuming.
+    expected_categories: list[str] = field(
+        default_factory=lambda: ["long_pulse", "short_pulse"]
+    )
+    # Allow writing into a non-empty output container.
+    force: bool = False
+    # Emit per-day denoise diagnostics (stats JSON + separate masks zarr).
+    emit_denoise_diagnostics: bool = False
+    # Provenance for comparison runs — recorded in the diagnostics artifacts.
+    preset_key: str = ""
+    preset_toml: str = ""
 
     # ── Echogram settings ────────────────────────────────────────
     colormap: str = "ocean_r"
+    # Optional list of colormap names to render each echogram in. When set,
+    # every echogram is rendered once per name and the filename gets a
+    # ``--{cmap}`` suffix. Supported names: any matplotlib built-in
+    # (ocean_r, jet, viridis, …) plus "EK500" (see plot.colormaps).
+    # When empty, falls back to ``colormap`` for backward compatibility.
+    colormaps: list = field(default_factory=list)
+    qc_file: Optional[Path] = None  # optional QC JSON with flagged windows (overlaid on echograms)
 
     # ── Concurrency ─────────────────────────────────────────────
     parallel_workers: int = 0  # 0 → auto-detect from RAM (2 GB per denoise worker)
@@ -349,6 +384,34 @@ class PipelineConfig:
         workers = max(1, int(available_gb / mem_per_worker_gb))
         # Cap at a reasonable maximum to avoid thrashing
         return min(workers, 16)
+
+    def resolve_sv_source_container(self, output_container: str) -> str:
+        """Return the container to read stage-4 Sv zarrs from.
+
+        Defaults to *output_container* so existing single-container runs are
+        unchanged. When a separate source container is configured it must be
+        used only for resume-from-denoise runs, and it must never coincide with
+        the write destination.
+
+        Raises:
+            ValueError: if a split source is requested with ``resume_stage < 5``
+                or resolves to the same container that is being written to.
+        """
+        if not self.sv_source_container:
+            return output_container
+        if self.resume_stage < 5:
+            raise ValueError(
+                "--sv-source-container requires --resume-stage >= 5. "
+                "Stages 1-4 write the Sv zarrs and must not read them from a "
+                "separate immutable source."
+            )
+        if self.sv_source_container == output_container:
+            raise ValueError(
+                f"--sv-source-container ({self.sv_source_container!r}) must differ "
+                "from the output container; otherwise the run would write into "
+                "its own immutable input."
+            )
+        return self.sv_source_container
 
     @classmethod
     def for_local_test(

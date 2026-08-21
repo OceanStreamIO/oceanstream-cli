@@ -616,6 +616,11 @@ def denoise_day(
     cruise_id: str,
     save_netcdf: bool = False,
     sv_clip_max_db: float | None = None,
+    source_container: str | None = None,
+    emit_diagnostics: bool = False,
+    strict: bool = False,
+    preset_key: str | None = None,
+    preset_toml: str | None = None,
 ) -> str:
     """Apply denoising to a day Zarr and save the result.
 
@@ -624,15 +629,27 @@ def denoise_day(
     2. Apply echopype background noise removal per channel
     3. Optional sanity clip: mask Sv > sv_clip_max_db as NaN
 
+    Reads from *source_container* (defaults to *output_container*) so several
+    presets can share one immutable stage-4 Sv source while writing their own
+    products. Nothing is ever written to the source container.
+
+    With *emit_diagnostics* the full-resolution stage masks are written to a
+    separate ``{day}--{category}--masks.zarr`` and dropped from the data path,
+    and a ``{day}--{category}--denoise_stats.json`` is emitted. In *strict*
+    mode a filter that could not run on a configured channel aborts the day.
+
     Returns the denoised zarr path.
     """
     import dask
+    import numpy as np
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
     from oceanstream.echodata.denoise import apply_denoising
 
-    logger.info("Denoising %s/%s", day_key, category)
+    read_container = source_container or output_container
+    logger.info("Denoising %s/%s (source=%s → output=%s)",
+                day_key, category, read_container, output_container)
 
-    ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container, chunks=chunks)
+    ds = open_sv_from_azure(zarr_path=zarr_path, container=read_container, chunks=chunks)
 
     # Run everything with the synchronous scheduler.  The data is loaded
     # into memory so there is nothing to parallelise, and the distributed
@@ -646,12 +663,26 @@ def denoise_day(
         # Filter chunks to only include dimensions present in the dataset
         valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
 
+        diag_channels: list[dict] = []
+        stage_cubes: dict = {}
+        stage_status: dict = {}
+
         # Step 1: Mask-based denoising (impulse, transient, attenuation — no background).
         mask_methods = [m for m in denoise_config.methods if m != "background"]
         if mask_methods:
-            ds_denoised = apply_denoising(ds, methods=mask_methods, config=denoise_config)
+            ds_denoised, stage_cubes, stage_status = apply_denoising(
+                ds, methods=mask_methods, config=denoise_config,
+                return_stage_masks=True, return_status=True,
+            )
         else:
             ds_denoised = ds
+
+        _check_filter_status(stage_status, day_key, category, strict)
+
+        if emit_diagnostics:
+            diag_channels = _build_denoise_diagnostics(
+                ds, ds_denoised, stage_cubes, stage_status
+            )
 
         # Step 2: echopype background noise removal per channel.
         # This directly modifies Sv values (not just masking) and is applied
@@ -672,6 +703,11 @@ def denoise_day(
             parent_attrs.setdefault("processing_level", "Level 2A")
             parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
 
+            # Background is an Sv transform, not a mask. The before/after pair
+            # is reduced to statistics inside the callback so two more
+            # full-resolution copies of Sv never coexist.
+            diag_by_channel = {e["channel"]: e for e in diag_channels}
+
             def _remove_bgn_one_channel(ch_ds):
                 # Propagate processing-level attrs lost by groupby channel split
                 ch_ds.attrs.update(parent_attrs)
@@ -691,7 +727,19 @@ def denoise_day(
                     background_noise_max=opts.get("background_noise_max"),
                 )
                 # Use Sv_corrected (background-noise-removed), not original Sv
-                return result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
+                out = result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
+                if emit_diagnostics:
+                    import denoise_diagnostics as _diag
+
+                    label = str(np.asarray(ch_ds["channel"].values).ravel()[0])
+                    entry = diag_by_channel.get(label)
+                    if entry is not None:
+                        _diag.add_background_stats(
+                            entry,
+                            np.asarray(ch_ds["Sv"].values),
+                            np.asarray(out.values),
+                        )
+                return out
 
             sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
             sv_clean.name = "Sv"
@@ -703,7 +751,8 @@ def denoise_day(
         # mask-based denoisers miss (they threshold on gradients, not absolute
         # values). Legitimate biology sits well below the default -10 dB clip.
         if sv_clip_max_db is not None and "Sv" in ds_denoised:
-            import numpy as np
+            if emit_diagnostics:
+                _apply_clip_diagnostics(diag_channels, ds_denoised, sv_clip_max_db)
             n_before = int(np.isfinite(ds_denoised["Sv"].values).sum())
             ds_denoised["Sv"] = ds_denoised["Sv"].where(ds_denoised["Sv"] <= sv_clip_max_db)
             n_after = int(np.isfinite(ds_denoised["Sv"].values).sum())
@@ -713,6 +762,34 @@ def denoise_day(
                 "  Sv clip @ %.1f dB: masked %d samples (%.4f%% of finite)",
                 sv_clip_max_db, n_clipped, pct,
             )
+
+        # Full-resolution masks are diagnostics, not products: ~0.4 GiB each and
+        # they would otherwise be carried through prune → MVBS → NASC. Persist
+        # them to a dedicated store and drop them from the data path.
+        if emit_diagnostics:
+            _save_mask_diagnostics(
+                ds_denoised, stage_cubes, stage_status, output_container,
+                day_key, category, chunks,
+            )
+            _write_denoise_stats(
+                ds=ds,
+                ds_denoised=ds_denoised,
+                diag_channels=diag_channels,
+                denoise_config=denoise_config,
+                output_container=output_container,
+                day_key=day_key,
+                category=category,
+                preset_key=preset_key,
+                preset_toml=preset_toml,
+                source_container=read_container,
+                source_zarr=zarr_path,
+                sv_clip_max_db=sv_clip_max_db,
+            )
+            ds_denoised = ds_denoised.drop_vars(
+                [v for v in ("noise_mask",) if v in ds_denoised], errors="ignore"
+            )
+        stage_cubes.clear()
+        diag_channels.clear()
 
         # Rechunk to uniform sizes — denoising/groupby operations produce
         # non-uniform chunks at concatenation boundaries that Zarr cannot write.
@@ -741,11 +818,174 @@ def denoise_day(
     return output_zarr
 
 
+# ── Denoise diagnostics helpers (Phase 3) ──────────────────────────────────
+
+
+class StrictModeError(RuntimeError):
+    """A configured filter/channel/product failed while ``--strict`` was on."""
+
+
+def _check_filter_status(stage_status: dict, day_key: str, category: str, strict: bool) -> None:
+    """Abort (strict) or warn when a configured filter could not run.
+
+    ``"ran"`` means the filter executed — possibly finding nothing. Anything
+    else means the filter contributed no information, which silently changes
+    what a preset comparison is measuring.
+    """
+    failures = [
+        (stage, channel, status)
+        for stage, per_channel in stage_status.items()
+        for channel, status in per_channel.items()
+        if status != "ran"
+    ]
+    if not failures:
+        return
+    detail = "; ".join(f"{s}/{c}: {st}" for s, c, st in failures)
+    message = f"Denoise filter did not run for {day_key}/{category}: {detail}"
+    if strict:
+        raise StrictModeError(message)
+    logger.warning(message)
+
+
+def _build_denoise_diagnostics(ds, ds_denoised, stage_cubes, stage_status) -> list[dict]:
+    """Per-channel mask statistics computed right after mask application."""
+    import numpy as np
+    import denoise_diagnostics as diag
+
+    channels = []
+    n_ch = ds.sizes.get("channel", 1)
+    has_combined = "noise_mask" in ds_denoised
+    for ch in range(n_ch):
+        label = str(ds["channel"].values[ch])
+        masks = {
+            name: np.asarray(cube.isel(channel=ch).values, dtype=bool)
+            for name, cube in stage_cubes.items()
+        }
+        combined = (
+            np.asarray(ds_denoised["noise_mask"].isel(channel=ch).values, dtype=bool)
+            if has_combined else None
+        )
+        channels.append(
+            diag.channel_diagnostics(
+                ds_source=ds,
+                ch=ch,
+                channel_label=label,
+                stage_masks=masks,
+                stage_status=stage_status,
+                combined_mask=combined,
+                # Native dtype: an explicit float64 cast would double a
+                # ~200M-cell array for statistics that do not need it.
+                sv_after_masks=np.asarray(ds_denoised["Sv"].isel(channel=ch).values),
+            )
+        )
+        masks.clear()
+        del combined
+        _release_memory()
+    return channels
+
+
+def _apply_clip_diagnostics(diag_channels, ds_denoised, threshold) -> None:
+    """Clip statistics read one channel at a time from the pre-clip dataset."""
+    import numpy as np
+
+    import denoise_diagnostics as diag
+
+    for ch, entry in enumerate(diag_channels):
+        sv = np.asarray(ds_denoised["Sv"].isel(channel=ch).values)
+        diag.add_clip_stats(entry, sv, threshold)
+        del sv
+
+
+def _save_mask_diagnostics(
+    ds_denoised, stage_cubes, stage_status, output_container, day_key, category, chunks
+) -> str:
+    """Write the full-resolution stage masks to a dedicated compressed store."""
+    import json
+
+    import xarray as xr
+    from oceanstream.echodata.storage import save_dataset_to_azure
+
+    data_vars = {}
+    for name, cube in stage_cubes.items():
+        da = cube.astype(bool)
+        da.attrs["long_name"] = f"{name} noise mask (True = flagged)"
+        da.attrs["channel_status"] = json.dumps(stage_status.get(name, {}))
+        data_vars[f"mask_{name}"] = da
+    if "noise_mask" in ds_denoised:
+        data_vars["noise_mask"] = ds_denoised["noise_mask"].astype(bool)
+
+    if not data_vars:
+        return ""
+
+    masks = xr.Dataset(data_vars)
+    masks.attrs["description"] = (
+        "Full-resolution denoise stage masks. Diagnostics only — deliberately "
+        "kept out of the denoised/pruned/MVBS/NASC data path."
+    )
+    masks.attrs["stage_status"] = json.dumps(stage_status)
+    rechunk = {"ping_time": chunks.get("ping_time", 1000)}
+    if "range_sample" in masks.dims:
+        rechunk["range_sample"] = -1
+    masks = masks.chunk(rechunk)
+    for var in masks.variables.values():
+        var.encoding.clear()
+
+    path = f"{day_key}/{day_key}--{category}--masks.zarr"
+    save_dataset_to_azure(masks, zarr_path=path, container=output_container)
+    logger.info("  Saved mask diagnostics: %s", path)
+    masks.close()
+    return path
+
+
+def _write_denoise_stats(
+    *, ds, ds_denoised, diag_channels, denoise_config, output_container,
+    day_key, category, preset_key, preset_toml, source_container, source_zarr,
+    sv_clip_max_db,
+) -> str:
+    """Emit ``{day}--{category}--denoise_stats.json`` (schema v1)."""
+    import tempfile
+    from pathlib import Path
+
+    import denoise_diagnostics as diag
+    from experiment_contract import write_json_atomic
+    from oceanstream.echodata.storage import upload_file_to_blob
+
+    payload = diag.finalise(
+        day_key=day_key,
+        category=category,
+        preset_key=preset_key,
+        channels=diag_channels,
+        ping_counts={
+            "source": int(ds.sizes.get("ping_time", 0)),
+            "after_denoise": int(ds_denoised.sizes.get("ping_time", 0)),
+            "after_nan_prune": None,
+            "after_crosstalk_prune": None,
+            "note": "prune counts are filled in by prune_day",
+        },
+        resolved_params=diag.resolve_consumed_params(denoise_config, ds),
+        unused_toml_fields=diag.find_unused_toml_fields(preset_toml) if preset_toml else [],
+        source_reference={
+            "container": source_container,
+            "relpath": source_zarr,
+            "preset_toml": preset_toml,
+            "sv_clip_max_db": sv_clip_max_db,
+        },
+    )
+
+    name = f"{day_key}--{category}--denoise_stats.json"
+    with tempfile.TemporaryDirectory() as tmp:
+        local = write_json_atomic(Path(tmp) / name, payload)
+        upload_file_to_blob(str(local), f"{day_key}/{name}", container=output_container)
+    logger.info("  Saved denoise stats: %s/%s", day_key, name)
+    return f"{day_key}/{name}"
+
+
 def run_denoising(
     client,
     day_zarrs: dict[str, dict[str, str]],
     cfg: PipelineConfig,
     output_container: str,
+    source_container: str | None = None,
 ) -> dict[str, dict[str, str]]:
     """Denoise all day Zarrs. Returns updated day_zarrs with denoised paths."""
     if cfg.skip_denoising:
@@ -780,16 +1020,26 @@ def run_denoising(
                     cruise_id=cfg.cruise_id,
                     save_netcdf=cfg.save_to_netcdf,
                     sv_clip_max_db=cfg.denoise.sv_clip_max_db,
+                    source_container=source_container,
+                    emit_diagnostics=cfg.emit_denoise_diagnostics,
+                    strict=cfg.strict,
+                    preset_key=getattr(cfg, "preset_key", None),
+                    preset_toml=getattr(cfg, "preset_toml", None),
                 )
                 futures[fut] = (day_key, category)
 
+        failures: list[str] = []
         for fut in as_completed(futures):
             day_key, category = futures[fut]
             try:
                 denoised_path = fut.result()
                 denoised_zarrs[day_key][category] = denoised_path
             except Exception as e:
+                failures.append(f"{day_key}/{category}: {e}")
                 logger.warning("Denoise failed for %s/%s: %s", day_key, category, e)
+
+    if failures and cfg.strict:
+        raise StrictModeError("Denoising failed: " + "; ".join(failures))
 
     logger.info("Denoising complete")
     return denoised_zarrs
@@ -970,6 +1220,15 @@ def prune_day(
     pct_total = (total_dropped / n_before * 100) if n_before > 0 else 0.0
     logger.info("  Total dropped: %d/%d pings (%.1f%%)", total_dropped, n_before, pct_total)
 
+    _record_prune_counts(
+        output_container, day_key, category,
+        {
+            "before_prune": int(n_before),
+            "after_nan_prune": int(n_after_nan),
+            "after_crosstalk_prune": int(n_after),
+        },
+    )
+
     if n_after == 0:
         logger.warning("  All pings dropped for %s/%s — keeping unpruned zarr", day_key, category)
         ds.close()
@@ -997,6 +1256,39 @@ def prune_day(
     _release_memory()
 
     return output_zarr
+
+
+def _record_prune_counts(
+    output_container: str, day_key: str, category: str, counts: dict
+) -> None:
+    """Merge stage-6b ping counts into the day's denoise stats JSON, if present.
+
+    Best-effort: the stats file only exists when diagnostics were enabled, and a
+    failure to annotate it must never fail the pipeline.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from oceanstream.echodata.storage import get_zarr_store_uri, upload_file_to_blob
+
+    name = f"{day_key}--{category}--denoise_stats.json"
+    rel = f"{day_key}/{name}"
+    try:
+        local_path = Path(get_zarr_store_uri(rel, container=output_container))
+        if not local_path.is_file():
+            return
+        from experiment_contract import write_json_atomic
+
+        with open(local_path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+        payload.setdefault("ping_counts", {}).update(counts)
+        payload["ping_counts"].pop("note", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_file = write_json_atomic(Path(tmp) / name, payload)
+            upload_file_to_blob(str(tmp_file), rel, container=output_container)
+    except Exception as exc:  # diagnostics annotation is never fatal
+        logger.debug("Could not record prune counts in %s: %s", rel, exc)
 
 
 def run_pruning(
@@ -1287,14 +1579,21 @@ def run_nasc_computation(
                 )
                 futures[fut] = (day_key, category)
 
+        nasc_failures: list[str] = []
         for fut in as_completed(futures):
             day_key, category = futures[fut]
             try:
                 nasc_path = fut.result()
                 if nasc_path:
                     nasc_zarrs[day_key][category] = nasc_path
+                else:
+                    nasc_failures.append(f"{day_key}/{category}: skipped (missing depth or lat/lon)")
             except Exception as e:
+                nasc_failures.append(f"{day_key}/{category}: {e}")
                 logger.warning("NASC failed for %s/%s: %s", day_key, category, e)
+
+    if nasc_failures and cfg.strict:
+        raise StrictModeError("NASC computation failed: " + "; ".join(nasc_failures))
 
     logger.info("NASC computation complete")
     return nasc_zarrs
@@ -1327,43 +1626,92 @@ def generate_echograms_day(
     category: str,
     cruise_id: str,
     colormap: str,
+    qc_windows: list | None = None,
+    colormaps: list | None = None,
+    source_container: str | None = None,
+    pruned_zarr: str | None = None,
 ) -> list[str]:
     """Generate echogram PNGs for a day and upload to blob storage.
 
-    Matches the export76 output pattern per day/category:
-      - source: {day}--{category}_{channel}.png
-      - denoised: {day}--{category}--denoised_{channel}.png
-      - denoised-pruned: {day}--{category}--denoised-pruned_{channel}.png
-        (denoised with noisy pings removed via drop_noisy_pings)
-      - MVBS: {category}--mvbs_{channel}.png
+    Output layout (grouped by processing stage under the day key):
+
+      {day}/raw/{day}--{category}[--{cmap}]_{channel}.png
+      {day}/denoised/{day}--{category}--denoised[--{cmap}]_{channel}.png
+      {day}/pruned/{day}--{category}--denoised-pruned[--{cmap}]_{channel}.png
+      {day}/mvbs/{day}--{category}--mvbs[--{cmap}]_{channel}.png
+
+    The ``--{cmap}`` suffix is only appended when ``colormaps`` requests
+    more than one variant (backward-compatible with single-cmap runs).
+
+    Parameters
+    ----------
+    colormap : str
+        Fallback colormap name (used only when ``colormaps`` is None).
+    colormaps : list, optional
+        List of ``(name, cmap_value)`` tuples resolved via
+        :func:`oceanstream.echodata.plot.colormaps.resolve_colormap_list`.
+        When provided, each echogram is rendered once per colormap and the
+        colormap suffix is appended to the file name. The suffix is skipped
+        when only one colormap is requested (backward compatibility).
+    qc_windows : list, optional
+        Pre-filtered QCWindow list for this day/category. Overlaid as
+        translucent bands on all echograms. See
+        :mod:`oceanstream.echodata.plot.qc` for schema and helpers.
+    source_container : str, optional
+        Container holding ``source_zarr``. Defaults to *output_container*.
+        Split-source runs must pass this or the source panel silently
+        disappears.
+    pruned_zarr : str, optional
+        Path to the stage-6b ``--pruned.zarr``. When given, the pruned panel is
+        rendered from that saved product — the same data MVBS/NASC were
+        computed from — instead of re-deriving a NaN-fraction-only variant that
+        omits cross-talk pruning.
     """
     import gc
 
     from oceanstream.echodata.plot.echogram import plot_and_upload_echograms
 
+    read_container = source_container or output_container
+
+    # Build the (name, cmap_value) list. Suffix only when multiple cmaps.
+    if colormaps is None or len(colormaps) == 0:
+        cmap_variants: list[tuple[str, object]] = [(colormap, colormap)]
+    else:
+        cmap_variants = list(colormaps)
+    include_cmap_suffix = len(cmap_variants) > 1
+
+    def _fname(base: str, cmap_name: str) -> str:
+        return f"{base}--{cmap_name}" if include_cmap_suffix else base
+
     all_files = []
 
-    # Source Sv echograms
+    # Source Sv echograms — the pre-denoise reference panel. This is calibrated
+    # Sv, not raw power, so it is labelled "source Sv (pre-denoise)".
     try:
-        logger.info("  Loading source zarr into memory: %s", source_zarr)
-        ds = _load_zarr_to_memory(source_zarr, output_container)
-        files = plot_and_upload_echograms(
-            ds,
-            cruise_id=cruise_id,
-            file_base_name=f"{day_key}--{category}",
-            save_to_blobstorage=True,
-            upload_path=day_key,
-            container_name=output_container,
-            create_interactive_pages=False,
-            cmap=colormap,
-            plot_var="Sv",
-            title_template=f"{day_key} ({category})" + " | {channel_label}",
-        )
-        all_files.extend(files)
+        logger.info("  Loading source zarr into memory: %s/%s", read_container, source_zarr)
+        ds = _load_zarr_to_memory(source_zarr, read_container)
+        for cmap_name, cmap in cmap_variants:
+            files = plot_and_upload_echograms(
+                ds,
+                cruise_id=cruise_id,
+                file_base_name=_fname(f"{day_key}--{category}", cmap_name),
+                save_to_blobstorage=True,
+                upload_path=f"{day_key}/raw",
+                container_name=output_container,
+                create_interactive_pages=False,
+                cmap=cmap,
+                plot_var="Sv",
+                title_template=(
+                    f"{day_key} ({category}, source Sv (pre-denoise), cmap: {cmap_name})"
+                    " | {channel_label}"
+                ),
+                qc_windows=qc_windows,
+            )
+            all_files.extend(files)
+            logger.info("  Source echograms [%s]: %d files", cmap_name, len(files))
         ds.close()
         del ds
         gc.collect()
-        logger.info("  Source echograms: %d files", len(files))
     except Exception as e:
         logger.warning("Source echogram failed for %s/%s: %s", day_key, category, e)
 
@@ -1374,46 +1722,22 @@ def generate_echograms_day(
             ds = _load_zarr_to_memory(denoised_zarr, output_container)
 
             # --- denoised echograms ---
-            files = plot_and_upload_echograms(
-                ds,
-                cruise_id=cruise_id,
-                file_base_name=f"{day_key}--{category}--denoised",
-                save_to_blobstorage=True,
-                upload_path=day_key,
-                container_name=output_container,
-                create_interactive_pages=False,
-                cmap=colormap,
-                plot_var="Sv",
-                title_template=f"{day_key} ({category}, denoised)" + " | {channel_label}",
-            )
-            all_files.extend(files)
-            logger.info("  Denoised echograms: %d files", len(files))
-
-            # --- denoised-pruned echograms (reuse loaded dataset) ---
-            try:
-                from oceanstream.echodata.denoise import drop_noisy_pings
-
-                ds_pruned = drop_noisy_pings(ds, drop_threshold=0.8)
-                if ds_pruned.sizes.get("ping_time", 0) == 0:
-                    logger.info("  Denoised-pruned: all pings dropped — skipping echogram")
-                else:
-                    files = plot_and_upload_echograms(
-                        ds_pruned,
-                        cruise_id=cruise_id,
-                        file_base_name=f"{day_key}--{category}--denoised-pruned",
-                        save_to_blobstorage=True,
-                        upload_path=day_key,
-                        container_name=output_container,
-                        create_interactive_pages=False,
-                        cmap=colormap,
-                        plot_var="Sv",
-                        title_template=f"{day_key} ({category}, pruned)" + " | {channel_label}",
-                    )
-                    all_files.extend(files)
-                    logger.info("  Denoised-pruned echograms: %d files", len(files))
-                del ds_pruned
-            except Exception as e:
-                logger.warning("Denoised-pruned echogram failed for %s/%s: %s", day_key, category, e)
+            for cmap_name, cmap in cmap_variants:
+                files = plot_and_upload_echograms(
+                    ds,
+                    cruise_id=cruise_id,
+                    file_base_name=_fname(f"{day_key}--{category}--denoised", cmap_name),
+                    save_to_blobstorage=True,
+                    upload_path=f"{day_key}/denoised",
+                    container_name=output_container,
+                    create_interactive_pages=False,
+                    cmap=cmap,
+                    plot_var="Sv",
+                    title_template=f"{day_key} ({category}, denoised, cmap: {cmap_name})" + " | {channel_label}",
+                    qc_windows=qc_windows,
+                )
+                all_files.extend(files)
+                logger.info("  Denoised echograms [%s]: %d files", cmap_name, len(files))
 
             ds.close()
             del ds
@@ -1421,32 +1745,219 @@ def generate_echograms_day(
         except Exception as e:
             logger.warning("Denoised echogram failed for %s/%s: %s", day_key, category, e)
 
+    # --- pruned echograms — rendered from the saved stage-6b product ---
+    if pruned_zarr:
+        try:
+            logger.info("  Loading pruned zarr into memory: %s", pruned_zarr)
+            ds_pruned = _load_zarr_to_memory(pruned_zarr, output_container)
+            if ds_pruned.sizes.get("ping_time", 0) == 0:
+                logger.info("  Pruned zarr has no pings — skipping echogram")
+            else:
+                for cmap_name, cmap in cmap_variants:
+                    files = plot_and_upload_echograms(
+                        ds_pruned,
+                        cruise_id=cruise_id,
+                        file_base_name=_fname(f"{day_key}--{category}--denoised-pruned", cmap_name),
+                        save_to_blobstorage=True,
+                        upload_path=f"{day_key}/pruned",
+                        container_name=output_container,
+                        create_interactive_pages=False,
+                        cmap=cmap,
+                        plot_var="Sv",
+                        title_template=f"{day_key} ({category}, pruned, cmap: {cmap_name})" + " | {channel_label}",
+                        qc_windows=qc_windows,
+                    )
+                    all_files.extend(files)
+                    logger.info("  Pruned echograms [%s]: %d files", cmap_name, len(files))
+            ds_pruned.close()
+            del ds_pruned
+            gc.collect()
+        except Exception as e:
+            logger.warning("Pruned echogram failed for %s/%s: %s", day_key, category, e)
+
     # MVBS echograms
     if mvbs_zarr:
         try:
             logger.info("  Loading MVBS zarr into memory: %s", mvbs_zarr)
             ds = _load_zarr_to_memory(mvbs_zarr, output_container)
-            files = plot_and_upload_echograms(
-                ds,
-                cruise_id=cruise_id,
-                file_base_name=f"{category}--mvbs",
-                save_to_blobstorage=True,
-                upload_path=day_key,
-                container_name=output_container,
-                create_interactive_pages=False,
-                cmap=colormap,
-                plot_var="Sv",
-                title_template=f"{day_key} ({category})" + " | MVBS | {channel_label}",
-            )
-            all_files.extend(files)
+            for cmap_name, cmap in cmap_variants:
+                files = plot_and_upload_echograms(
+                    ds,
+                    cruise_id=cruise_id,
+                    file_base_name=_fname(f"{day_key}--{category}--mvbs", cmap_name),
+                    save_to_blobstorage=True,
+                    upload_path=f"{day_key}/mvbs",
+                    container_name=output_container,
+                    create_interactive_pages=False,
+                    cmap=cmap,
+                    plot_var="Sv",
+                    title_template=f"{day_key} ({category}, cmap: {cmap_name})" + " | MVBS | {channel_label}",
+                    qc_windows=qc_windows,
+                )
+                all_files.extend(files)
+                logger.info("  MVBS echograms [%s]: %d files", cmap_name, len(files))
             ds.close()
             del ds
             gc.collect()
-            logger.info("  MVBS echograms: %d files", len(files))
         except Exception as e:
             logger.warning("MVBS echogram failed for %s/%s: %s", day_key, category, e)
 
     return all_files
+
+
+def generate_combined_echograms_day(
+    sv_zarrs_by_category: dict[str, str],
+    mvbs_zarrs_by_category: dict[str, str],
+    output_container: str,
+    day_key: str,
+    cruise_id: str,
+    colormaps: list,
+    qc_windows: list | None = None,
+    sv_variant_label: str = "denoised-pruned",
+) -> list[str]:
+    """Generate combined long+short pulse 24h echograms for a single day.
+
+    Produces one PNG per (input variant, colormap) combination for the
+    38 kHz channel merged across short_pulse and long_pulse zarrs:
+
+      - {day}--combined-38kHz--{sv_variant_label}--{cmap}.png
+      - {day}--combined-38kHz--MVBS--{cmap}.png
+
+    A pulse-mode indicator bar (blue=long, orange=short) is drawn below the
+    main echogram, showing which mode was active at each ping. QC overlays
+    are applied to the main panel using the same colors as the per-pulse
+    echograms.
+
+    Uploads PNGs to Azure Blob (matching ``plot_and_upload_echograms``).
+    """
+    import gc
+    import shutil
+    from pathlib import Path
+
+    from oceanstream.echodata.plot.combined import (
+        combine_38khz_day,
+        render_combined_echogram,
+    )
+
+    all_uploaded: list[str] = []
+
+    if not colormaps:
+        return all_uploaded
+
+    variants: list[tuple[str, dict[str, str]]] = []
+    if sv_zarrs_by_category:
+        variants.append((sv_variant_label, sv_zarrs_by_category))
+    if mvbs_zarrs_by_category:
+        variants.append(("MVBS", mvbs_zarrs_by_category))
+    if not variants:
+        logger.info("Combined: no denoised or MVBS zarrs available for %s", day_key)
+        return all_uploaded
+
+    tmp_dir = Path(f"/tmp/osechograms/{cruise_id or 'default'}/combined-{day_key}")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    for variant_label, zarrs_by_cat in variants:
+        # Load both pulse-mode zarrs into memory (matches per-category pattern)
+        loaded: dict[str, object] = {}
+        for cat in ("short_pulse", "long_pulse"):
+            path = zarrs_by_cat.get(cat)
+            if not path:
+                continue
+            try:
+                loaded[cat] = _load_zarr_to_memory(path, output_container)
+            except Exception as exc:
+                logger.warning(
+                    "Combined: failed to load %s %s for %s: %s",
+                    variant_label, cat, day_key, exc,
+                )
+
+        if not loaded:
+            continue
+
+        combined = combine_38khz_day(loaded)
+
+        # Free the per-category datasets now that we've built the combined one
+        for ds in loaded.values():
+            try:
+                ds.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        del loaded
+        gc.collect()
+
+        if combined is None:
+            logger.info(
+                "Combined: no 38 kHz channel in %s zarrs for %s — skipping",
+                variant_label, day_key,
+            )
+            continue
+
+        logger.info(
+            "  Combined %s: %d pings, modes: %s",
+            variant_label, combined.n_pings,
+            "+".join(combined.pulse_modes_present),
+        )
+
+        # Render one PNG per colormap
+        rendered_paths: list[Path] = []
+        for cmap_name, cmap_value in colormaps:
+            try:
+                out = render_combined_echogram(
+                    combined,
+                    day_key=day_key,
+                    variant_label=variant_label,
+                    cmap_name=cmap_name,
+                    cmap=cmap_value,
+                    output_dir=tmp_dir,
+                    qc_windows=qc_windows,
+                )
+                if out is not None:
+                    rendered_paths.append(out)
+                    logger.info(
+                        "  Combined echogram [%s / %s]: %s",
+                        variant_label, cmap_name, out.name,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Combined render failed (%s / %s / %s): %s",
+                    day_key, variant_label, cmap_name, exc,
+                )
+
+        # Release combined dataset before uploading
+        try:
+            combined.dataset.close()
+        except Exception:
+            pass
+        del combined
+        gc.collect()
+
+        # Upload rendered PNGs
+        if rendered_paths:
+            try:
+                from oceanstream.echodata.storage import upload_file_to_blob
+
+                for p in rendered_paths:
+                    blob_name = f"{day_key}/combined-38kHz/{p.name}"
+                    upload_file_to_blob(
+                        str(p), blob_name, output_container,
+                    )
+                    all_uploaded.append(blob_name)
+            except Exception as exc:
+                # Local-save mode without Azure creds falls through here.
+                # PNGs remain in tmp_dir; caller may inspect them if needed.
+                logger.info(
+                    "Combined: skipping Azure upload (%s); PNGs in %s",
+                    exc, tmp_dir,
+                )
+                all_uploaded.extend([str(p) for p in rendered_paths])
+
+    # Best-effort cleanup — leave dir if upload above failed and we want the files
+    try:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return all_uploaded
 
 
 def generate_nasc_echograms_day(
@@ -1515,7 +2026,7 @@ def generate_nasc_echograms_day(
         plt.tight_layout()
 
         fname1 = f"{base}--nasc{ch_suffix}.png"
-        out1 = _save_echogram_png(fig, fname1, day_key, output_container, cruise_id)
+        out1 = _save_echogram_png(fig, fname1, day_key, output_container, cruise_id, subfolder="nasc")
         all_files.append(out1)
         plt.close(fig)
 
@@ -1535,7 +2046,7 @@ def generate_nasc_echograms_day(
         plt.tight_layout()
 
         fname2 = f"{base}--nasc-integrated{ch_suffix}.png"
-        out2 = _save_echogram_png(fig, fname2, day_key, output_container, cruise_id)
+        out2 = _save_echogram_png(fig, fname2, day_key, output_container, cruise_id, subfolder="nasc")
         all_files.append(out2)
         plt.close(fig)
 
@@ -1547,8 +2058,16 @@ def generate_nasc_echograms_day(
 
 def _save_echogram_png(
     fig, filename: str, day_key: str, container: str, cruise_id: str,
+    *, subfolder: str | None = None,
 ) -> str:
     """Save a matplotlib figure and upload to blob storage (or local output).
+
+    Parameters
+    ----------
+    subfolder : str, optional
+        Optional subfolder under ``{day_key}/`` for organising echograms by
+        processing stage (e.g. ``"nasc"``, ``"raw"``, ``"denoised"``).
+        Defaults to no subfolder (files land directly under ``{day_key}/``).
 
     Returns the local file path.
     """
@@ -1560,7 +2079,10 @@ def _save_echogram_png(
     local_path = tmp_dir / filename
     fig.savefig(str(local_path), dpi=150, bbox_inches="tight")
 
-    blob_path = f"{day_key}/{filename}"
+    if subfolder:
+        blob_path = f"{day_key}/{subfolder}/{filename}"
+    else:
+        blob_path = f"{day_key}/{filename}"
     try:
         from oceanstream.echodata.storage import upload_file_to_blob
         upload_file_to_blob(str(local_path), blob_path, container=container)
@@ -1572,7 +2094,15 @@ def _save_echogram_png(
 
 
 def _count_existing_echograms(container: str, day_key: str, category: str) -> int:
-    """Return the number of PNG echograms already uploaded for a day/category."""
+    """Return the number of PNG echograms already uploaded for a day/category.
+
+    Scans both the new nested layout (``{day}/raw/``, ``{day}/denoised/``,
+    ``{day}/pruned/``, ``{day}/mvbs/``) and the legacy flat layout
+    (``{day}/{day}--{category}--*.png``) so partial reruns don't
+    re-render already-generated files. Combined and NASC subfolders are
+    intentionally NOT counted here — those are separate stages with their
+    own submit paths.
+    """
     import os
 
     try:
@@ -1584,11 +2114,27 @@ def _count_existing_echograms(container: str, day_key: str, category: str) -> in
         )
         svc = BlobServiceClient.from_connection_string(conn)
         cc = svc.get_container_client(container)
-        prefix = f"{day_key}/{day_key}--{category}"
-        pngs = [b.name for b in cc.list_blobs(name_starts_with=prefix) if b.name.endswith(".png")]
-        # Also count MVBS echograms (different naming pattern)
-        mvbs_prefix = f"{day_key}/{category}--mvbs"
-        pngs += [b.name for b in cc.list_blobs(name_starts_with=mvbs_prefix) if b.name.endswith(".png")]
+
+        pngs: list[str] = []
+        # New nested layout: {day}/{stage}/{day}--{category}--...png
+        for stage in ("raw", "denoised", "pruned", "mvbs"):
+            stage_prefix = f"{day_key}/{stage}/{day_key}--{category}"
+            pngs += [
+                b.name for b in cc.list_blobs(name_starts_with=stage_prefix)
+                if b.name.endswith(".png")
+            ]
+        # Legacy flat layout: {day}/{day}--{category}--*.png (pre-refactor)
+        legacy_prefix = f"{day_key}/{day_key}--{category}"
+        pngs += [
+            b.name for b in cc.list_blobs(name_starts_with=legacy_prefix)
+            if b.name.endswith(".png") and "/" not in b.name[len(f"{day_key}/"):]
+        ]
+        # Legacy MVBS naming: {day}/{category}--mvbs...
+        legacy_mvbs = f"{day_key}/{category}--mvbs"
+        pngs += [
+            b.name for b in cc.list_blobs(name_starts_with=legacy_mvbs)
+            if b.name.endswith(".png")
+        ]
         return len(pngs)
     except Exception:
         return 0
@@ -1602,6 +2148,8 @@ def run_echogram_generation(
     cfg: PipelineConfig,
     output_container: str,
     nasc_zarrs: dict[str, dict[str, str]] | None = None,
+    source_container: str | None = None,
+    pruned_day_zarrs: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Generate echograms for all days."""
     if cfg.skip_echograms:
@@ -1609,8 +2157,37 @@ def run_echogram_generation(
         return
 
     chunks = cfg.chunks.as_dict()
+    pruned_day_zarrs = pruned_day_zarrs or {}
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Resolve the list of colormaps once. Falls back to [cfg.colormap] when no
+    # multi-colormap list is configured, so the filename layout matches the
+    # legacy single-colormap behaviour.
+    try:
+        from oceanstream.echodata.plot.colormaps import resolve_colormap_list
+
+        cmap_names = getattr(cfg, "colormaps", None) or [cfg.colormap]
+        cmap_variants = resolve_colormap_list(cmap_names)
+    except Exception as exc:
+        logger.warning("Colormap resolution failed (%s); falling back to %s", exc, cfg.colormap)
+        cmap_variants = [(cfg.colormap, cfg.colormap)]
+    if len(cmap_variants) > 1:
+        logger.info(
+            "Echogram colormaps: %s",
+            ", ".join(name for name, _ in cmap_variants),
+        )
+
+    # Load QC windows once for the whole run (if a QC file is configured).
+    # Filtering per day/category happens inside the submit loop below.
+    all_qc_windows: list = []
+    if getattr(cfg, "qc_file", None):
+        try:
+            from oceanstream.echodata.plot.qc import load_qc_windows
+
+            all_qc_windows = load_qc_windows(cfg.qc_file)
+        except Exception as exc:
+            logger.warning("Failed to load QC file %s: %s", cfg.qc_file, exc)
 
     # Build union of all day/category combos across source, denoised, and
     # MVBS zarrs so we don't skip combos that are missing a source zarr.
@@ -1638,6 +2215,7 @@ def run_echogram_generation(
                 source_zarr = source_day_zarrs.get(day_key, {}).get(category)
                 denoised_zarr = denoised_day_zarrs.get(day_key, {}).get(category)
                 mvbs_zarr = mvbs_zarrs.get(day_key, {}).get(category)
+                pruned_zarr = pruned_day_zarrs.get(day_key, {}).get(category)
 
                 # Use denoised as source fallback when base source zarr is missing
                 if not source_zarr and denoised_zarr:
@@ -1646,7 +2224,30 @@ def run_echogram_generation(
 
                 if not source_zarr:
                     logger.warning("  No source or denoised zarr for %s/%s — skipping", day_key, category)
+                    if cfg.strict:
+                        raise StrictModeError(
+                            f"No source Sv zarr for {day_key}/{category} — the "
+                            "pre-denoise echogram panel would be missing"
+                        )
                     continue
+
+                # Filter QC windows for this day/category (channel is left as *
+                # here — channel-specific filtering happens inside plot_sv_channel
+                # via the channel_label passed through prepare_channel_da).
+                day_qc: list = []
+                if all_qc_windows:
+                    from oceanstream.echodata.plot.qc import filter_qc_windows
+
+                    day_qc = filter_qc_windows(
+                        all_qc_windows,
+                        date=day_key,
+                        category=category,
+                    )
+                    if day_qc:
+                        logger.info(
+                            "  %s/%s: %d QC window(s) to overlay",
+                            day_key, category, len(day_qc),
+                        )
 
                 fut = pool.submit(
                     generate_echograms_day,
@@ -1659,16 +2260,79 @@ def run_echogram_generation(
                     category=category,
                     cruise_id=cfg.cruise_id,
                     colormap=cfg.colormap,
+                    qc_windows=day_qc or None,
+                    colormaps=cmap_variants,
+                    source_container=source_container,
+                    pruned_zarr=pruned_zarr,
                 )
                 futures[fut] = (day_key, category)
 
+        echogram_failures: list[str] = []
         for fut in as_completed(futures):
             day_key, category = futures[fut]
             try:
                 result = fut.result()
                 logger.info("  Echograms completed for %s/%s: %d files", day_key, category, len(result))
             except Exception as e:
+                echogram_failures.append(f"{day_key}/{category}: {e}")
                 logger.warning("  Echogram failed for %s/%s: %s", day_key, category, e)
+
+    if echogram_failures and cfg.strict:
+        raise StrictModeError("Echogram generation failed: " + "; ".join(echogram_failures))
+
+    # ── Combined long+short-pulse 24h echograms (38 kHz merged) ───
+    if not getattr(cfg, "skip_combined_echograms", False):
+        # Prefer the stage-6b product so the combined panel matches what MVBS
+        # and NASC were computed from; fall back to stage 5 when pruning is off.
+        if pruned_day_zarrs:
+            sv_day_zarrs, sv_variant_label = pruned_day_zarrs, "denoised-pruned"
+        else:
+            sv_day_zarrs, sv_variant_label = denoised_day_zarrs, "denoised"
+        combined_days = sorted(set(sv_day_zarrs) | set(mvbs_zarrs))
+        if combined_days:
+            logger.info(
+                "Combined 38 kHz echograms: %d day(s), %d colormap(s), Sv variant '%s'",
+                len(combined_days), len(cmap_variants), sv_variant_label,
+            )
+            futures = {}
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                for day_key in combined_days:
+                    sv_by_cat = sv_day_zarrs.get(day_key, {})
+                    mvbs_by_cat = mvbs_zarrs.get(day_key, {})
+                    # Only submit if we have zarrs for at least one pulse mode
+                    if not sv_by_cat and not mvbs_by_cat:
+                        continue
+
+                    # Filter QC windows once per day (categories filter is "*"
+                    # so we get the union across pulse modes).
+                    day_qc: list = []
+                    if all_qc_windows:
+                        from oceanstream.echodata.plot.qc import filter_qc_windows
+
+                        day_qc = filter_qc_windows(all_qc_windows, date=day_key)
+
+                    fut = pool.submit(
+                        generate_combined_echograms_day,
+                        sv_zarrs_by_category=sv_by_cat,
+                        mvbs_zarrs_by_category=mvbs_by_cat,
+                        output_container=output_container,
+                        day_key=day_key,
+                        cruise_id=cfg.cruise_id,
+                        colormaps=cmap_variants,
+                        qc_windows=day_qc or None,
+                        sv_variant_label=sv_variant_label,
+                    )
+                    futures[fut] = day_key
+
+                for fut in as_completed(futures):
+                    day_key = futures[fut]
+                    try:
+                        result = fut.result()
+                        logger.info(
+                            "  Combined echograms for %s: %d files", day_key, len(result),
+                        )
+                    except Exception as e:
+                        logger.warning("  Combined echogram failed for %s: %s", day_key, e)
 
     # ── NASC echograms (also parallelized) ────────────────────────
     if nasc_zarrs:
