@@ -193,7 +193,7 @@ def _resolve(zarr_path: str, container: Optional[str]) -> Path:
 class _LocalFS:
     """Minimal fsspec-like filesystem for local listing (used by _reconstruct_day_zarrs)."""
 
-    def ls(self, path: str, detail: bool = False) -> list[str]:
+    def ls(self, path: str, detail: bool = False) -> list:
         local = _OUTPUT_ROOT / path
         if not local.exists():
             return []
@@ -201,7 +201,16 @@ class _LocalFS:
         for p in sorted(local.iterdir()):
             # Return path relative to _OUTPUT_ROOT (matches Azure's container/... format)
             rel = str(p.relative_to(_OUTPUT_ROOT))
-            items.append(rel)
+            if detail:
+                items.append(
+                    {
+                        "name": rel,
+                        "type": "directory" if p.is_dir() else "file",
+                        "size": p.stat().st_size if p.is_file() else 0,
+                    }
+                )
+            else:
+                items.append(rel)
         return items
 
 

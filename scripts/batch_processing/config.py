@@ -194,6 +194,21 @@ class PruneParams:
 
 
 @dataclass
+class S3Config:
+    """S3-compatible object storage settings (CloudFerro / MinIO / AWS).
+
+    Credentials are never held here — they come from the environment
+    (``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY``) so they can be injected
+    from a K8s secret and never end up in a config dump or a Dask payload.
+    """
+
+    bucket: str = ""
+    prefix: str = ""          # optional key prefix inside the bucket
+    endpoint_url: str = ""    # empty → AWS_S3_ENDPOINT / S3_ENDPOINT_URL
+    region: str = ""          # empty → AWS_DEFAULT_REGION
+
+
+@dataclass
 class RawConversionConfig:
     """Settings for converting raw EK80 files to Sv datasets.
 
@@ -204,6 +219,10 @@ class RawConversionConfig:
     # Azure File Share where raw .raw files are stored
     file_share_name: str = "saildroneraw"
     file_share_path: str = "DATA"
+
+    # Directory holding raw .raw files when ``raw_source == "local"``.
+    # Read-only — files here are never deleted after conversion.
+    local_source_dir: Optional[Path] = None
 
     # Calibration
     calibration_file: str = ""  # path to calibration_values.xlsx
@@ -261,6 +280,13 @@ class PipelineConfig:
     gps_container: str = ""  # Azure blob container for GPS GeoParquet (e.g. "gpsdata")
     gps_blob_path: str = ""  # path within gps_container (default: {cruise_id}/)
     file_list_file: Optional[str] = None  # path to pre-generated file list JSON
+
+    # ── Storage backend ──────────────────────────────────────────
+    storage_backend: str = "azure"  # azure | local | s3
+    s3: S3Config = field(default_factory=S3Config)
+    # Where stage 1 lists raw .raw files from: the Azure File Share or a
+    # mounted directory (``raw.local_source_dir``).
+    raw_source: str = "fileshare"  # fileshare | local
 
     # ── Date range (for testing subsets) ─────────────────────────
     start_date: Optional[datetime] = None

@@ -300,7 +300,7 @@ def _compute_one_nasc(args: tuple[str, str, str, str]) -> tuple[str, str, bool, 
         wlog.info("Opening denoised zarr...")
         # Load eagerly (chunks=None) for fast numpy operations
         ds = open_sv_from_azure(
-            f"{day_key}/{day_key}--{category}--denoised.zarr",
+            zarr_path=f"{day_key}/{day_key}--{category}--denoised.zarr",
             container=output_container,
             chunks=None,  # eager load — numpy arrays, no dask
         )
