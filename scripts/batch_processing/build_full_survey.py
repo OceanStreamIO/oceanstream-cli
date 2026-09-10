@@ -249,7 +249,7 @@ def _open_azure_zarr(zarr_path: str, container: str) -> xr.Dataset:
     so that ``local_storage.patch_storage()`` is respected.
     """
     from oceanstream.echodata.storage import open_sv_from_azure
-    return open_sv_from_azure(zarr_path, container=container, chunks=CHUNKS)
+    return open_sv_from_azure(zarr_path=zarr_path, container=container, chunks=CHUNKS)
 
 
 def _save_to_azure(ds: xr.Dataset, zarr_path: str, container: str) -> None:

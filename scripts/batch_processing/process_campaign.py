@@ -190,7 +190,30 @@ def setup_dask_client(cfg: PipelineConfig):
         client = Client(cluster)
 
     logger.info("Dask dashboard: %s", client.dashboard_link)
+    _register_storage_plugin(client, cfg)
     return client
+
+
+def _register_storage_plugin(client, cfg: PipelineConfig) -> None:
+    """Patch storage on every Dask worker when a non-Azure backend is in use.
+
+    Worker tasks import the storage functions inside their own process, so the
+    monkeypatch applied in the driver does not reach them.
+    """
+    if getattr(cfg, "storage_backend", "azure") != "s3":
+        return
+
+    from s3_storage import S3StoragePlugin
+
+    plugin = S3StoragePlugin(
+        cfg.s3.bucket,
+        cfg.s3.prefix,
+        endpoint_url=cfg.s3.endpoint_url or None,
+        region=cfg.s3.region or None,
+    )
+    register = getattr(client, "register_plugin", None) or client.register_worker_plugin
+    register(plugin)
+    logger.info("Registered S3 storage plugin on Dask workers")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2102,42 +2125,50 @@ def _count_existing_echograms(container: str, day_key: str, category: str) -> in
     re-render already-generated files. Combined and NASC subfolders are
     intentionally NOT counted here — those are separate stages with their
     own submit paths.
+
+    Listing goes through ``get_azure_filesystem()`` so local- and S3-backed
+    runs see the same picture as Azure ones.
     """
-    import os
+    from oceanstream.echodata.storage import get_azure_filesystem
 
     try:
-        from azure.storage.blob import BlobServiceClient
-
-        conn = os.environ.get(
-            "AZURE_STORAGE_CONNECTION_STRING",
-            os.environ.get("AZ_SOURCE_CONNECTION_STRING", ""),
-        )
-        svc = BlobServiceClient.from_connection_string(conn)
-        cc = svc.get_container_client(container)
-
-        pngs: list[str] = []
-        # New nested layout: {day}/{stage}/{day}--{category}--...png
-        for stage in ("raw", "denoised", "pruned", "mvbs"):
-            stage_prefix = f"{day_key}/{stage}/{day_key}--{category}"
-            pngs += [
-                b.name for b in cc.list_blobs(name_starts_with=stage_prefix)
-                if b.name.endswith(".png")
-            ]
-        # Legacy flat layout: {day}/{day}--{category}--*.png (pre-refactor)
-        legacy_prefix = f"{day_key}/{day_key}--{category}"
-        pngs += [
-            b.name for b in cc.list_blobs(name_starts_with=legacy_prefix)
-            if b.name.endswith(".png") and "/" not in b.name[len(f"{day_key}/"):]
-        ]
-        # Legacy MVBS naming: {day}/{category}--mvbs...
-        legacy_mvbs = f"{day_key}/{category}--mvbs"
-        pngs += [
-            b.name for b in cc.list_blobs(name_starts_with=legacy_mvbs)
-            if b.name.endswith(".png")
-        ]
-        return len(pngs)
+        fs = get_azure_filesystem()
     except Exception:
         return 0
+
+    def _file_names(directory: str) -> list[str]:
+        """File names directly inside *directory* (empty on any failure)."""
+        try:
+            entries = fs.ls(f"{container}/{directory}", detail=True)
+        except Exception:
+            return []
+        names = []
+        for entry in entries:
+            if isinstance(entry, dict):
+                if entry.get("type") == "directory":
+                    continue
+                entry = entry.get("name", "")
+            names.append(Path(str(entry)).name)
+        return names
+
+    count = 0
+    # New nested layout: {day}/{stage}/{day}--{category}--...png
+    for stage in ("raw", "denoised", "pruned", "mvbs"):
+        count += sum(
+            1 for n in _file_names(f"{day_key}/{stage}")
+            if n.startswith(f"{day_key}--{category}") and n.endswith(".png")
+        )
+    flat = _file_names(day_key)
+    # Legacy flat layout: {day}/{day}--{category}--*.png (pre-refactor)
+    count += sum(
+        1 for n in flat
+        if n.startswith(f"{day_key}--{category}") and n.endswith(".png")
+    )
+    # Legacy MVBS naming: {day}/{category}--mvbs...
+    count += sum(
+        1 for n in flat if n.startswith(f"{category}--mvbs") and n.endswith(".png")
+    )
+    return count
 
 
 def run_echogram_generation(

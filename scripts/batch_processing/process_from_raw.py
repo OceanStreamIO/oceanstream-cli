@@ -134,12 +134,73 @@ def _parse_raw_datetime(filename: str) -> Optional[datetime]:
     return datetime(y, m, d, hh, mm, ss)
 
 
+def _within_date_range(dt: Optional[datetime], cfg: PipelineConfig) -> bool:
+    """Whether *dt* falls inside the configured range (undated files always pass)."""
+    if dt is None:
+        return True
+    if cfg.start_date and dt < cfg.start_date:
+        return False
+    if cfg.end_date:
+        end = cfg.end_date
+        # If end is midnight, extend to end of day
+        if end.hour == 0 and end.minute == 0 and end.second == 0:
+            from datetime import timedelta
+
+            end = end + timedelta(days=1) - timedelta(seconds=1)
+        if dt > end:
+            return False
+    return True
+
+
+def _discover_local_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
+    """List raw EK80 files from a mounted directory, filtered by date range.
+
+    The first tuple element is the path relative to ``raw.local_source_dir``,
+    matching how the file-share branch keys ``download_all_raw_files``.
+    """
+    root = cfg.raw.local_source_dir
+    if root is None:
+        raise ValueError("raw_source='local' requires raw.local_source_dir to be set.")
+    root = Path(root)
+    if not root.is_dir():
+        raise ValueError(f"Raw directory does not exist: {root}")
+
+    logger.info("Listing raw files from local directory %s", root)
+    files_list: list[tuple[str, dict]] = []
+    for path in root.rglob("*.raw"):
+        if not path.is_file():
+            continue
+        dt = _parse_raw_datetime(path.name)
+        if not _within_date_range(dt, cfg):
+            continue
+        rel = str(path.relative_to(root))
+        files_list.append((
+            rel,
+            {
+                "file_name": path.stem,
+                "raw_filename": rel,
+                "file_start_time": dt.isoformat() if dt else None,
+                "file_size": path.stat().st_size,
+            },
+        ))
+
+    files_list.sort(key=lambda x: x[1].get("file_start_time") or "")
+    logger.info("After date filter: %d raw files", len(files_list))
+    return files_list
+
+
 def discover_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
-    """List raw EK80 files from Azure File Share, filtered by date range.
+    """List raw EK80 files, filtered by date range.
+
+    Reads from the Azure File Share, or from a mounted directory when
+    ``cfg.raw_source == "local"``.
 
     Returns a list of (filename, record_dict) tuples compatible with
     group_files_by_day() and the downstream processing stages.
     """
+    if getattr(cfg, "raw_source", "fileshare") == "local":
+        return _discover_local_raw_files(cfg)
+
     from azure.storage.fileshare import ShareServiceClient
 
     conn_str = os.environ.get(
@@ -177,19 +238,8 @@ def discover_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
         fname = item["name"]
         dt = _parse_raw_datetime(fname)
 
-        # Date range filter
-        if dt:
-            if cfg.start_date and dt < cfg.start_date:
-                continue
-            if cfg.end_date:
-                end = cfg.end_date
-                # If end is midnight, extend to end of day
-                if end.hour == 0 and end.minute == 0 and end.second == 0:
-                    from datetime import timedelta
-
-                    end = end + timedelta(days=1) - timedelta(seconds=1)
-                if dt > end:
-                    continue
+        if not _within_date_range(dt, cfg):
+            continue
 
         rec = {
             "file_name": Path(fname).stem,
@@ -279,13 +329,27 @@ def download_all_raw_files(
 
     Creates a single Azure FileShare directory client and shares it
     across all download threads to avoid per-file client overhead.
+    With ``raw_source == "local"`` nothing is copied — the mounted paths
+    are returned as-is.
 
     Returns dict mapping raw_filename → local_path.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    max_workers = min(cfg.raw.download_workers, len(files_list))
     local_paths: dict[str, Path] = {}
+
+    if getattr(cfg, "raw_source", "fileshare") == "local":
+        root = Path(cfg.raw.local_source_dir)
+        for raw_filename, _rec in files_list:
+            path = root / raw_filename
+            if path.exists():
+                local_paths[raw_filename] = path
+            else:
+                logger.error("Raw file missing from %s: %s", root, raw_filename)
+        logger.info("Using %d/%d local raw files", len(local_paths), len(files_list))
+        return local_paths
+
+    max_workers = min(cfg.raw.download_workers, len(files_list))
 
     # Create a shared directory client once for all downloads
     from azure.storage.fileshare import ShareServiceClient
@@ -427,8 +491,9 @@ def process_raw_files(
                 logger.error("  FAILED: %s — %s", rec["file_name"], e)
                 results.append(("unknown", "", rec["file_name"]))
             finally:
-                # Delete raw file after conversion to free disk space
-                if not cfg.keep_raw:
+                # Delete raw file after conversion to free disk space.
+                # Never touch files on a read-only local raw mount.
+                if not cfg.keep_raw and getattr(cfg, "raw_source", "fileshare") != "local":
                     local_paths[raw_filename].unlink(missing_ok=True)
 
     successful = sum(1 for _, zp, _ in results if zp)
@@ -1312,6 +1377,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             )
 
             # Stage 2: Download + convert to EchoData Zarr
+            if not _stage_enabled(2):
+                logger.info("Stopping after stage 1 (--stop-after-stage)")
+                return
             t0 = time.time()
             file_results = process_raw_files(files_list, cfg, echodata_dir)
             logger.info(
@@ -1320,6 +1388,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             )
 
             # Stage 3: Combine EchoData per day+category
+            if not _stage_enabled(3):
+                logger.info("Stopping after stage 2 (--stop-after-stage)")
+                return
             t0 = time.time()
             day_echodata = run_echodata_combine(
                 file_results, files_list, cfg, echodata_dir,
@@ -1330,6 +1401,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             )
 
             # Stage 4: Compute Sv + add_depth + merge GPS
+            if not _stage_enabled(4):
+                logger.info("Stopping after stage 3 (--stop-after-stage)")
+                return
             t0 = time.time()
             source_day_zarrs = run_sv_computation(
                 day_echodata, files_list, cfg, output_container,
@@ -1349,6 +1423,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                 logger.info("Cleaned up %d remaining intermediate files", len(remaining))
 
             # Stage 5: Denoise
+            if not _stage_enabled(5):
+                logger.info("Stopping after stage 4 (--stop-after-stage)")
+                return
             t0 = time.time()
             denoised_day_zarrs = run_denoising(
                 client, source_day_zarrs, cfg, output_container
@@ -1595,6 +1672,18 @@ def parse_args() -> PipelineConfig:
         help="Directory to cache raw .raw files (default: /tmp/oceanstream/raw_downloads)",
     )
     parser.add_argument(
+        "--raw-source",
+        choices=("fileshare", "local"),
+        default="fileshare",
+        help="Where stage 1 lists raw .raw files from. 'local' scans --raw-dir "
+             "and needs no Azure credentials.",
+    )
+    parser.add_argument(
+        "--raw-dir", type=str, default="",
+        help="Directory holding raw .raw files for --raw-source local. "
+             "Treated as read-only: source files are never deleted.",
+    )
+    parser.add_argument(
         "--resume-stage", type=int, default=0,
         help="Resume from stage N (5=denoise, 6=after denoise, 9=after MVBS/NASC, 11=campaign zarr only). "
              "Reconstructs intermediate data from existing output zarrs.",
@@ -1668,6 +1757,30 @@ def parse_args() -> PipelineConfig:
     )
 
     # Storage mode
+    parser.add_argument(
+        "--storage-backend",
+        choices=("azure", "local", "s3"),
+        default=None,
+        help="Where zarr stores, echograms and NetCDFs are written. "
+             "Default: 'local' when --local-save/--upload-after is given, else 'azure'.",
+    )
+    parser.add_argument(
+        "--s3-bucket", default="",
+        help="Target bucket for --storage-backend s3 (required for that backend)",
+    )
+    parser.add_argument(
+        "--s3-prefix", default="",
+        help="Key prefix inside --s3-bucket (default: bucket root)",
+    )
+    parser.add_argument(
+        "--s3-endpoint-url", default="",
+        help="S3 endpoint (e.g. https://minio.dive.edito.eu). "
+             "Default: AWS_S3_ENDPOINT / S3_ENDPOINT_URL.",
+    )
+    parser.add_argument(
+        "--s3-region", default="",
+        help="S3 region name (default: AWS_DEFAULT_REGION)",
+    )
     parser.add_argument(
         "--local-save",
         type=str,
@@ -1791,6 +1904,29 @@ def parse_args() -> PipelineConfig:
     if args.raw_cache_dir:
         cfg.raw.local_raw_dir = Path(args.raw_cache_dir)
     cfg.keep_raw = args.keep_raw
+
+    # Raw source — local mount vs Azure File Share
+    cfg.raw_source = args.raw_source
+    if cfg.raw_source == "local":
+        if not args.raw_dir:
+            parser.error("--raw-source local requires --raw-dir")
+        cfg.raw.local_source_dir = Path(args.raw_dir).expanduser()
+        if not cfg.raw.local_source_dir.is_dir():
+            parser.error(f"--raw-dir {cfg.raw.local_source_dir} is not a directory")
+        # Source files belong to the user, not to the pipeline's scratch space.
+        cfg.keep_raw = True
+
+    # Storage backend
+    cfg.storage_backend = args.storage_backend or (
+        "local" if (args.local_save or args.upload_after) else "azure"
+    )
+    if cfg.storage_backend == "s3":
+        if not args.s3_bucket:
+            parser.error("--storage-backend s3 requires --s3-bucket")
+        cfg.s3.bucket = args.s3_bucket
+        cfg.s3.prefix = args.s3_prefix
+        cfg.s3.endpoint_url = args.s3_endpoint_url
+        cfg.s3.region = args.s3_region
 
     # Local save mode
     cfg.upload_after = args.upload_after
@@ -1937,7 +2073,10 @@ def main():
     logger.info("Saildrone TPOS 2023 — Raw EK80 Pipeline (zarr v3)")
     logger.info("=" * 70)
     logger.info("Cruise: %s", cfg.cruise_id)
-    logger.info("File share: %s/%s", cfg.raw.file_share_name, cfg.raw.file_share_path)
+    if cfg.raw_source == "local":
+        logger.info("Raw source: local dir %s", cfg.raw.local_source_dir)
+    else:
+        logger.info("File share: %s/%s", cfg.raw.file_share_name, cfg.raw.file_share_path)
     logger.info(
         "Date range: %s → %s",
         cfg.start_date.date() if cfg.start_date else "start",
@@ -1973,14 +2112,28 @@ def main():
         logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)
     elif cfg.local_save_dir:
         logger.info("Storage: LOCAL → %s", cfg.local_save_dir)
+    elif cfg.storage_backend == "s3":
+        logger.info(
+            "Storage: S3 → s3://%s/%s", cfg.s3.bucket, cfg.s3.prefix or "",
+        )
     else:
         logger.info("Storage: Azure Blob")
     logger.info("=" * 70)
 
     # Patch storage before pipeline imports (function-level imports)
-    if cfg.local_save_dir:
+    if cfg.storage_backend == "local" and cfg.local_save_dir:
         from local_storage import patch_storage
+
         patch_storage(cfg.local_save_dir)
+    elif cfg.storage_backend == "s3":
+        from s3_storage import patch_storage as patch_s3_storage
+
+        patch_s3_storage(
+            cfg.s3.bucket,
+            cfg.s3.prefix,
+            endpoint_url=cfg.s3.endpoint_url or None,
+            region=cfg.s3.region or None,
+        )
 
     try:
         run_pipeline(cfg)

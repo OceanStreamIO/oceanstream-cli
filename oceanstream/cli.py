@@ -1,19 +1,23 @@
 from __future__ import annotations
+
+import json
+import logging
 import os
-import time
-from time import perf_counter
 import sys
+import time
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Optional
+
 import pandas as pd
+
 try:
     import typer  # type: ignore
 except Exception:  # pragma: no cover - optional dependency for nicer CLI
     typer = None  # type: ignore
 
-from .providers import get_provider, list_providers, detect_or_get_provider
-from . import geotrack, echodata, multibeam, adcp
-
+from . import adcp, echodata, geotrack, multibeam
+from .providers import detect_or_get_provider, get_provider, list_providers
 
 app = typer.Typer(
     help="Oceanstream data processing CLI (process oceanographic & acoustic data).",
@@ -105,8 +109,8 @@ if typer:
     ) -> None:
         """Install MCP dependencies and generate .vscode/mcp.json for AI assistant integration."""
         import importlib.util
-        import subprocess
         import json
+        import subprocess
 
         # Step 1: Install MCP dependencies if needed
         if install_deps and importlib.util.find_spec("mcp") is None:
@@ -1232,6 +1236,7 @@ if typer:
                 --variable SAL_SBE37_MEAN
         """
         import logging
+
         from .geotrack.raster import generate_all_heatmaps
         
         if verbose:
@@ -1331,8 +1336,8 @@ if typer:
             # JSON output
             oceanstream process geotrack report -c tpos_2023 -f json -o report.json
         """
-        from .geotrack.report import generate_report
         from .geotrack.campaign import load_campaign_metadata
+        from .geotrack.report import generate_report
         
         # Resolve dataset path
         resolved_path = dataset_path
@@ -1484,8 +1489,8 @@ if typer:
                 --sonar-model EK80 \\
                 --calibration-file ./calibration_values.xlsx
         """
-        from oceanstream.echodata.convert import convert_raw_file, convert_raw_files
         from oceanstream.echodata.calibrate import apply_calibration
+        from oceanstream.echodata.convert import convert_raw_file, convert_raw_files
         
         input_source = Path(input_source)
         output_dir = Path(output_dir)
@@ -1663,8 +1668,9 @@ if typer:
                 --input-source ./out/echodata/TPOS2023/sv \\
                 --range-bin 1m --ping-time-bin 5s
         """
-        from oceanstream.echodata.compute import compute_mvbs
         import xarray as xr
+
+        from oceanstream.echodata.compute import compute_mvbs
         
         input_source = Path(input_source)
         
@@ -1729,8 +1735,8 @@ if typer:
                 --input-source ./out/echodata/TPOS2023/sv \\
                 --methods background,impulse
         """
-        from oceanstream.echodata.denoise import apply_denoising
         from oceanstream.echodata.config import DenoiseConfig
+        from oceanstream.echodata.denoise import apply_denoising
         
         input_source = Path(input_source)
         method_list = [m.strip() for m in methods.split(",")]
@@ -1814,8 +1820,9 @@ if typer:
                 --range-bin 10m --dist-bin 0.5nmi \\
                 --transducer-depth 0.6
         """
-        from oceanstream.echodata.compute import compute_nasc
         import xarray as xr
+
+        from oceanstream.echodata.compute import compute_nasc
         
         input_source = Path(input_source)
         
@@ -1942,11 +1949,12 @@ if typer:
                 --lat-col ship_latitude \\
                 --lon-col ship_longitude
         """
+        import xarray as xr
+
         from oceanstream.echodata.environment import (
             enrich_sv_with_location,
             enrich_sv_with_location_from_url,
         )
-        import xarray as xr
         
         # Count how many source options were provided
         sources = [campaign_dir, campaign_id, geoparquet_url]
@@ -2063,8 +2071,9 @@ if typer:
                 --output-dir ./echograms \\
                 --vmin -80 --vmax -50 --cmap ocean_r
         """
-        from oceanstream.echodata.plot import generate_echograms
         import xarray as xr
+
+        from oceanstream.echodata.plot import generate_echograms
         
         input_source = Path(input_source)
         
@@ -2188,82 +2197,454 @@ if typer:
         no_args_is_help=True,
     )
 
+    # Exit codes. A scene that fails QC is still a successful *run* of the tool
+    # — the verdict is the product — so it exits 0 unless --fail-on-reject asks
+    # otherwise. Insufficient input and a crash are genuinely different
+    # outcomes and get their own codes, so a caller can retry one and
+    # investigate the other.
+    _EXIT_OK = 0
+    _EXIT_FAILED = 1
+    _EXIT_INSUFFICIENT = 2
+    _EXIT_REJECTED = 3
+
+    def _load_coastal_aoi(path: Path) -> Any:
+        from oceanstream.coastal.aoi import AOI
+
+        if path.suffix.lower() in {".geojson", ".json"}:
+            try:
+                return AOI.from_json(path)
+            except (KeyError, ValueError):
+                return AOI.from_geojson(path)
+        return AOI.from_geojson(path)
+
+    def _load_coastal_scene(path: Path, solar_zenith: Optional[float]) -> Any:
+        """Accept either an ACOLITE output directory or a scene JSON."""
+        from oceanstream.coastal.scene import Scene
+
+        if path.is_dir():
+            return Scene.from_acolite_dir(
+                path, solar_zenith_fallback_deg=solar_zenith
+            )
+        payload = json.loads(path.read_text())
+        acolite_dir = payload.get("acolite_dir") or payload.get("directory")
+        if not acolite_dir:
+            raise typer.BadParameter(
+                f"{path} is not an ACOLITE directory and carries no "
+                "'acolite_dir' key. Pass the directory ACOLITE wrote, or a JSON "
+                "with {'acolite_dir': ..., 'sensor': ..., 'solar_zenith_deg': ...}."
+            )
+        return Scene.from_acolite_dir(
+            acolite_dir,
+            sensor=payload.get("sensor", "sentinel2"),
+            solar_zenith_fallback_deg=payload.get("solar_zenith_deg", solar_zenith),
+        )
+
     @coastal_app.command(
         "detect",
         help=(
             "Run the full retrieval pipeline for one scene at one AOI. "
-            "Emits SSR, IOPs, rho_b, SDB, z_max, seabed PAR, and a STAC item."
+            "Emits rho_b, SDB, z_max, seabed PAR, k(λ), a QC verdict and a "
+            "STAC item."
         ),
     )
     def coastal_detect_command(
-        aoi: Path = typer.Option(..., "--aoi", help="AOI GeoJSON with bbox and CRS."),
-        scene: Path = typer.Option(..., "--scene", help="Scene JSON (ACOLITE-corrected raster paths + solar geometry)."),
+        aoi: Path = typer.Option(..., "--aoi", exists=True, help="AOI JSON or GeoJSON."),
+        scene: Path = typer.Option(..., "--scene", exists=True, help="ACOLITE output directory, or a scene JSON pointing at one."),
         output_dir: Path = typer.Option(Path("out/coastal"), "-o", "--output-dir", help="Output directory."),
+        campaign_id: Optional[str] = typer.Option(None, "--campaign-id", help="Groups scenes in the run report."),
+        solar_zenith_deg: Optional[float] = typer.Option(None, "--solar-zenith", help="Fallback solar zenith when the scene metadata carries none."),
+        n_clusters: int = typer.Option(4, "--clusters", min=2, help="Spectral classes for the bottom clustering."),
+        no_stac: bool = typer.Option(False, "--no-stac", help="Write products without emitting a STAC item."),
+        fail_on_reject: bool = typer.Option(False, "--fail-on-reject", help=f"Exit {_EXIT_REJECTED} when the scene fails QC."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
         yes: bool = typer.Option(False, "--yes", help="Skip interactive prompts."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
-        raise NotImplementedError(
-            "oceanstream process coastal detect lands in Phase 6 of the "
-            "coastal library port. The physics modules and processor are "
-            "being ported from tools/lee_demo in phases 1–5."
+        from oceanstream.coastal.processor import (
+            STATUS_INSUFFICIENT_DATA,
+            STATUS_PASSED,
+            CoastalProcessor,
         )
+
+        aoi_obj = _load_coastal_aoi(aoi)
+        if dry_run:
+            typer.echo(f"Would process {scene} over AOI {aoi_obj.name} → {output_dir}")
+            typer.echo(f"  bbox: {aoi_obj.processing_bbox}")
+            typer.echo(f"  bathymetry: {aoi_obj.fine_bathymetry or aoi_obj.coarse_bathymetry}")
+            raise typer.Exit(_EXIT_OK)
+
+        if not yes and output_dir.exists() and any(output_dir.iterdir()):
+            typer.confirm(f"{output_dir} is not empty. Overwrite products?", abort=True)
+
+        scene_obj = _load_coastal_scene(scene, solar_zenith_deg)
+        processor = CoastalProcessor(campaign_id=campaign_id, verbose=verbose)
+        result = processor.run(
+            aoi_obj,
+            scene_obj,
+            output_dir,
+            emit_stac=not no_stac,
+            n_clusters=n_clusters,
+        )
+
+        typer.echo(f"status:   {result.status}")
+        typer.echo(f"message:  {result.message}")
+        if result.qc_verdict:
+            typer.echo(f"qc:       {result.qc_verdict.get('summary', '')}")
+        for key, href in sorted(result.products.items()):
+            typer.echo(f"  {key:26s} {href}")
+        if result.stac_item:
+            typer.echo(f"stac:     {result.stac_item}")
+
+        if result.status == STATUS_INSUFFICIENT_DATA:
+            raise typer.Exit(_EXIT_INSUFFICIENT)
+        if not result.success:
+            raise typer.Exit(_EXIT_FAILED)
+        if fail_on_reject and result.status != STATUS_PASSED:
+            raise typer.Exit(_EXIT_REJECTED)
 
     @coastal_app.command(
         "attenuation",
-        help="Fit empirical two-way k(λ) from a deep-water reference (reef_calibration).",
+        help=(
+            "Fit empirical two-way k(λ) against a reference bathymetry and "
+            "judge it against the pure-water floor."
+        ),
     )
     def coastal_attenuation_command(
-        acolite_dir: Path = typer.Option(..., "--acolite-dir", help="ACOLITE surface-reflectance rasters."),
-        lidar: Path = typer.Option(..., "--lidar", help="Lidar bathymetry raster."),
+        acolite_dir: Path = typer.Option(..., "--acolite-dir", exists=True, file_okay=False, help="ACOLITE surface-reflectance rasters."),
+        bathymetry: Path = typer.Option(..., "--bathymetry", exists=True, help="Reference bathymetry raster (positive down)."),
         output_dir: Path = typer.Option(Path("out/coastal/attenuation"), "-o", "--output-dir"),
-        qaa_iops: Optional[Path] = typer.Option(None, "--qaa-iops", help="Optional QAA scene IOP JSON for the water-mass mismatch report."),
-        solar_zenith_deg: float = typer.Option(21.0, "--solar-zenith"),
+        solar_zenith_deg: float = typer.Option(35.0, "--solar-zenith", help="Used for the pure-water floor, which depends on path length."),
+        sensor: str = typer.Option("sentinel2", "--sensor"),
         verbose: bool = typer.Option(False, "-v"),
     ) -> None:
-        raise NotImplementedError(
-            "oceanstream process coastal attenuation lands in Phase 1.5 / 6 "
-            "(port of reef_calibration.py)."
+        import numpy as np
+
+        from oceanstream.coastal.io.rasters import read_band, reproject_to_grid
+        from oceanstream.coastal.masks import composite_mask, deep_water_pixels
+        from oceanstream.coastal.optics.attenuation import (
+            calibrate_bands,
+            lyzenga_ratios,
         )
+        from oceanstream.coastal.products import write_json_document
+        from oceanstream.coastal.qc.floors import scene_floor_verdict
+        from oceanstream.coastal.scene import Scene
+        from oceanstream.coastal.sensors import get_sensor
+
+        if verbose:
+            logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
+
+        scene_obj = Scene.from_acolite_dir(
+            acolite_dir, sensor=sensor, solar_zenith_fallback_deg=solar_zenith_deg
+        )
+        profile = get_sensor(scene_obj.sensor)
+        roles = profile.resolve_roles(scene_obj.wavelengths_nm)
+
+        depth, depth_grid = read_band(bathymetry)
+        if not depth_grid.matches(scene_obj.grid):
+            depth = reproject_to_grid(depth, scene_obj.grid, src_grid=depth_grid)
+
+        valid, _ = composite_mask(
+            blue=scene_obj.rhos[roles["blue"]],
+            red=scene_obj.rhos[roles["red"]],
+            nir=scene_obj.rhos[roles["nir"]],
+            swir=scene_obj.rhos[roles["swir1"]] if "swir1" in roles else None,
+        )
+        deep = deep_water_pixels(valid, depth)
+        reflectance = {
+            float(wl): scene_obj.rhos[i]
+            for i, wl in enumerate(scene_obj.wavelengths_nm)
+            if float(wl) < 1000.0
+        }
+        calibrations = calibrate_bands(
+            reflectance, depth, water_mask=valid, deep_mask=deep
+        )
+        if not calibrations:
+            typer.echo("No band produced an attenuation fit.", err=True)
+            raise typer.Exit(_EXIT_INSUFFICIENT)
+
+        verdict = scene_floor_verdict(
+            calibrations, solar_zenith_deg=float(scene_obj.solar_zenith_deg)
+        )
+        payload = {
+            "scene": scene_obj.describe(),
+            "reference_bathymetry": str(bathymetry),
+            "bands": {
+                str(nm): {
+                    "k_per_m": c.k_per_m,
+                    "r_squared": c.r_squared,
+                    "n_bins": c.n_bins,
+                    "n_pixels": c.n_pixels,
+                    "k_pure_water_floor": c.k_pure_water_floor,
+                    "below_pure_water_floor": c.k_below_pure_water_floor,
+                    "quantile_spread": c.quantile_spread,
+                }
+                for nm, c in calibrations.items()
+            },
+            "lyzenga_ratios": lyzenga_ratios(calibrations),
+            "verdict": verdict,
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        href = write_json_document(output_dir / "attenuation.json", payload)
+
+        for nm, c in sorted(calibrations.items()):
+            flag = "  BELOW FLOOR" if c.k_below_pure_water_floor else ""
+            typer.echo(
+                f"  {nm:7.1f} nm  k={c.k_per_m:8.5f}  floor={c.k_pure_water_floor:8.5f}"
+                f"  R2={c.r_squared:.3f}{flag}"
+            )
+        typer.echo(f"verdict: {'PASS' if verdict['passed'] else 'FAIL'} — {verdict['summary']}")
+        typer.echo(f"written: {href}")
+        if not np.isfinite(scene_obj.solar_zenith_deg):
+            typer.echo("warning: solar zenith unknown; the floor is only as good as it.", err=True)
 
     @coastal_app.command(
         "detectability",
-        help="Compute per-band z_max and seabed PAR from IOPs / empirical k.",
+        help="Compute per-band z_max and the sensitivity span from an attenuation JSON.",
     )
     def coastal_detectability_command(
-        iops: Path = typer.Option(..., "--iops", help="QAA scene IOP JSON or empirical k JSON."),
+        attenuation: Path = typer.Option(..., "--attenuation", exists=True, help="attenuation.json from 'coastal attenuation' or a coastal run."),
         output_dir: Path = typer.Option(Path("out/coastal/detectability"), "-o", "--output-dir"),
+        epsilon_rhos: Optional[float] = typer.Option(None, "--epsilon", help="Reflectance noise floor. Defaults to the library's fallback."),
+        solar_zenith_deg: float = typer.Option(35.0, "--solar-zenith"),
         verbose: bool = typer.Option(False, "-v"),
     ) -> None:
-        raise NotImplementedError(
-            "oceanstream process coastal detectability lands in Phase 3."
+        from oceanstream.coastal.detectability import scene_detectability
+        from oceanstream.coastal.products import write_json_document
+
+        if verbose:
+            logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
+
+        payload = json.loads(attenuation.read_text())
+        k_by_band = _k_by_band_from_payload(payload)
+        if not k_by_band:
+            typer.echo(
+                f"{attenuation} carries no per-band k. Expected a 'bands' or "
+                "'k_by_band' mapping of wavelength to k_per_m.",
+                err=True,
+            )
+            raise typer.Exit(_EXIT_INSUFFICIENT)
+
+        detect = scene_detectability(
+            k_by_band,
+            epsilon_rhos=epsilon_rhos,
+            solar_zenith_deg=solar_zenith_deg,
         )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        href = write_json_document(output_dir / "detectability.json", detect.to_dict())
+
+        for band in detect.bands:
+            usable = "usable" if band.usable else "not usable"
+            typer.echo(
+                f"  {band.wavelength_nm:7.1f} nm  z_max={band.z_max_m:6.2f} m  "
+                f"({band.z_max_contrast_halved_m:.2f}–"
+                f"{band.z_max_epsilon_doubled_m:.2f} m)  {usable}"
+            )
+        typer.echo(f"best band: {detect.best_band_nm} nm at {detect.z_max_m:.2f} m")
+        typer.echo(f"status:    {detect.status}")
+        typer.echo(f"written:   {href}")
 
     @coastal_app.command(
         "aoi",
-        help="Register / describe a coastal AOI (bbox, CRS, bathymetry, deep-water polygon).",
+        help="Create or describe a coastal AOI (bbox, bathymetry references, tide model).",
     )
     def coastal_aoi_command(
         name: str = typer.Argument(..., help="AOI name."),
         bbox: Optional[str] = typer.Option(None, "--bbox", help="w,s,e,n in EPSG:4326."),
+        label: Optional[str] = typer.Option(None, "--label", help="Human-readable label."),
+        bathymetry: Optional[Path] = typer.Option(None, "--bathymetry", help="Fine bathymetry raster URI."),
+        bathymetry_resolution_m: Optional[float] = typer.Option(None, "--bathymetry-resolution", help="Nominal resolution of that raster."),
+        discover_bathymetry: bool = typer.Option(False, "--discover-bathymetry", help="Query EMODnet for high-resolution coverage over the bbox."),
+        bathymetry_dir: Optional[Path] = typer.Option(None, "--bathymetry-dir", help="With --discover-bathymetry, download the finest area here and subset it to a depth COG."),
+        seabed_stability: Optional[str] = typer.Option(None, "--seabed-stability", help="'stable_rock' or 'mobile_sediment'. No default: it is an assertion about the site, not a property EMODnet publishes."),
         output_dir: Path = typer.Option(Path("aois"), "-o", "--output-dir"),
+        describe: Optional[Path] = typer.Option(None, "--describe", exists=True, help="Print an existing AOI file instead of creating one."),
+        verbose: bool = typer.Option(False, "-v"),
     ) -> None:
-        raise NotImplementedError(
-            "oceanstream process coastal aoi lands in Phase 2 (AOI onboarding "
-            "via EMODnet HR WFS)."
+        from oceanstream.coastal.aoi import AOI, BathymetryReference
+
+        if verbose:
+            logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
+
+        if describe is not None:
+            existing = _load_coastal_aoi(describe)
+            typer.echo(json.dumps(existing.to_dict(), indent=2))
+            typer.echo(f"centroid: {existing.centroid}")
+            typer.echo(f"UTM zone: EPSG:{existing.utm_epsg}")
+            typer.echo(f"ACOLITE limit (S,W,N,E): {existing.acolite_limit}")
+            return
+
+        if not bbox:
+            raise typer.BadParameter(
+                "--bbox is required when creating an AOI (or pass --describe to "
+                "inspect an existing one)."
+            )
+        try:
+            west, south, east, north = (float(v) for v in bbox.split(","))
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"--bbox must be four comma-separated numbers 'w,s,e,n'; got {bbox!r}."
+            ) from exc
+
+        if seabed_stability is not None and seabed_stability not in (
+            "stable_rock",
+            "mobile_sediment",
+        ):
+            raise typer.BadParameter(
+                f"--seabed-stability must be 'stable_rock' or 'mobile_sediment'; "
+                f"got {seabed_stability!r}."
+            )
+
+        aoi_bbox = (west, south, east, north)
+        reference = None
+        if discover_bathymetry:
+            reference = _discover_aoi_bathymetry(
+                aoi_bbox,
+                bathymetry_dir=bathymetry_dir,
+                seabed_stability=seabed_stability,
+            )
+        elif bathymetry is not None:
+            reference = BathymetryReference(
+                uri=str(bathymetry),
+                resolution_m=bathymetry_resolution_m,
+                seabed_stability=seabed_stability,  # type: ignore[arg-type]
+            )
+        aoi_obj = AOI(
+            name=name,
+            processing_bbox=aoi_bbox,
+            label=label,
+            fine_bathymetry=reference,
         )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{name}.json"
+        path.write_text(json.dumps(aoi_obj.to_dict(), indent=2))
+        typer.echo(f"wrote {path}")
+        typer.echo(f"centroid: {aoi_obj.centroid}  UTM: EPSG:{aoi_obj.utm_epsg}")
+
+    def _discover_aoi_bathymetry(
+        aoi_bbox: tuple,
+        *,
+        bathymetry_dir: Optional[Path],
+        seabed_stability: Optional[str],
+    ):
+        """Join the four EMODnet steps that onboarding needs.
+
+        ``discover_hr_areas`` → ``select_finest`` → ``download_area`` →
+        ``subset_to_cog`` all existed, but nothing connected them, so onboarding
+        a new AOI meant four manual calls and a hand-written reference record.
+
+        Without ``--bathymetry-dir`` this stops after discovery and records the
+        remote archive URL. That is deliberate: the archives run to hundreds of
+        megabytes, and knowing *what* covers a site is the question asked far
+        more often than wanting the bytes.
+        """
+        from oceanstream.coastal.bathymetry.emodnet import (
+            discover_hr_areas,
+            download_area,
+            select_finest,
+            subset_to_cog,
+        )
+
+        areas = discover_hr_areas(aoi_bbox)
+        if not areas:
+            typer.echo(
+                "No EMODnet high-resolution coverage over this bbox. The AOI is "
+                "still written, but depth will have to come from the ~115 m "
+                "EMODnet DTM — check that its cell size resolves the depth "
+                "strata you intend to report on before relying on it.",
+                err=True,
+            )
+            return None
+
+        typer.echo(f"EMODnet HR coverage: {len(areas)} dataset(s)")
+        for area in areas:
+            metres = f"{area.resolution_m:.1f} m" if area.resolution_m else "unknown"
+            year = f", released {area.product_year}" if area.product_year else ""
+            typer.echo(f"  {area.identifier}  {metres}{year}")
+
+        finest = select_finest(areas)
+        if bathymetry_dir is None:
+            typer.echo(f"selected: {finest.identifier} (not downloaded)")
+            return finest.to_reference(
+                uri=finest.download_url or "",
+                seabed_stability=seabed_stability,
+            )
+
+        bathymetry_dir.mkdir(parents=True, exist_ok=True)
+        archive = download_area(finest, bathymetry_dir)
+        cog = bathymetry_dir / f"{finest.identifier}_depth.tif"
+        summary = subset_to_cog(
+            archive,
+            cog,
+            aoi_bbox,
+            area=finest,
+            seabed_stability=seabed_stability,
+        )
+        typer.echo(f"depth COG: {cog}  ({summary.get('n_valid', '?')} valid cells)")
+        return finest.to_reference(uri=str(cog), seabed_stability=seabed_stability)
+
 
     @coastal_app.command(
         "qc",
-        help="Run QC gates (pure-water floor, Lyzenga ratio, AC uncertainty) on an existing retrieval.",
+        help=(
+            "Re-run the pure-water floor and Lyzenga ratio gates against an "
+            "existing run's attenuation.json."
+        ),
     )
     def coastal_qc_command(
-        run_dir: Path = typer.Option(..., "--run-dir", help="A previous coastal detect output directory."),
+        run_dir: Path = typer.Option(..., "--run-dir", exists=True, file_okay=False, help="A previous 'coastal detect' output directory."),
+        solar_zenith_deg: Optional[float] = typer.Option(None, "--solar-zenith", help="Overrides the value recorded in the run."),
         verbose: bool = typer.Option(False, "-v"),
     ) -> None:
-        raise NotImplementedError(
-            "oceanstream process coastal qc lands in Phase 1.6 / 3.3."
-        )
+        from oceanstream.coastal.qc.floors import scene_floor_verdict
+
+        if verbose:
+            logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
+
+        path = run_dir / "attenuation.json"
+        if not path.exists():
+            typer.echo(
+                f"No attenuation.json in {run_dir}. The gates are judgements "
+                "about k(λ); without the fit there is nothing to judge.",
+                err=True,
+            )
+            raise typer.Exit(_EXIT_INSUFFICIENT)
+
+        payload = json.loads(path.read_text())
+        k_by_band = _k_by_band_from_payload(payload)
+        theta = solar_zenith_deg
+        if theta is None:
+            provenance = payload.get("oceanstream:provenance", {})
+            theta = provenance.get("solar_zenith_deg")
+        verdict = scene_floor_verdict(k_by_band, solar_zenith_deg=theta)
+
+        typer.echo(f"verdict: {'PASS' if verdict['passed'] else 'FAIL'}")
+        typer.echo(f"summary: {verdict['summary']}")
+        for flag in verdict.get("flags", []):
+            typer.echo(f"  flag: {flag}")
+        if not verdict["passed"]:
+            raise typer.Exit(_EXIT_REJECTED)
+
+    def _k_by_band_from_payload(payload: dict) -> dict:
+        """Pull {wavelength_nm: k_per_m} out of any of the shapes we write.
+
+        Both ``coastal attenuation`` and ``coastal detect`` write a per-band
+        fit, but the latter nests it under a provenance envelope. Reading both
+        here keeps the QC command usable against either without the caller
+        having to know which produced the file.
+        """
+        nested = payload.get("attenuation", payload)
+        for key in ("k_by_band", "bands"):
+            section = nested.get(key) or payload.get(key)
+            if not isinstance(section, dict):
+                continue
+            out = {}
+            for wavelength, value in section.items():
+                k = value.get("k_per_m") if isinstance(value, dict) else value
+                if isinstance(k, (int, float)):
+                    out[float(wavelength)] = float(k)
+            if out:
+                return out
+        return {}
 
     process_app.add_typer(coastal_app, name="coastal")
 
@@ -2284,10 +2665,10 @@ if typer:
             oceanstream configure
         """
         from oceanstream.storage.manager import (
-            load_storage_configuration,
             add_azure_storage,
             add_local_storage,
             get_storage_config_path,
+            load_storage_configuration,
         )
         
         typer.echo()

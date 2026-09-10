@@ -389,6 +389,10 @@ def prepare_channel_da(
     
     safe_label = ch_label.replace(" ", "-").replace("(", "").replace(")", "")
     
+    # Promote a per-ping depth variable to a real vertical coordinate, so the
+    # y-axis is metres rather than sample number.
+    da = attach_depth_coord(ds, da, channel)
+
     # Choose vertical axis
     if "depth" in da.coords:
         ydim = "depth"
@@ -440,6 +444,59 @@ def prepare_channel_da(
     )
     
     return da_clean, plotting_metadata
+
+
+def attach_depth_coord(
+    ds: "xr.Dataset",
+    da: "xr.DataArray",
+    channel: Optional[int] = None,
+    prefer: tuple[str, ...] = ("depth", "echo_range"),
+) -> "xr.DataArray":
+    """Give *da* a 1-D depth coordinate so echograms show metres, not samples.
+
+    echopype stores ``depth`` and ``echo_range`` as
+    ``(channel, ping_time, range_sample)`` data variables, so nothing
+    downstream can use them as an axis and plots fall back to sample number.
+    The profile is taken per channel because 38 and 200 kHz have different
+    sample spacing, and as a median over pings because individual pings can
+    carry NaNs.
+
+    Returns *da* unchanged when no usable depth variable is present.
+    """
+    import xarray as xr
+
+    if not isinstance(ds, xr.Dataset):
+        return da
+
+    for name in prefer:
+        if name not in ds.data_vars:
+            continue
+        var = ds[name]
+        vertical = next(
+            (d for d in var.dims if d not in ("channel", "ping_time")), None
+        )
+        if vertical is None or vertical not in da.dims:
+            continue
+
+        profile = var
+        if "channel" in profile.dims:
+            profile = profile.isel(channel=channel or 0)
+        if "ping_time" in profile.dims:
+            # A handful of pings is plenty: transducer depth does not move.
+            step = max(1, profile.sizes["ping_time"] // 64)
+            profile = profile.isel(ping_time=slice(None, None, step)).median(
+                dim="ping_time", skipna=True
+            )
+
+        values = np.asarray(profile.values, dtype=float)
+        if values.ndim != 1 or values.size != da.sizes[vertical]:
+            continue
+        if not np.isfinite(values).any():
+            continue
+
+        return da.assign_coords({name: (vertical, values)}).swap_dims({vertical: name})
+
+    return da
 
 
 def ensure_channel_labels(
@@ -904,19 +961,21 @@ def create_interactive_echogram(
 
     ds_Sv = ensure_channel_labels(ds_Sv)
 
-    # Determine axes
-    if "depth" in ds_Sv.dims or "depth" in ds_Sv.coords:
-        ydim = "depth"
-    elif "echo_range" in ds_Sv.dims or "echo_range" in ds_Sv.coords:
-        ydim = "echo_range"
-    elif "range_sample" in ds_Sv.dims:
-        ydim = "range_sample"
-    else:
-        ydim = [d for d in ds_Sv[var].dims if d not in ("channel", "ping_time")][0]
-    xdim = "ping_time"
-
     # Select channel
     da = ds_Sv[var].isel(channel=channel)
+    da = attach_depth_coord(ds_Sv, da, channel)
+
+    # Determine axes
+    if "depth" in da.dims or "depth" in da.coords:
+        ydim = "depth"
+    elif "echo_range" in da.dims or "echo_range" in da.coords:
+        ydim = "echo_range"
+    elif "range_sample" in da.dims:
+        ydim = "range_sample"
+    else:
+        ydim = [d for d in da.dims if d not in ("channel", "ping_time")][0]
+    xdim = "ping_time"
+
     if da.dims != (xdim, ydim):
         da = da.transpose(xdim, ydim)
 
