@@ -5,7 +5,7 @@ from typing import Any, Literal, Protocol
 
 import pandas as pd
 
-ProcessingModule = Literal["geotrack", "echodata", "multibeam", "adcp"]
+ProcessingModule = Literal["geotrack", "echodata", "multibeam", "adcp", "coastal"]
 
 
 class ProviderBase(Protocol):

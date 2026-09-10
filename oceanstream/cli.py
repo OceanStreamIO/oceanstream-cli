@@ -2177,6 +2177,97 @@ if typer:
         )
 
     # ============================================================================
+    # Coastal Optics - Lee inversion, QAA, empirical attenuation, SDB, detectability
+    # ============================================================================
+
+    coastal_app = typer.Typer(
+        help=(
+            "Coastal optics: Lee/QAA inversion, empirical k(λ), Stumpf SDB, "
+            "detectability products (z_max, seabed PAR)."
+        ),
+        no_args_is_help=True,
+    )
+
+    @coastal_app.command(
+        "detect",
+        help=(
+            "Run the full retrieval pipeline for one scene at one AOI. "
+            "Emits SSR, IOPs, rho_b, SDB, z_max, seabed PAR, and a STAC item."
+        ),
+    )
+    def coastal_detect_command(
+        aoi: Path = typer.Option(..., "--aoi", help="AOI GeoJSON with bbox and CRS."),
+        scene: Path = typer.Option(..., "--scene", help="Scene JSON (ACOLITE-corrected raster paths + solar geometry)."),
+        output_dir: Path = typer.Option(Path("out/coastal"), "-o", "--output-dir", help="Output directory."),
+        verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
+        yes: bool = typer.Option(False, "--yes", help="Skip interactive prompts."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
+    ) -> None:
+        raise NotImplementedError(
+            "oceanstream process coastal detect lands in Phase 6 of the "
+            "coastal library port. The physics modules and processor are "
+            "being ported from tools/lee_demo in phases 1–5."
+        )
+
+    @coastal_app.command(
+        "attenuation",
+        help="Fit empirical two-way k(λ) from a deep-water reference (reef_calibration).",
+    )
+    def coastal_attenuation_command(
+        acolite_dir: Path = typer.Option(..., "--acolite-dir", help="ACOLITE surface-reflectance rasters."),
+        lidar: Path = typer.Option(..., "--lidar", help="Lidar bathymetry raster."),
+        output_dir: Path = typer.Option(Path("out/coastal/attenuation"), "-o", "--output-dir"),
+        qaa_iops: Optional[Path] = typer.Option(None, "--qaa-iops", help="Optional QAA scene IOP JSON for the water-mass mismatch report."),
+        solar_zenith_deg: float = typer.Option(21.0, "--solar-zenith"),
+        verbose: bool = typer.Option(False, "-v"),
+    ) -> None:
+        raise NotImplementedError(
+            "oceanstream process coastal attenuation lands in Phase 1.5 / 6 "
+            "(port of reef_calibration.py)."
+        )
+
+    @coastal_app.command(
+        "detectability",
+        help="Compute per-band z_max and seabed PAR from IOPs / empirical k.",
+    )
+    def coastal_detectability_command(
+        iops: Path = typer.Option(..., "--iops", help="QAA scene IOP JSON or empirical k JSON."),
+        output_dir: Path = typer.Option(Path("out/coastal/detectability"), "-o", "--output-dir"),
+        verbose: bool = typer.Option(False, "-v"),
+    ) -> None:
+        raise NotImplementedError(
+            "oceanstream process coastal detectability lands in Phase 3."
+        )
+
+    @coastal_app.command(
+        "aoi",
+        help="Register / describe a coastal AOI (bbox, CRS, bathymetry, deep-water polygon).",
+    )
+    def coastal_aoi_command(
+        name: str = typer.Argument(..., help="AOI name."),
+        bbox: Optional[str] = typer.Option(None, "--bbox", help="w,s,e,n in EPSG:4326."),
+        output_dir: Path = typer.Option(Path("aois"), "-o", "--output-dir"),
+    ) -> None:
+        raise NotImplementedError(
+            "oceanstream process coastal aoi lands in Phase 2 (AOI onboarding "
+            "via EMODnet HR WFS)."
+        )
+
+    @coastal_app.command(
+        "qc",
+        help="Run QC gates (pure-water floor, Lyzenga ratio, AC uncertainty) on an existing retrieval.",
+    )
+    def coastal_qc_command(
+        run_dir: Path = typer.Option(..., "--run-dir", help="A previous coastal detect output directory."),
+        verbose: bool = typer.Option(False, "-v"),
+    ) -> None:
+        raise NotImplementedError(
+            "oceanstream process coastal qc lands in Phase 1.6 / 3.3."
+        )
+
+    process_app.add_typer(coastal_app, name="coastal")
+
+    # ============================================================================
     # Configure Command - Interactive Configuration Wizard
     # ============================================================================
     

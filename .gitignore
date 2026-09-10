@@ -51,6 +51,13 @@ data/
 output/
 raw_data/
 
+# Curated test fixtures are inputs, not outputs. The `data/` rule above is
+# meant for generated products, but it also swallows these, and the coastal
+# golden regression cannot run at all without them.
+!oceanstream/tests/data/
+oceanstream/tests/data/*
+!oceanstream/tests/data/coastal/
+
 # Documentation (lives in oceanstream-docs repo)
 .docs-website/
 .mkdocs-shadcn-fork/
