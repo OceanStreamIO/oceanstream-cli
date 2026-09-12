@@ -2237,8 +2237,11 @@ def run_echogram_generation(
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for day_key in sorted(all_keys):
             for category in sorted(all_keys[day_key]):
-                # Skip if echograms already exist in Azure
-                existing = _count_existing_echograms(output_container, day_key, category)
+                # --force means the denoise parameters changed, so the existing
+                # PNGs render the previous run and must not be reused.
+                existing = (
+                    0 if cfg.force else _count_existing_echograms(output_container, day_key, category)
+                )
                 if existing > 0:
                     logger.info("  Skipping %s/%s — %d echograms already exist", day_key, category, existing)
                     continue

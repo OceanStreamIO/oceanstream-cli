@@ -1,0 +1,73 @@
+# =============================================================================
+# Build context filter for `az acr build` / `docker build`
+# =============================================================================
+# ACR Tasks uploads the whole context before it starts, so anything listed here
+# is bandwidth saved on every build. `raw_data/` and `data/` in particular sit
+# at the repo root on a developer machine and can run to hundreds of GB.
+# =============================================================================
+
+# Local data and pipeline outputs — never belongs in an image
+data/
+raw_data/
+out/
+**/out/
+output/
+**/geoparquet/
+.oceanstream_staging/
+.oceanstream_work/
+scripts/batch_processing/raw_cache/
+scripts/batch_processing/report_assets/
+*.out
+
+# Test fixtures. The image runs the pipeline, it does not run the test suite.
+oceanstream/tests/
+
+# Host artifacts that must never overlay what the image builds itself
+**/.venv
+venv/
+venv311/
+env/
+**/__pycache__
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Caches and coverage
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage_html/
+coverage.json
+.mypy_cache/
+.ruff_cache/
+
+# Docs live in their own repo; notebooks and examples are not runtime code
+docs/
+docs-internal/
+notebooks/
+examples/
+.docs-website/
+.mkdocs-shadcn-fork/
+_oceanstream-website-static/
+_echodata-legacy-code/
+
+# Secrets and VCS
+.env
+.env.*
+.git/
+.github/
+
+# OS / editor cruft
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+.vscode/
+.idea/
+.history/
+*.bak*
+*.log

@@ -13,6 +13,29 @@ from pathlib import Path
 from typing import Optional
 
 
+def _cgroup_memory_limit_gb() -> Optional[float]:
+    """The container's memory ceiling, or None when unconfined."""
+    for path in (
+        "/sys/fs/cgroup/memory.max",                    # cgroup v2
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroup v1
+    ):
+        try:
+            raw = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if raw == "max":
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        # cgroup v1 reports a sentinel near 2**63 when there is no limit.
+        if value >= 1 << 62:
+            return None
+        return value / (1024 ** 3)
+    return None
+
+
 @dataclass
 class DaskConfig:
     """Dask distributed cluster settings."""
@@ -323,7 +346,8 @@ class PipelineConfig:
     skip_campaign_echograms: bool = False  # skip only the campaign echogram loop (keep campaign zarr)
     build_campaign_sv_zarr: bool = False  # experimental
     category_parallel: bool = True  # parallelize short_pulse/long_pulse within each day
-    resume_stage: int = 0               # resume from this stage (0 = start from beginning)\n    keep_raw: bool = False              # keep downloaded raw files after conversion
+    resume_stage: int = 0               # resume from this stage (0 = start from beginning)
+    keep_raw: bool = False              # keep downloaded raw files after conversion
     # Stop after this stage (0 = run everything). Single-day comparison runs
     # set this to 9 so the campaign-aggregation stages don't run on one day.
     stop_after_stage: int = 0
@@ -395,9 +419,9 @@ class PipelineConfig:
     def effective_parallel_workers(self, mem_per_worker_gb: float = 2.0) -> int:
         """Return the number of parallel stage workers.
 
-        If ``parallel_workers`` is 0 (the default), auto-detect from total
-        system RAM, reserving memory for Dask workers and OS overhead.
-        Each parallel denoise/echogram task needs ~2 GB.
+        If ``parallel_workers`` is 0 (the default), auto-detect from the RAM
+        this process may actually use, reserving memory for Dask workers and
+        OS overhead. Each parallel denoise/echogram task needs ~2 GB.
         """
         if self.parallel_workers > 0:
             return self.parallel_workers
@@ -405,6 +429,12 @@ class PipelineConfig:
             total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3)
         except (ValueError, OSError):
             return 2  # safe default if detection fails
+        # sysconf reports the HOST's RAM even inside a container, so a pod with
+        # a 24 GiB limit on a 256 GiB node would size itself for 256 GiB and be
+        # OOM-killed or evicted mid-run.
+        cgroup_gb = _cgroup_memory_limit_gb()
+        if cgroup_gb is not None:
+            total_gb = min(total_gb, cgroup_gb)
         # Reserve ~50% for the Dask LocalCluster, OS, and headroom
         available_gb = total_gb * 0.5
         workers = max(1, int(available_gb / mem_per_worker_gb))

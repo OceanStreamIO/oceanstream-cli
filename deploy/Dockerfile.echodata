@@ -1,0 +1,111 @@
+# =============================================================================
+# oceanstream-echodata — base image for the batch echodata pipeline
+# =============================================================================
+# Ships `oceanstream[echodata]` plus every third-party module the scripts under
+# scripts/batch_processing/ import, and the scripts themselves. It runs nothing
+# by itself; downstream images (denoise-lab-worker) add their own entrypoint.
+#
+# Build from the repo root:
+#   az acr build --registry oceanstreamdevacr --platform linux/amd64 \
+#     --image oceanstream-echodata:<tag> -f deploy/Dockerfile.echodata .
+# =============================================================================
+
+ARG PYTHON_VERSION=3.12
+
+# -----------------------------------------------------------------------------
+# Stage 1: build the virtualenv
+# -----------------------------------------------------------------------------
+# Pinned to bookworm: trixie renamed the GDAL runtime lib (libgdal32 ->
+# libgdal36), so the runtime stage below could not satisfy it.
+FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+
+# git is not optional: pyproject.toml pulls echopype from the OceanStreamIO
+# fork's `oceanstream-integration` branch, and it builds with setuptools_scm,
+# which reads the cloned .git to derive a version.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        libgdal-dev \
+        libgeos-dev \
+        libproj-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip wheel
+
+WORKDIR /src
+
+# Resolve the dependency tree against a package skeleton first. Editing the
+# source then only re-runs the --no-deps install below, instead of re-resolving
+# echopype-from-git, dask[complete], copernicusmarine and friends.
+COPY pyproject.toml ./
+COPY oceanstream/README.md ./oceanstream/README.md
+
+# The trailing names are modules the batch scripts import that the `echodata`
+# extra does not cover. They go in the SAME pip invocation on purpose: s3fs
+# pulls aiobotocore, which pins botocore to a narrow range, so boto3 has to be
+# resolved alongside it rather than bolted on afterwards.
+# Deliberately absent is the `echodata-viz` extra — holoviews/hvplot/panel/
+# bokeh/datashader are reached only by plot_interactive_echogram(), which
+# imports them lazily and which this pipeline never calls.
+RUN touch oceanstream/__init__.py \
+    && pip install --no-cache-dir ".[echodata]" \
+        boto3 \
+        cartopy \
+        cmocean \
+        matplotlib \
+        rasterio \
+        geopandas \
+        scipy \
+        pillow \
+        psycopg2-binary \
+        azure-storage-file-share \
+        python-dotenv
+
+COPY oceanstream/ ./oceanstream/
+RUN pip install --no-cache-dir --no-deps --force-reinstall .
+
+# -----------------------------------------------------------------------------
+# Stage 2: runtime
+# -----------------------------------------------------------------------------
+# Must match the builder's Debian release — the venv links against its libs.
+FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+
+LABEL org.opencontainers.image.title="oceanstream-echodata"
+LABEL org.opencontainers.image.description="oceanstream[echodata] plus the batch_processing pipeline scripts"
+LABEL org.opencontainers.image.source="https://github.com/OceanStreamIO/oceanstream-cli"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgdal32 \
+        libgeos-c1v5 \
+        libproj25 \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# uid/gid 1000 is fixed on purpose: the worker and web containers share PVCs,
+# and the pod's fsGroup has to match one number across every image.
+RUN groupadd -g 1000 oceanstream \
+    && useradd -u 1000 -g 1000 -m -d /home/oceanstream -s /usr/sbin/nologin oceanstream
+
+COPY --from=builder /opt/venv /opt/venv
+COPY scripts/ /opt/oceanstream/scripts/
+
+# MPLBACKEND: without Agg, matplotlib picks a GUI backend and dies on import.
+# MPLCONFIGDIR/XDG_CACHE_HOME default under $HOME, which is not writable once
+# the pod runs as an arbitrary fsGroup; /tmp always is.
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/home/oceanstream \
+    OCEANSTREAM_SCRIPTS=/opt/oceanstream/scripts/batch_processing \
+    MPLBACKEND=Agg \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    XDG_CACHE_HOME=/tmp/cache
+
+WORKDIR /opt/oceanstream/scripts/batch_processing
+USER oceanstream
+
+CMD ["python"]

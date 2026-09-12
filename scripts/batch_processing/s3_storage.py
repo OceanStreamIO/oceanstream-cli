@@ -363,13 +363,23 @@ class _S3PrefixFS:
 
 # ── Dask worker plugin ───────────────────────────────────────────────────
 
-class S3StoragePlugin:
+try:  # distributed is only needed for the Dask path, not for patch_storage()
+    from distributed.diagnostics.plugin import WorkerPlugin as _WorkerPlugin
+except ImportError:
+    _WorkerPlugin = object
+
+
+class S3StoragePlugin(_WorkerPlugin):
     """Dask worker plugin that applies the S3 storage patches on each worker.
 
     Register with ``client.register_plugin(S3StoragePlugin(bucket, prefix))``.
     Credentials are deliberately not carried by default: leaving *key* and
     *secret* unset makes each worker read them from its own environment
     (a K8s secret) instead of shipping them through the scheduler.
+
+    Subclassing ``WorkerPlugin`` is mandatory, not decorative: distributed
+    2025.x onwards raises ``TypeError: Registering duck-typed plugins is not
+    allowed`` for a plain class with a ``setup`` method.
     """
 
     name = "s3-storage"

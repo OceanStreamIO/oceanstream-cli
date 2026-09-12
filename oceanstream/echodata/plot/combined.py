@@ -55,8 +55,13 @@ MAX_PLOT_DEPTH: float = 1200.0
 # Sv panel look indistinguishable from a gridded MVBS one.
 PINGS_PER_PIXEL: float = 2.0
 
-# Cap on figure width (inches). At dpi=150 this is 15 000 px.
-MAX_WIDTH_IN: float = 100.0
+# Canvas geometry, matched to the per-category echograms in echogram.py
+# (34 x 12 in at 180 dpi = 6120 x 2160 px) so the two can be compared side by
+# side. Honouring PINGS_PER_PIXEL for a 29 000-ping day would want 80 in, and
+# the resulting 14 500 x 1050 px strip is unreadable in a browser.
+MAX_WIDTH_IN: float = 34.0
+HEIGHT_IN: float = 12.0
+RENDER_DPI: int = 180
 
 # Pulse-mode indicator bar colours (matches legacy scripts)
 _PULSE_COLORS = {
@@ -192,10 +197,20 @@ def combine_38khz_day(
             row = sv_raw[i, valid]
             m = ~np.isnan(row)
             if m.sum() > 1:
-                sv_interp[i] = np.interp(
+                interp = np.interp(
                     common_depth, depth_valid[m], row[m],
                     left=np.nan, right=np.nan,
                 )
+                # np.interp bridges interior NaN runs, and on a denoised input
+                # those runs ARE the removed noise — bridging them paints it
+                # back in and the panel looks undenoised. Blank any output
+                # sample whose nearest source samples were mostly NaN.
+                kept = np.interp(
+                    common_depth, depth_valid, m.astype(np.float32),
+                    left=0.0, right=0.0,
+                )
+                interp[kept < 0.5] = np.nan  # noqa: PLR2004 - nearest-sample majority
+                sv_interp[i] = interp
 
         mode_code = 0 if mode == "long_pulse" else 1
         ds_new = xr.Dataset(
@@ -321,9 +336,10 @@ def render_combined_echogram(
     max_plot_depth: float = MAX_PLOT_DEPTH,
     vmin: float = SV_VMIN,
     vmax: float = SV_VMAX,
-    dpi: int = 150,
+    dpi: int = RENDER_DPI,
     pings_per_pixel: float = PINGS_PER_PIXEL,
     max_width_in: float = MAX_WIDTH_IN,
+    height_in: float = HEIGHT_IN,
 ) -> Optional[Path]:
     """Render a combined 24h echogram for the 38 kHz channel.
 
@@ -355,11 +371,12 @@ def render_combined_echogram(
     max_plot_depth : float
         Trim depth axis at this value (metres).
     pings_per_pixel : float
-        Target pings per horizontal pixel. The canvas is widened until this
-        density is met, so a 29 000-ping Sv panel gets a much wider figure
-        than an 8 500-bin MVBS one.
+        Target pings per horizontal pixel. The canvas is widened towards this
+        density until ``max_width_in`` stops it.
     max_width_in : float
         Upper bound on figure width (inches).
+    height_in : float
+        Figure height (inches), including the pulse-mode strip.
 
     Returns
     -------
@@ -418,7 +435,7 @@ def render_combined_echogram(
             max(14.0, time_span * 1.2, n_pings / max(pings_per_pixel * dpi, 1.0)),
         )
     )
-    height = 7.0
+    height = height_in
 
     has_pulse = pulse_mode is not None
     cbar_frac = 0.3 / width
