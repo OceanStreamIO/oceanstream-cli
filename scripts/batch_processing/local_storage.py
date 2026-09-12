@@ -216,11 +216,21 @@ class _LocalFS:
 
 # ── Dask worker plugin ───────────────────────────────────────────────────
 
-class LocalStoragePlugin:
+try:  # distributed is only needed for the Dask path, not for patch_storage()
+    from distributed.diagnostics.plugin import WorkerPlugin as _WorkerPlugin
+except ImportError:
+    _WorkerPlugin = object
+
+
+class LocalStoragePlugin(_WorkerPlugin):
     """Dask worker plugin that applies local storage patches on each worker.
 
     Register with ``client.register_worker_plugin(LocalStoragePlugin(root))``
     so that Dask workers use local filesystem instead of Azure.
+
+    Subclassing ``WorkerPlugin`` is mandatory, not decorative: distributed
+    2025.x onwards raises ``TypeError: Registering duck-typed plugins is not
+    allowed`` for a plain class with a ``setup`` method.
     """
 
     name = "local-storage"
