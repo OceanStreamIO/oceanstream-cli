@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "processing_extent",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "role": "processing_extent", "provenance": "bounds of rho_b_561.tif", "note": "ACOLITE output grid. Extends offshore for deep-water sampling; not a valid area over which to report benthic statistics.", "grid_width_px": 3605, "grid_height_px": 4441, "pixel_size_m": 10.0 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ -8.888607543690833, 38.15005493025118 ], [ -8.887992753172217, 38.550293128092981 ], [ -9.301706372926434, 38.549957954350383 ], [ -9.300050379311493, 38.149724503749972 ], [ -8.888607543690833, 38.15005493025118 ] ] ] } }
+]
+}

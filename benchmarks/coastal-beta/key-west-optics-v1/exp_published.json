@@ -1,0 +1,17 @@
+{
+  "variant": "exp_published",
+  "registration": "experiment.json",
+  "input_lock": "input-lock.json",
+  "output_dir": "../../../out/coastal-beta/key-west-optics-v1/exp_published",
+  "acolite_dir": "../../../.cache/coastal/reference/key-west-optics-v1/acolite/exp_published",
+  "inputs_dir": "../../../.cache/coastal/reference/key-west-optics-v1/inputs",
+  "offshore_elevation": "../../../.cache/coastal/reference/key-west-optics-v1/inputs/offshore_elevation_etopo.tif",
+  "tide": "../../../.cache/coastal/reference/key-west-optics-v1/inputs/tide.json",
+  "lidar_elevation": "../../../.cache/coastal/reference/key-west-2017/lidar-transect/elevation_mllw_10m.tif",
+  "additional_provenance_files": [
+    "../../../.cache/coastal/reference/key-west-2017/scene/scene-manifest.json",
+    "../../../.cache/coastal/reference/key-west-2017/lidar-transect/lidar_preparation.json",
+    "../../../.cache/coastal/reference/key-west-2017/lidar-transect/elevation_mllw_10m.provenance.json",
+    "../../../.cache/coastal/reference/key-west-2017/datum-transect/surface_geoid12b.json"
+  ]
+}

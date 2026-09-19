@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -7.45,
+              55.15
+            ],
+            [
+              -7.45,
+              55.3
+            ],
+            [
+              -7.65,
+              55.3
+            ],
+            [
+              -7.65,
+              55.15
+            ],
+            [
+              -7.45,
+              55.15
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "region_id": "donegal_local",
+        "source": "existing screening_bbox",
+        "is_exploratory": true,
+        "new_heldout_date_required": true
+      }
+    }
+  ]
+}

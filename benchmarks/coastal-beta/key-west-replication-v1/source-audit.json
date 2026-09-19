@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "checked_on": "2026-09-16",
+  "paper": {
+    "landing_page": "https://repository.library.noaa.gov/view/noaa/22109",
+    "pdf": "https://repository.library.noaa.gov/view/noaa/22109/noaa_22109_DS1.pdf",
+    "finding": "NOAA record links the article PDF; no downloadable point coordinates, evaluation polygon or supplementary dataset was found in that record or targeted public searches. This is not proof that the authors do not hold them.",
+    "calibration": "Nine chart points from charts 11441/11442, depths 0-5m; Table 2 gives blue/red m0=5.9, m1=5.8. Exact positions and chart editions are unspecified.",
+    "evaluation": "Lidar at 10m in MLLW; figure geography is available, but no machine-readable evaluation polygon was located."
+  },
+  "historical_charts": {
+    "catalogue": "https://historicalcharts.noaa.gov/",
+    "query_endpoint": "https://historicalcharts.noaa.gov/includes/imageDBDT.php",
+    "query_parameters": {"yearMin": "2010", "yearMax": "2017", "type": "Any Type", "state": "Any", "scale": "All Scales"},
+    "11441": {"year": 2013, "edition": 42, "scale": 30000, "filename": "11441-02-2013", "image_download": "https://historicalcharts.noaa.gov/includes/downloadsingle.php?filename=11441-02-2013&fileExt=.jpg", "bytes": 23629158, "inspected": true, "units": "feet", "depth_datum": "MLLW", "horizontal_datum": "NAD83"},
+    "11442": {"year": 2012, "edition": 36, "scale": 80000, "catalogue_entry_found": true, "image_inspected": false},
+    "calibration_status": "Historical chart recovered, authors' points unidentified. This run does not digitize approximate sounding coordinates from the raster or present lidar proxies as chart observations."
+  },
+  "lidar": {
+    "point_cloud_metadata": "https://www.fisheries.noaa.gov/inport/item/48174",
+    "dem_metadata": "https://www.fisheries.noaa.gov/inport/item/48372",
+    "public_survey_dates": ["2016-04-19", "2016-04-25"],
+    "public_instrument": "Riegl VQ820G",
+    "paper_instrument": "Riegl VQ-880-G",
+    "finding": "Public point-cloud and derived DEM metadata agree on the April 2016 Key West survey. The instrument discrepancy with the paper remains unresolved; exact source equivalence is not asserted."
+  },
+  "execution_decision": "Proceed with the registered nine-lidar-observation fallback, separately labelled as matched calibration count. Exact chart-calibrated replication remains incomplete; no superiority claim over the paper is possible from this experiment alone.",
+  "outreach_performed": false
+}

@@ -1,0 +1,136 @@
+{
+  "schema_version": "1.0",
+  "scene_id": "14bf0974-868d-429d-b506-a9cbe6ada92f",
+  "scene_name": "S2A_MSIL1C_20170208T160411_N0500_R097_T17RMH_20231024T232642.SAFE",
+  "acolite_commit": "64a02ff386e2985eef68ae00198b38e04f3c4a1f",
+  "acolite_common_settings": {
+    "s2_target_res": "10",
+    "l2r_export_geotiff": "True",
+    "l2w_parameters": "Rrs_*",
+    "l2w_export_geotiff": "True",
+    "output_geolocation": "True",
+    "dsf_residual_glint_correction": "False",
+    "l2w_mask_water_parameters": "True"
+  },
+  "acolite_variants": {
+    "exp_published": {
+      "atmospheric_correction_method": "exponential",
+      "exp_wave1": "865",
+      "exp_wave2": "1600",
+      "exp_fixed_epsilon": "True",
+      "exp_epsilon": "1.0",
+      "resolved_geometry": "False"
+    },
+    "dsf_current": {
+      "atmospheric_correction_method": "dark_spectrum",
+      "dsf_aot_estimate": "tiled",
+      "dsf_spectrum_option": "intercept",
+      "dsf_percentile": "1"
+    }
+  },
+  "experiment_id": "key-west-20170208-optics-v1",
+  "purpose": "fixed_lidar_depth_optical_consistency",
+  "processing_bbox_wgs84": [
+    -81.79,
+    24.33,
+    -81.7,
+    24.71
+  ],
+  "reporting_crs": "EPSG:6346",
+  "reporting_bounds": [
+    423000,
+    2715000,
+    426000,
+    2731000
+  ],
+  "reporting_depth_range_m": [
+    0.5,
+    7.5
+  ],
+  "reference_depth_source": "NOAA lidar corrected from NAVD88 to MLLW plus independently observed acquisition-time gauge level; no SDB or blending",
+  "offshore_depth_source": "ETOPO2022 EGM2008 elevation used only to screen >100m water; never used as reporting depth",
+  "offshore_reference_bboxes": {
+    "offshore_west": [
+      -81.78,
+      24.335,
+      -81.75,
+      24.385
+    ],
+    "offshore_east": [
+      -81.74,
+      24.335,
+      -81.71,
+      24.385
+    ]
+  },
+  "offshore_min_depth_m": 100.0,
+  "offshore_min_optical_depth": 6.0,
+  "reference_sample_max_per_patch": 5000,
+  "seed": 42,
+  "attenuation_regions": {
+    "south": [
+      423000,
+      2715000,
+      426000,
+      2720000
+    ],
+    "basin": [
+      423000,
+      2720000,
+      426000,
+      2726000
+    ],
+    "north": [
+      423000,
+      2726000,
+      426000,
+      2731000
+    ]
+  },
+  "attenuation_config": {
+    "depth_min_m": 1.0,
+    "depth_max_m": 7.5,
+    "depth_bin_m": 0.5
+  },
+  "wavelengths_fit_nm": [
+    443,
+    492,
+    560,
+    665,
+    704,
+    740,
+    783,
+    833,
+    865
+  ],
+  "reporting_wavelengths_nm": [
+    443,
+    492,
+    560,
+    665
+  ],
+  "sensitivity_depth_offsets_m": [
+    -0.25,
+    0.25
+  ],
+  "sensitivity_iop_factors": [
+    0.8,
+    1.2
+  ],
+  "sensitivity_interpretation": "Prespecified perturbation scenarios, not confidence intervals.",
+  "reference_cases": [
+    "pooled",
+    "offshore_west",
+    "offshore_east"
+  ],
+  "evaluation": "Fit attenuation on fixed buffered 500m calibration blocks; assess depth-bin quantile residuals on opposite blocks. Report both terrain classes without habitat names; forward/inverse closure is algebra only.",
+  "registered_before_optical_retrieval": true,
+  "limitations": [
+    "Independent optical accuracy measurements unavailable.",
+    "Offshore and shallow lagoon water may differ; report sensitivity to both fixed patches.",
+    "ETOPO is coarser and has a different datum; its values enter offshore screening only.",
+    "Gauge spatial representativeness unmeasured; +/-0.25m depth scenarios are not confidence intervals.",
+    "Coastal terrain is not observed substrate ground truth.",
+    "Fresh larger ACOLITE processing extent can change aerosol estimation relative to the SDB experiment."
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "retrieval": {
+    "rrs_670_turbid_threshold": 0.0015,
+    "a_cdm_443_min": -0.005,
+    "a_cdm_443_max_fatal": -0.03,
+    "kd_490_min": 0.01,
+    "kd_490_max": 2.0,
+    "bbp_555_min": 0.0,
+    "bbp_555_max": 0.02,
+    "y_min": 0.0,
+    "y_max": 2.5,
+    "min_deep_pixels": 50
+  },
+  "mask": {
+    "land_nir_max": 0.1,
+    "cloud_reflectance_max": 0.2,
+    "glint_nir_max": 0.03,
+    "glint_swir_max": null,
+    "foam_reflectance_min": 0.15,
+    "foam_flatness_max": 1.4,
+    "adjacency_buffer_px": 4,
+    "swir_max_rhos": 0.01,
+    "swir_bands_nm": [
+      1612.0,
+      2191.0
+    ],
+    "deepwater_min_depth_m": 30.0,
+    "deepwater_min_optical_depth": 6.0,
+    "deepwater_max_samples": 5000,
+    "optical_depth_max": 4.0,
+    "optical_depth_clean": 2.0,
+    "rng_seed": 42
+  },
+  "bathymetry": {
+    "min_scaled_reflectance": 1.05,
+    "ratio_valid_range": [
+      0.5,
+      2.0
+    ],
+    "depth_valid_range_m": [
+      0.0,
+      40.0
+    ],
+    "fit_reference_range_m": [
+      2.0,
+      25.0
+    ],
+    "min_fit_pixels": 200,
+    "holdout_frac": 0.3,
+    "min_depth_span_m": 5.0,
+    "checkerboard_block_px": 50,
+    "stratum_boundary_m": 12.0,
+    "reference_sigma_m": 3.0,
+    "blend_smooth_sigma_px": 2.0,
+    "min_span_fraction": 0.5,
+    "rng_seed": 42,
+    "flat_max_slope_deg": 2.0,
+    "flat_max_relief_m": 0.5,
+    "rugose_min_slope_deg": 5.0,
+    "rugose_min_relief_m": 1.5,
+    "relief_window_px": 3
+  },
+  "attenuation": {
+    "depth_bin_m": 1.0,
+    "min_pixels_per_bin": 20,
+    "min_bins": 4,
+    "depth_min_m": 1.0,
+    "depth_max_m": 20.0,
+    "quantile": 0.9,
+    "sensitivity_quantiles": [
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95
+    ],
+    "min_deep_reference_pixels": 50,
+    "null_channel_nm": 667.0,
+    "min_r_squared": 0.5,
+    "max_quantile_spread_ratio": 0.35,
+    "max_nonpositive_residual": 0.7,
+    "opaque_floor_min_per_m": 1.0
+  },
+  "qc": {
+    "bottom_blind_depth_m": 10.0,
+    "bottom_blind_nm": 667.0,
+    "discriminating_nm": 561.0,
+    "scatter_block_sizes_m": [
+      100.0,
+      300.0,
+      500.0,
+      1000.0
+    ],
+    "min_pixels_per_block": 12,
+    "min_bottom_blind_pixels": 100,
+    "band_match_tolerance_nm": 8.0,
+    "substrate_signal_ratio": 1.5,
+    "plausible_rho_b": [
+      0.0,
+      0.5
+    ],
+    "depth_perturbations_m": [
+      -2.0,
+      -1.0,
+      0.0,
+      1.0,
+      2.0
+    ],
+    "reflectance_perturbations_rhos": [
+      -0.001,
+      0.0,
+      0.001
+    ],
+    "k_floor_slack": 0.0,
+    "floor_solar_zenith_deg": 35.0,
+    "ratio_contrast_max": 0.25,
+    "ratio_unity_tolerance": 0.15,
+    "ratio_floor_slack": 0.1,
+    "floor_max_wavelength_nm": 700.0,
+    "floor_opaque_min_per_m": 1.0,
+    "offset_nir_min_nm": 800.0,
+    "min_offset_pixels": 50,
+    "offset_swir_min_nm": 1500.0,
+    "offset_swir_max": 0.01,
+    "offset_band_spread_max": 0.5
+  },
+  "detectability": {
+    "t_aw": 0.52,
+    "contrast_pair": [
+      "bare",
+      "brown"
+    ],
+    "contrast_band_tolerance_nm": 15.0,
+    "fallback_epsilon_rhos": 0.001,
+    "min_epsilon_rhos": 1e-06,
+    "min_useful_z_max_m": 1.0,
+    "par_range_nm": [
+      400.0,
+      700.0
+    ],
+    "par_step_nm": 10.0,
+    "par_photon_weighted": true,
+    "par_max_depth_m": 40.0
+  },
+  "uncertainty": {
+    "empirical_relative_sigma": null,
+    "qaa_relative_sigma": null,
+    "source": null
+  }
+}

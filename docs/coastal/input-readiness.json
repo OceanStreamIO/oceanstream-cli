@@ -1,0 +1,249 @@
+{
+  "inspection": "Six supplied scenes processed in diagnostic benchmark v3 on 2026-09-15.",
+  "candidates": [
+    {
+      "site": "sesimbra",
+      "date": "2026-06-17",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+      "acquisition_time": "2026-06-17T11:30:47.184598+00:00",
+      "solar_zenith_deg": "20.8659547179039",
+      "shape": [
+        4441,
+        3605
+      ],
+      "crs": "EPSG:32629",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 7640294,
+        "reporting_pixels": 3906,
+        "requested_reporting_pixels_on_grid": 38808,
+        "reporting_fraction_on_grid": 0.10064935064935066,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 26589,
+        "reference_domain_water_pixels": 26589,
+        "reference_fraction_of_water": 0.9977814989842014,
+        "deep_depth_quantiles_m": [
+          99.65487747192383,
+          114.87792587280273,
+          420.19648437500007
+        ],
+        "calibration_regions": {
+          "sesimbra_local": {
+            "pixels": 146251,
+            "reference_pixels": 146206
+          }
+        }
+      }
+    },
+    {
+      "site": "sesimbra",
+      "date": "2026-06-27",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+      "acquisition_time": "2026-06-27T11:30:46.405805+00:00",
+      "solar_zenith_deg": "21.2489910962632",
+      "shape": [
+        4441,
+        3605
+      ],
+      "crs": "EPSG:32629",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 7293375,
+        "reporting_pixels": 14556,
+        "requested_reporting_pixels_on_grid": 38808,
+        "reporting_fraction_on_grid": 0.3750773036487322,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 24249,
+        "reference_domain_water_pixels": 24249,
+        "reference_fraction_of_water": 0.997065967401923,
+        "deep_depth_quantiles_m": [
+          109.30244178771973,
+          158.4459457397461,
+          606.5541931152347
+        ],
+        "calibration_regions": {
+          "sesimbra_local": {
+            "pixels": 225981,
+            "reference_pixels": 225964
+          }
+        }
+      }
+    },
+    {
+      "site": "donegal",
+      "date": "2026-07-15",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "acquisition_time": "2026-07-15T11:46:22.579138+00:00",
+      "solar_zenith_deg": "35.3516569944195",
+      "shape": [
+        5046,
+        2010
+      ],
+      "crs": "EPSG:32629",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 5323296,
+        "reporting_pixels": 911372,
+        "requested_reporting_pixels_on_grid": 2124059,
+        "reporting_fraction_on_grid": 0.4290709438862103,
+        "deep_pixels": 4019,
+        "deep_candidates_before_sampling": 4019,
+        "reference_domain_water_pixels": 1629726,
+        "reference_fraction_of_water": 0.9914310607563435,
+        "deep_depth_quantiles_m": [
+          59.634664916992186,
+          62.562782287597656,
+          65.0
+        ],
+        "calibration_regions": {
+          "donegal_local": {
+            "pixels": 928547,
+            "reference_pixels": 911372
+          }
+        }
+      }
+    },
+    {
+      "site": "donegal",
+      "date": "2026-08-24",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "acquisition_time": "2026-08-24T11:46:17.827864+00:00",
+      "solar_zenith_deg": "45.468208453535",
+      "shape": [
+        5046,
+        2010
+      ],
+      "crs": "EPSG:32629",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 6440612,
+        "reporting_pixels": 884024,
+        "requested_reporting_pixels_on_grid": 2124059,
+        "reporting_fraction_on_grid": 0.4161955953200923,
+        "deep_pixels": 147,
+        "deep_candidates_before_sampling": 147,
+        "reference_domain_water_pixels": 2940204,
+        "reference_fraction_of_water": 0.9919737441100318,
+        "deep_depth_quantiles_m": [
+          62.195214080810544,
+          65.5999984741211,
+          67.77086944580078
+        ],
+        "calibration_regions": {
+          "donegal_local": {
+            "pixels": 906716,
+            "reference_pixels": 884024
+          }
+        }
+      }
+    },
+    {
+      "site": "summer_isles",
+      "date": "2026-05-27",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "acquisition_time": "2026-05-27T11:55:06.906289+00:00",
+      "solar_zenith_deg": "37.0333910404554",
+      "shape": [
+        2288,
+        1852
+      ],
+      "crs": "EPSG:32630",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 2210401,
+        "reporting_pixels": 252749,
+        "requested_reporting_pixels_on_grid": 1448260,
+        "reporting_fraction_on_grid": 0.1745190780660931,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 476976,
+        "reference_domain_water_pixels": 662630,
+        "reference_fraction_of_water": 0.9035003151011965,
+        "deep_depth_quantiles_m": [
+          55.24856452941894,
+          82.76431274414062,
+          129.87002716064453
+        ],
+        "calibration_regions": {
+          "summer_isles_local": {
+            "pixels": 750820,
+            "reference_pixels": 638489
+          }
+        }
+      }
+    },
+    {
+      "site": "summer_isles",
+      "date": "2026-09-09",
+      "available_rhos_files": 11,
+      "processing_rerun": true,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "acquisition_time": "2026-09-09T11:55:06.924699+00:00",
+      "solar_zenith_deg": "53.1352850740082",
+      "shape": [
+        2288,
+        1852
+      ],
+      "crs": "EPSG:32630",
+      "status": "rejected",
+      "coverage": {
+        "valid_water_pixels": 2140226,
+        "reporting_pixels": 252249,
+        "requested_reporting_pixels_on_grid": 1448260,
+        "reporting_fraction_on_grid": 0.17417383618963445,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 432573,
+        "reference_domain_water_pixels": 659242,
+        "reference_fraction_of_water": 0.9111257409264255,
+        "deep_depth_quantiles_m": [
+          58.89190521240234,
+          85.64737701416016,
+          130.5169891357422
+        ],
+        "calibration_regions": {
+          "summer_isles_local": {
+            "pixels": 741345,
+            "reference_pixels": 637983
+          }
+        }
+      }
+    }
+  ],
+  "release_ready": false,
+  "missing": [
+    "Acquisition-time LAT tide corrections and measured reference/model uncertainty.",
+    "New held-out evaluation for exploratory calibration/reporting regions.",
+    "Independent optical evidence for full scientific accuracy claims.",
+    "Reconciled historical ACOLITE code provenance or regeneration with one pinned version."
+  ],
+  "existing_inputs_verified": {
+    "imagery": "Two ACOLITE dates each at Sesimbra, Donegal and Summer Isles.",
+    "bathymetry": "Local fine and coarse references are available across the three sites.",
+    "sesimbra_regions": "Supplied deepwater_reference, habitat_aoi and processing_extent GeoJSONs connected in benchmark AOIs; habitat rectangle remains provisional.",
+    "sesimbra_observations": "CCMAR quadrats and sonde spreadsheets exist. Inspected sonde headers include depth, turbidity, chlorophyll, fDOM and salinity, but no PAR or spectral radiometry fields.",
+    "northern_regions": "Bathymetry-derived offshore masks and existing screening/reporting rectangles registered and checked on each scene grid; exploratory."
+  },
+  "benchmark": {
+    "registration": "benchmarks/coastal-beta/supplied-v3/benchmark.json",
+    "lock": "benchmarks/coastal-beta/supplied-v3/benchmark-v3.lock.json",
+    "report": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/benchmark.json",
+    "summary": "docs/coastal/six-scene-results.json",
+    "n_completed": 6,
+    "n_accepted_by_product": {
+      "attenuation": 0,
+      "detectability": 0,
+      "sdb_depth": 0,
+      "rho_b": 0,
+      "seabed_par": 0
+    }
+  }
+}

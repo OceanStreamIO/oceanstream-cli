@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "key-west-20170208-v2-transect",
+  "purpose": "published_positive_reference_reconstruction",
+  "registered_before_evaluation": true,
+  "paper": "https://doi.org/10.1016/j.ecss.2019.106277",
+  "companion_atmospheric_correction_recipe": "https://doi.org/10.3390/rs11060645",
+  "scene_id": "14bf0974-868d-429d-b506-a9cbe6ada92f",
+  "scene_name": "S2A_MSIL1C_20170208T160411_N0500_R097_T17RMH_20231024T232642.SAFE",
+  "processing_bbox_wgs84": [
+    -81.79,
+    24.53,
+    -81.7,
+    24.71
+  ],
+  "reporting_crs": "EPSG:6346",
+  "reporting_bounds": [
+    423000,
+    2715000,
+    426000,
+    2731000
+  ],
+  "region_selection": "Fixed 3 km east-west by 16 km north-south transect strip corresponding approximately to Fig.5 P1/P2, chosen from published geography and reference-depth support before any satellite-depth scoring.",
+  "reference": {
+    "dataset": "NOAA 2016 Key West topobathymetric DEM 6366",
+    "original_lidar_dataset": "NOAA 6246, InPort 48174",
+    "survey_dates": [
+      "2016-04-19",
+      "2016-04-25"
+    ],
+    "source_vertical_datum": "NAVD88",
+    "source_geoid": "GEOID12B",
+    "target_vertical_datum": "MLLW",
+    "conversion": "NOAA VDatum spatial correction; requests and interpolation check retained",
+    "limitations": [
+      "Public survey sensor label differs from main paper; exact source identity unresolved.",
+      "Official 1 m DEM interpolates classified ground and seabed returns; return counts unavailable.",
+      "Lidar and satellite acquisition are separated by approximately ten months."
+    ]
+  },
+  "evaluation": {
+    "reference_depth_interval_m": [
+      0,
+      5
+    ],
+    "spatial_block_size_m": 500,
+    "buffer_pixels_each_side": 1,
+    "split": "fixed checkerboard spatial blocks with excluded boundary pixels; calibration and evaluation never share source reference cells",
+    "metrics": [
+      "mae_m",
+      "median_absolute_error_m",
+      "rmse_m",
+      "bias_m",
+      "valid_coverage"
+    ],
+    "depth_strata_m": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "score_unblended_depth": true,
+    "baseline": "calibration-block mean depth on held-out blocks",
+    "selection_rule": "Report every registered correction and model variant; no selection or calibration using held-out errors."
+  },
+  "published_model": {
+    "n": 1000,
+    "m0": 5.9,
+    "m1": 5.8,
+    "bands": [
+      "B2",
+      "B4"
+    ],
+    "reflectance": "Rrs sr^-1",
+    "median_filter_pixels": 3,
+    "published_median_absolute_error_m": 0.39
+  },
+  "acolite_commit": "64a02ff386e2985eef68ae00198b38e04f3c4a1f",
+  "acolite_common_settings": {
+    "s2_target_res": "10",
+    "l2r_export_geotiff": "True",
+    "l2w_parameters": "Rrs_*",
+    "l2w_export_geotiff": "True",
+    "output_geolocation": "True",
+    "dsf_residual_glint_correction": "False",
+    "l2w_mask_water_parameters": "True"
+  },
+  "acolite_variants": {
+    "exp_published": {
+      "atmospheric_correction_method": "exponential",
+      "exp_wave1": "865",
+      "exp_wave2": "1600",
+      "exp_fixed_epsilon": "True",
+      "exp_epsilon": "1.0",
+      "resolved_geometry": "False"
+    },
+    "dsf_current": {
+      "atmospheric_correction_method": "dark_spectrum",
+      "dsf_aot_estimate": "tiled",
+      "dsf_spectrum_option": "intercept",
+      "dsf_percentile": "1"
+    }
+  },
+  "interpretation_limits": [
+    "Reconstruction using current pinned ACOLITE and reprocessed Sentinel L1C, not bitwise reproduction of historical processing.",
+    "Main paper's nine chart calibration points are unavailable; fixed published coefficients and spatially held-out lidar recalibration are reported separately.",
+    "Published accuracy is contextual because region, baseline, calibration and source provenance differ; it is not an automatic acceptance threshold.",
+    "This experiment evaluates the SDB component only; it does not validate attenuation, effective bottom reflectance, detectability or PAR."
+  ],
+  "parent_registration": "../key-west-v1/experiment-exp-mean-geometry.json",
+  "amendment": {
+    "stage": "before any satellite depth fit or evaluation",
+    "reason": "Initial 3x3km basin subset had MLLW depth maximum2.037m; it cannot test published0-5m retrieval range. Extend north-south along published transects without inspecting any optical accuracy.",
+    "original_reference_depth_preflight": {
+      "p50_m": 0.877,
+      "p95_m": 1.609,
+      "maximum_m": 2.037
+    },
+    "retained_technical_workaround": "EXP uses resolved_geometry=False after pinned ACOLITE KeyError pressure; no ACOLITE source changes."
+  }
+}

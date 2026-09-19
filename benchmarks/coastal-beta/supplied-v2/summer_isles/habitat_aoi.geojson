@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -5.25,
+              57.95
+            ],
+            [
+              -5.25,
+              58.06
+            ],
+            [
+              -5.45,
+              58.06
+            ],
+            [
+              -5.45,
+              57.95
+            ],
+            [
+              -5.25,
+              57.95
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "role": "reporting",
+        "source": "existing screening_bbox",
+        "is_provisional": true,
+        "note": "Evaluation rectangle; no habitat-area claim."
+      }
+    }
+  ]
+}

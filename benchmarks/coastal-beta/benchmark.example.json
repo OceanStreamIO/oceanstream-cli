@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "acolite_version": "REPLACE_WITH_PINNED_VERSION_OR_COMMIT",
+  "depth_bins_m": [0, 5, 10, 20, 40],
+  "scenes": [
+    {"id": "sesimbra-2026-06-17", "site": "sesimbra", "date": "2026-06-17", "aoi": "inputs/sesimbra/aoi.json", "scene": "inputs/sesimbra/2026-06-17/acolite", "config": "inputs/sesimbra/config.json", "tide": "inputs/sesimbra/2026-06-17/tide.json"},
+    {"id": "sesimbra-2026-06-27", "site": "sesimbra", "date": "2026-06-27", "aoi": "inputs/sesimbra/aoi.json", "scene": "inputs/sesimbra/2026-06-27/acolite", "config": "inputs/sesimbra/config.json", "tide": "inputs/sesimbra/2026-06-27/tide.json"},
+    {"id": "donegal-2026-07-15", "site": "donegal", "date": "2026-07-15", "aoi": "inputs/donegal/aoi.json", "scene": "inputs/donegal/2026-07-15/acolite", "config": "inputs/donegal/config.json", "tide": "inputs/donegal/2026-07-15/tide.json"},
+    {"id": "donegal-2026-08-24", "site": "donegal", "date": "2026-08-24", "aoi": "inputs/donegal/aoi.json", "scene": "inputs/donegal/2026-08-24/acolite", "config": "inputs/donegal/config.json", "tide": "inputs/donegal/2026-08-24/tide.json"},
+    {"id": "summer-isles-2026-05-27", "site": "summer_isles", "date": "2026-05-27", "aoi": "inputs/summer_isles/aoi.json", "scene": "inputs/summer_isles/2026-05-27/acolite", "config": "inputs/summer_isles/config.json", "tide": "inputs/summer_isles/2026-05-27/tide.json"},
+    {"id": "summer-isles-2026-09-09", "site": "summer_isles", "date": "2026-09-09", "aoi": "inputs/summer_isles/aoi.json", "scene": "inputs/summer_isles/2026-09-09/acolite", "config": "inputs/summer_isles/config.json", "tide": "inputs/summer_isles/2026-09-09/tide.json"}
+  ],
+  "evidence": []
+}
