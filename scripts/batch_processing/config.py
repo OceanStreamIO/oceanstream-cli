@@ -302,6 +302,7 @@ class PipelineConfig:
     gps_data_file: Optional[str] = None  # path to exported GPS JSON
     gps_container: str = ""  # Azure blob container for GPS GeoParquet (e.g. "gpsdata")
     gps_blob_path: str = ""  # path within gps_container (default: {cruise_id}/)
+    gps_dir: str = ""  # local directory of GPS GeoParquet (alternative to gps_container)
     file_list_file: Optional[str] = None  # path to pre-generated file list JSON
 
     # ── Storage backend ──────────────────────────────────────────

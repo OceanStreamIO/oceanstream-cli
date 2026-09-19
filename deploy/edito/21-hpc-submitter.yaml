@@ -1,0 +1,61 @@
+# =============================================================================
+# oceanstream-hpc-submitter — Prefect process worker for the `oceanstream-hpc`
+# pool. It drives Slurm jobs over SSH (scripts/hpc/*), publishes STAC and
+# builds track tiles; the heavy processing happens on the cluster.
+#
+# No values in this file: site settings come from the ConfigMap
+# `oceanstream-hpc-site`, the SSH key from the Secret `oceanstream-hpc-ssh`
+# (both created by bootstrap-hpc-secrets.sh) and S3 credentials from the
+# existing `oceanstream-s3` Secret.
+#
+#   kubectl -n <ns> apply -f deploy/edito/21-hpc-submitter.yaml
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oceanstream-hpc-submitter
+  labels: {app: oceanstream-hpc-submitter}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: oceanstream-hpc-submitter}
+  template:
+    metadata:
+      labels: {app: oceanstream-hpc-submitter}
+    spec:
+      # Service-link env vars (OCEANSTREAM_PREFECT_*) collide with app settings.
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: acr-pull-secret
+      volumes:
+        - name: hpc-ssh
+          secret: {secretName: oceanstream-hpc-ssh, defaultMode: 0400}
+        - name: ssh-home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {sizeLimit: 2Gi}
+      containers:
+        - name: submitter
+          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:latest
+          imagePullPolicy: Always
+          command: ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
+          env:
+            - {name: PREFECT_API_URL, value: "http://oceanstream-prefect-server-internal:4200/api"}
+            - {name: PREFECT_HOME, value: /tmp/prefect}
+            - {name: OCEANSTREAM_SOURCE_PATH, value: /app}
+            - {name: HOME, value: /home/hpc}
+            - {name: HPC_SSH_KEY, value: /etc/ssh-hpc/id_ed25519}
+            - {name: HPC_KNOWN_HOSTS, value: /etc/ssh-hpc/known_hosts}
+            - {name: TMPDIR, value: /tmp}
+          envFrom:
+            - configMapRef: {name: oceanstream-hpc-site}
+            - secretRef: {name: oceanstream-s3}
+            - secretRef: {name: oceanstream-hpc-ingest, optional: true}
+          volumeMounts:
+            - {name: hpc-ssh, mountPath: /etc/ssh-hpc, readOnly: true}
+            - {name: ssh-home, mountPath: /home/hpc/.ssh}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}

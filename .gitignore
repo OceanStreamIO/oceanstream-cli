@@ -82,3 +82,9 @@ coverage.json
 scripts/batch_processing/raw_cache/
 scripts/batch_processing/report_assets/
 *.out
+
+# Secrets and site-specific HPC settings
+.env
+scripts/hpc/site.env
+wheelhouse/
+*.sif

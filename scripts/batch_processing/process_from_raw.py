@@ -621,13 +621,17 @@ def run_echodata_combine(
 
 
 def download_gps_geoparquet(cfg: PipelineConfig) -> pd.DataFrame | None:
-    """Download GPS GeoParquet from Azure blob and return a normalised DataFrame.
+    """Load GPS GeoParquet and return a normalised DataFrame.
 
     Reads all .parquet / .geoparquet files under ``{gps_container}/{gps_blob_path}``
-    and normalises the schema to columns: ``lat``, ``lon``, ``dt``.
+    in Azure Blob Storage, or under the local ``gps_dir`` when that is set
+    (for hosts without cloud access), and normalises the schema to columns:
+    ``lat``, ``lon``, ``dt``.
 
     Returns None if GPS is not configured or no data is found.
     """
+    if getattr(cfg, "gps_dir", ""):
+        return _load_gps_from_dir(cfg)
     if not cfg.gps_container:
         return None
 
@@ -674,6 +678,37 @@ def download_gps_geoparquet(cfg: PipelineConfig) -> pd.DataFrame | None:
         finally:
             Path(tmp.name).unlink(missing_ok=True)
 
+    return _finalise_gps(frames, cfg)
+
+
+def _load_gps_from_dir(cfg: PipelineConfig) -> pd.DataFrame | None:
+    """Read every .parquet / .geoparquet file under ``cfg.gps_dir``."""
+    root = Path(cfg.gps_dir).expanduser()
+    if not root.is_dir():
+        logger.warning("GPS directory does not exist: %s", root)
+        return None
+    paths = sorted(
+        p for p in root.rglob("*")
+        if p.is_file() and p.suffix in (".parquet", ".geoparquet")
+    )
+    if not paths:
+        logger.warning("No parquet files found in %s", root)
+        return None
+
+    logger.info("Reading %d GPS parquet file(s) from %s", len(paths), root)
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        try:
+            df = _read_gps_parquet(str(path))
+            if df is not None and not df.empty:
+                frames.append(df)
+        except Exception as e:
+            logger.error("  Failed to read %s: %s", path, e)
+    return _finalise_gps(frames, cfg)
+
+
+def _finalise_gps(frames: list[pd.DataFrame], cfg: PipelineConfig) -> pd.DataFrame | None:
+    """Concatenate, de-duplicate and date-filter normalised GPS frames."""
     if not frames:
         logger.warning("No valid GPS data extracted from parquet files")
         return None
@@ -1354,7 +1389,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
             # Download GPS GeoParquet (if configured)
             gps_df = None
-            if cfg.gps_container:
+            if cfg.gps_container or cfg.gps_dir:
                 t0 = time.time()
                 gps_df = download_gps_geoparquet(cfg)
                 if gps_df is not None:
@@ -1594,6 +1629,12 @@ def parse_args() -> PipelineConfig:
         "--gps-blob-path",
         default="",
         help="Path prefix within gps-container (default: {cruise_id}/)",
+    )
+    parser.add_argument(
+        "--gps-dir",
+        default="",
+        help="Local directory of GPS GeoParquet files (read recursively). "
+             "Alternative to --gps-container for hosts without cloud access.",
     )
 
     # Date range
@@ -1939,6 +1980,7 @@ def parse_args() -> PipelineConfig:
     # GPS
     cfg.gps_container = args.gps_container
     cfg.gps_blob_path = args.gps_blob_path
+    cfg.gps_dir = args.gps_dir
 
     # Surface exclusion
     cfg.surface_exclusion_depth = args.surface_exclusion_depth
@@ -2106,7 +2148,9 @@ def main():
         logger.info("Denoise mode: global (methods=%s)", cfg.denoise.methods)
     logger.info(
         "GPS source: %s",
-        f"{cfg.gps_container}/{cfg.gps_blob_path or cfg.cruise_id + '/'}" if cfg.gps_container else "(none)",
+        cfg.gps_dir or (
+            f"{cfg.gps_container}/{cfg.gps_blob_path or cfg.cruise_id + '/'}" if cfg.gps_container else "(none)"
+        ),
     )
     if cfg.local_save_dir and cfg.upload_after:
         logger.info("Storage: LOCAL → %s (will upload to Azure after)", cfg.local_save_dir)

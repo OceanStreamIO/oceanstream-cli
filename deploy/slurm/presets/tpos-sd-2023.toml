@@ -1,0 +1,29 @@
+# tpos-sd-2023 — denoise preset used for the SD_TPOS2023_v03 reference runs
+
+[echodata]
+sonar_model = "EK80"
+campaign_id = "SD_TPOS2023"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB", sound_absorption = 0.001, depth_stat = "quantile", depth_quantile = 0.15 }
+
+[echodata.denoise.frequency_params.200000]
+impulse = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB", sound_absorption = 0.001, depth_stat = "quantile", depth_quantile = 0.15 }
+
+[echodata.mvbs]
+range_bin = "1m"
+ping_time_bin = "10s"
+
+[echodata.nasc]
+range_bin = "10m"
+dist_bin = "0.5nmi"
