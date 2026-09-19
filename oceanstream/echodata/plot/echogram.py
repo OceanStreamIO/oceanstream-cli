@@ -8,6 +8,7 @@ Ported from _echodata-legacy-code/saildrone-echodata-processing/process/plot.py
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import logging
 import os
 import re
@@ -54,12 +55,11 @@ def generate_echograms(
     Example:
         echograms = generate_echograms(sv_path, output_dir=Path("./echograms"))
     """
-    import xarray as xr
     
     # Load if path
     if isinstance(sv_dataset, (str, Path)):
         logger.info(f"Loading Sv from {sv_dataset}")
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
     
     # Ensure channel labels exist
     sv_dataset = ensure_channel_labels(sv_dataset)

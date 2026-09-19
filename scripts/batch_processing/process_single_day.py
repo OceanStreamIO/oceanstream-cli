@@ -35,6 +35,7 @@ Requires:
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import json
@@ -352,7 +353,6 @@ def _validate_cache(
         return False
 
     # Check that combined zarrs exist and can be opened
-    import xarray as xr
 
     category_map = manifest.get("category_map", {})
     categories = set(category_map.values())
@@ -366,7 +366,7 @@ def _validate_cache(
             logger.info("Combined zarr missing for %s — cache miss", category)
             return False
         try:
-            ds = xr.open_zarr(str(combined))
+            ds = open_product_uri(str(combined))
             ds.close()
         except Exception as e:
             logger.warning("Combined zarr unreadable for %s: %s — cache miss", category, e)
@@ -641,7 +641,6 @@ def _save_netcdf_local(zarr_path: str, output_dir: Path) -> None:
     engine='netcdf4', NETCDF4 format, zlib compression for numeric vars.
     """
     import numpy as np
-    import xarray as xr
 
     # zarr_path is relative like "2023-08-10/2023-08-10--short_pulse--mvbs.zarr"
     zarr_abs = output_dir / zarr_path
@@ -651,7 +650,7 @@ def _save_netcdf_local(zarr_path: str, output_dir: Path) -> None:
 
     nc_path = zarr_abs.with_suffix(".nc")
     try:
-        ds = xr.open_zarr(str(zarr_abs))
+        ds = open_product_uri(str(zarr_abs))
         ds_computed = ds.compute()
         ds.close()
 
@@ -795,7 +794,6 @@ def generate_echograms(
         prune_empty_pings: If True, also generate a pruned echogram with all-NaN
             pings removed (saves with '--pruned' suffix)
     """
-    import xarray as xr
     from oceanstream.echodata.plot.echogram import plot_sv_data
 
     echogram_dir = output_dir / day / "echograms"
@@ -811,7 +809,7 @@ def generate_echograms(
         for cat, zarr_path in paths.items():
             t0 = time.perf_counter()
             try:
-                ds = xr.open_zarr(str(output_dir / zarr_path))
+                ds = open_product_uri(str(output_dir / zarr_path))
 
                 # Apply surface exclusion
                 if surface_exclude is not None:

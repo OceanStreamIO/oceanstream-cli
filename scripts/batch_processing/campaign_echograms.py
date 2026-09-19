@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import sys
 from pathlib import Path
 
@@ -188,7 +189,7 @@ def main():
         print(f"Processing: {zarr_name} ({category})")
         print(f"{'='*60}")
 
-        ds = xr.open_zarr(str(zarr_path))
+        ds = open_product_uri(str(zarr_path))
         print(f"  Dims: {dict(ds.sizes)}")
         print(f"  Channels: {list(ds.channel.values)}")
 
@@ -197,7 +198,7 @@ def main():
         all_outputs.append(nc_path)
 
         # 2. Reload for plotting (already loaded by save_netcdf)
-        ds_mem = xr.open_zarr(str(zarr_path)).load()
+        ds_mem = open_product_uri(str(zarr_path)).load()
 
         n_ch = ds_mem.sizes.get("channel", 1)
         for ch_idx in range(n_ch):

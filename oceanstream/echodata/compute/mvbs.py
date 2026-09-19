@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
+from oceanstream.echodata.products import open_product_uri
+
 if TYPE_CHECKING:
     import xarray as xr
 
@@ -67,7 +69,7 @@ def compute_mvbs(
     # Load Sv if path provided
     if isinstance(sv_dataset, (str, Path)):
         logger.info(f"Loading Sv from {sv_dataset}")
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
 
     logger.info(f"Computing MVBS with range_bin={range_bin}, ping_time_bin={ping_time_bin}")
 
@@ -183,11 +185,10 @@ def compute_mvbs_denoised(
     Returns:
         xarray.Dataset with gridded MVBS from denoised data
     """
-    import xarray as xr
     
     # Load Sv if path provided
     if isinstance(sv_dataset, (str, Path)):
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
     
     # Apply mask - set masked values to NaN
     import numpy as np

@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import logging
 import sys
@@ -66,7 +67,6 @@ def main():
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
     import pandas as pd
-    import xarray as xr
     from oceanstream.echodata.multifrequency import db_difference
 
     args = parse_args()
@@ -90,7 +90,7 @@ def main():
 
     # --- Load data ---
     logger.info("Loading %s", zarr_path)
-    ds = xr.open_zarr(str(zarr_path))
+    ds = open_product_uri(str(zarr_path))
     ds = ds.load()
     logger.info("  Shape: %s", dict(ds.sizes))
 

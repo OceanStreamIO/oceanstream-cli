@@ -15,6 +15,7 @@ the split-vs-same-container equivalence of a run we control.
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import os
 import sys
 from contextlib import contextmanager
@@ -190,7 +191,6 @@ class TestSplitSourceRun:
         for category in CATEGORIES:
             assert (out_day / f"{DAY}--{category}--denoised.zarr").exists()
             assert (out_day / f"{DAY}--{category}--pruned.zarr").exists()
-            assert (out_day / f"{DAY}--{category}--masks.zarr").exists()
             assert (out_day / f"{DAY}--{category}--denoise_stats.json").exists()
             assert not (source_day / f"{DAY}--{category}--denoised.zarr").exists()
 
@@ -198,27 +198,31 @@ class TestSplitSourceRun:
             f"{DAY}--{category}.zarr" for category in CATEGORIES
         ]
 
-    def test_masks_are_dropped_from_the_data_path(self, experiment_root):
+    def test_denoised_and_pruned_store_no_sv_of_their_own(self, experiment_root):
+        from oceanstream.echodata import products
+
         _run(_config("out-split", sv_source=SOURCE_CONTAINER))
         for category in CATEGORIES:
-            denoised = xr.open_zarr(
-                experiment_root / "out-split" / DAY / f"{DAY}--{category}--denoised.zarr"
-            )
-            pruned = xr.open_zarr(
-                experiment_root / "out-split" / DAY / f"{DAY}--{category}--pruned.zarr"
-            )
-            masks = xr.open_zarr(
-                experiment_root / "out-split" / DAY / f"{DAY}--{category}--masks.zarr"
-            )
+            day = experiment_root / "out-split" / DAY
+            denoised = xr.open_zarr(day / f"{DAY}--{category}--denoised.zarr")
+            pruned = xr.open_zarr(day / f"{DAY}--{category}--pruned.zarr")
             try:
-                assert "noise_mask" not in denoised
-                assert "noise_mask" not in pruned
-                assert "mask_impulse" in masks
-                assert masks["mask_impulse"].dtype == np.dtype(bool)
+                assert "Sv" not in denoised
+                assert denoised.attrs[products.PRODUCT_ATTR] == products.MASKED_SV
+                assert denoised.attrs["sv_source_container"] == SOURCE_CONTAINER
+                assert denoised["denoise_flags"].dtype == np.dtype("uint8")
+                impulse = products.FLAG_BITS["impulse"]
+                assert bool(((denoised["denoise_flags"] & impulse) != 0).any())
+                assert "Sv" not in pruned
+                assert pruned.attrs[products.PRODUCT_ATTR] == products.PRUNED_VIEW
             finally:
                 denoised.close()
                 pruned.close()
-                masks.close()
+
+            # Opened through the resolver they are ordinary Sv datasets again.
+            rebuilt = products.open_product_uri(str(day / f"{DAY}--{category}--pruned.zarr"))
+            assert "Sv" in rebuilt and "latitude" in rebuilt
+            assert rebuilt.sizes["ping_time"] <= denoised.sizes["ping_time"]
 
     def test_stats_json_is_strict_and_complete(self, experiment_root):
         import json
@@ -268,10 +272,10 @@ class TestSplitVsSameContainer:
         _run(_config("out-same", sv_source=None, force=True))
 
         for category in CATEGORIES:
-            a = xr.open_zarr(
-                experiment_root / "out-split" / DAY / f"{DAY}--{category}--denoised.zarr"
+            a = open_product_uri(
+                str(experiment_root / "out-split" / DAY / f"{DAY}--{category}--denoised.zarr")
             )
-            b = xr.open_zarr(same / DAY / f"{DAY}--{category}--denoised.zarr")
+            b = open_product_uri(str(same / DAY / f"{DAY}--{category}--denoised.zarr"))
             try:
                 assert a["Sv"].shape == b["Sv"].shape
                 va = a["Sv"].values

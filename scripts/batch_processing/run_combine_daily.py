@@ -24,6 +24,7 @@ Usage:
 """
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import logging
@@ -189,7 +190,7 @@ def _populate_freq_cache(day: str) -> None:
             if not path.is_dir():
                 continue
             try:
-                ds = xr.open_zarr(str(path), consolidated=False)
+                ds = open_product_uri(str(path), consolidated=False)
                 if "frequency_nominal" in ds.coords or "frequency_nominal" in ds.data_vars:
                     chans = ds.channel.values
                     freqs = ds["frequency_nominal"].values
@@ -222,7 +223,7 @@ def combine_mvbs_or_nasc(
         if not zarr_path.is_dir():
             continue
         try:
-            ds = xr.open_zarr(str(zarr_path), chunks=None)
+            ds = open_product_uri(str(zarr_path), chunks=None)
             ds = normalize_string_dtypes(ds)
             ds = _clear_encoding(ds)
 
@@ -384,7 +385,7 @@ def combine_sv(
         if not zarr_path.is_dir():
             continue
         try:
-            ds = xr.open_zarr(str(zarr_path), chunks=None)
+            ds = open_product_uri(str(zarr_path), chunks=None)
             ds = normalize_string_dtypes(ds)
             ds = _clear_encoding(ds)
 
@@ -823,7 +824,7 @@ def generate_echograms_for_day(
         if not zarr_path.is_dir():
             continue
 
-        ds = xr.open_zarr(str(zarr_path), chunks=None)
+        ds = open_product_uri(str(zarr_path), chunks=None)
 
         # Determine which frequencies are available
         if "channel" in ds.coords:

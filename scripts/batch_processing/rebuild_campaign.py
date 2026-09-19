@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import gc
 import os
 import re
@@ -96,7 +97,7 @@ def open_azure_zarr(zarr_path: str) -> xr.Dataset:
     store = f"az://{CONTAINER}/{zarr_path}"
     storage_options = {"connection_string": conn_str}
     # Use chunks={} (lazy) to avoid StringDType cast issues, then load
-    ds = xr.open_zarr(store, storage_options=storage_options, chunks={})
+    ds = open_product_uri(store, storage_options=storage_options, chunks={})
     return ds
 
 

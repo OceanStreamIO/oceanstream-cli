@@ -183,9 +183,9 @@ CORE_PRODUCTS: tuple[str, ...] = (
 )
 
 #: Emitted only under ``--emit-denoise-diagnostics``.
+#: The per-stage masks are the flag bits of ``--denoised.zarr`` itself.
 DIAGNOSTIC_PRODUCTS: tuple[str, ...] = (
     "--denoise_stats.json",
-    "--masks.zarr",
 )
 
 REQUIRED_PRODUCTS: tuple[str, ...] = CORE_PRODUCTS + DIAGNOSTIC_PRODUCTS

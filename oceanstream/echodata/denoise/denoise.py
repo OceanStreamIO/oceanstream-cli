@@ -7,6 +7,7 @@ dispatch and pulse-length selection.
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import json
 import logging
 from pathlib import Path
@@ -116,12 +117,11 @@ def apply_denoising(
     Example:
         denoised = apply_denoising(sv_path, methods=["background", "impulse"])
     """
-    import xarray as xr
     
     # Load if path
     if isinstance(sv_dataset, (str, Path)):
         logger.info(f"Loading Sv from {sv_dataset}")
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
     
     # Default methods
     if methods is None:

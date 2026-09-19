@@ -124,8 +124,19 @@ def open_sv_from_azure(
     src = _resolve(zarr_path, container)
     logger.info("Opening local zarr: %s", src)
     if chunks is _UNSET:
-        return xr.open_zarr(str(src), chunks={}, **kwargs)
-    return xr.open_zarr(str(src), chunks=chunks, **kwargs)
+        ds = xr.open_zarr(str(src), chunks={}, **kwargs)
+    else:
+        ds = xr.open_zarr(str(src), chunks=chunks, **kwargs)
+
+    # Masked-Sv and pruned-view stores come back as the Sv they stand for.
+    from oceanstream.echodata.products import resolve_product
+
+    return resolve_product(
+        ds,
+        lambda p, c: open_sv_from_azure(
+            zarr_path=p, container=c or container, chunks=chunks, **kwargs
+        ),
+    )
 
 
 def get_azure_zarr_store(
