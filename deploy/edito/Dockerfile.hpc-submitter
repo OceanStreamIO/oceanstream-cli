@@ -1,0 +1,41 @@
+# =============================================================================
+# oceanstream HPC submitter: Prefect process worker that drives Slurm jobs
+# over SSH, publishes STAC metadata and builds track tiles.
+# =============================================================================
+# Build (from the repo root):
+#   az acr build -r <registry> -t oceanstream-hpc-submitter:<tag> \
+#     -f "$PWD/deploy/edito/Dockerfile.hpc-submitter" .
+# =============================================================================
+
+FROM debian:bookworm-slim AS tippecanoe
+ARG TIPPECANOE_VERSION=2.79.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl libsqlite3-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL "https://github.com/felt/tippecanoe/archive/refs/tags/${TIPPECANOE_VERSION}.tar.gz" \
+        | tar -xz -C /tmp \
+    && make -C "/tmp/tippecanoe-${TIPPECANOE_VERSION}" -j"$(nproc)" \
+    && make -C "/tmp/tippecanoe-${TIPPECANOE_VERSION}" install PREFIX=/opt/tippecanoe
+
+FROM prefecthq/prefect:3.8.5-python3.12
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-client libsqlite3-0 zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=tippecanoe /opt/tippecanoe/bin/ /usr/local/bin/
+
+# Light stack: read Zarr metadata/coords and JSON on S3. Versions match
+# requirements-hpc.txt so Items describe stores with the same zarr library.
+RUN pip install --no-cache-dir \
+        numpy==2.0.2 pandas==2.3.3 xarray==2026.7.0 zarr==3.4.0 \
+        s3fs==2025.3.2 fsspec==2025.3.2 pystac==1.15.2
+
+WORKDIR /app
+COPY oceanstream/__init__.py oceanstream/__init__.py
+COPY oceanstream/stac/ oceanstream/stac/
+COPY scripts/hpc/ scripts/hpc/
+COPY deploy/slurm/ deploy/slurm/
+COPY requirements-hpc.txt pyproject.toml ./
+RUN rm -f scripts/hpc/site.env && tippecanoe --version
+
+ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
+CMD ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
