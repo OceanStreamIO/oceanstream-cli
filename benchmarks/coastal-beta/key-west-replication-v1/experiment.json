@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "key-west-sdb-replication-v1",
+  "registered_on": "2026-09-16",
+  "purpose": "Paper-method reconstruction and matched-calibration-count improvement benchmark",
+  "paper": "https://doi.org/10.1016/j.ecss.2019.106277",
+  "scene": "2017-02-08T16:16:20.341857Z T17RMH",
+  "acolite_parent": "key-west-v2",
+  "crs": "EPSG:6346",
+  "development_bounds": [423000, 2715000, 426000, 2731000],
+  "fresh_evaluation_bounds": {
+    "west": [421000, 2715000, 422500, 2731000],
+    "east": [426500, 2715000, 428000, 2731000]
+  },
+  "freshness": "Both test strips were chosen geographically before retrieving their lidar or inspecting prediction errors; neither overlaps any earlier Key West reporting region. A 500m gap separates them from the previously inspected development area.",
+  "target_depth_range_m": [0, 5],
+  "depth_bins_m": [0, 1, 2, 3, 4, 5],
+  "datum": "MLLW; do not add acquisition-time tide to a chart-datum SDB evaluation",
+  "datum_grid_shape": [10, 2],
+  "block_size_m": 500,
+  "seed": 20260916,
+  "bootstrap_replicates": 1000,
+  "published_model": {"m1": 5.8, "m0": 5.9, "n": 1000, "bands_nm": [490, 665], "median_filter_pixels": 3},
+  "nine_point_fallback": {
+    "source": "development lidar only; not the authors' chart soundings",
+    "target_depths_m": [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5],
+    "maximum_local_terrain_sd_m": 0.15,
+    "distinct_spatial_blocks": true,
+    "optical_eligibility": "finite blue/red and blue/green ratios in both corrections and both filter variants; selection otherwise uses geometry and reference depth only",
+    "selection": "For each ascending target choose closest depth in an unused block; seeded random ordering breaks ties. Never select by retrieval error."
+  },
+  "registered_model_families": ["linear_ols", "linear_huber", "quadratic", "blue_red_and_blue_green"],
+  "preprocessing_ablation": ["3x3_median", "none"],
+  "atmospheric_corrections": ["exp_published", "dsf_current"],
+  "calibration_regimes": ["nine_observations", "dense_development_lidar_separate_budget"],
+  "dense_calibration": "At most 10000 seeded observations sampled uniformly from eligible development pixels, shared across corrections, without evaluation data; uniform and equal-total-weight-per-depth-bin linear fits are compared.",
+  "model_selection": "No selection using fresh test errors. Report every registered variant. This is a prespecified comparison, not selection of a production winner.",
+  "evaluation": "Unblended predictions on all reference 0-5m pixels; finite prediction coverage, common support, depth strata, region, bias, MAE, median AE, RMSE, and paired 500m spatial-block bootstrap differences. Predictions outside 0-5m remain errors, never clipped or removed.",
+  "claim_limits": [
+    "Original chart point coordinates and evaluation polygon have not been recovered.",
+    "Nine lidar observations match point count, not chart source, chart precision, or calibration independence.",
+    "Reprocessed Sentinel input and modern pinned ACOLITE differ from historical processing.",
+    "Public lidar instrument metadata differs from the paper; survey identity is not proven.",
+    "Fresh adjacent regions are a spatial transfer test, not an exact reconstruction of the authors' evaluation region.",
+    "Bootstrap intervals describe spatial sampling conditional on this scene and reference, not full physical uncertainty.",
+    "Any apparent improvement requires a new date or site before a general superiority claim."
+  ]
+}

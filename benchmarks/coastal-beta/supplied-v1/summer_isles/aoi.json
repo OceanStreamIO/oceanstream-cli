@@ -1,0 +1,163 @@
+{
+  "name": "summer_isles",
+  "processing_bbox": [
+    -5.5,
+    57.9,
+    -5.2,
+    58.1
+  ],
+  "label": "Summer Isles, Wester Ross, Scotland",
+  "habitat_bbox": [
+    -5.45,
+    57.95,
+    -5.25,
+    58.06
+  ],
+  "fine_bathymetry": {
+    "uri": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/summer_isles/BGS_2005_4_SummerIsles_depth.tif",
+    "resolution_m": 14.46875,
+    "survey_year": null,
+    "product_year": 2018,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry HR-DTM BGS_2005_4_SummerIsles (EDMO 42). Not for navigation.",
+    "provenance": {
+      "source": "emodnet_hr_dtm",
+      "identifier": "BGS_2005_4_SummerIsles",
+      "edmo_id": 42,
+      "resolution_arcmin_denom": 128,
+      "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_42_BGS_2005_4_SummerIsles/",
+      "note": "Discovered via the EMODnet Bathymetry HR-DTM WFS (emodnet:hr_bathymetry_area). The WFS publishes a product release year, not a survey year, and does not publish seabed stability; both are left unset rather than inferred.",
+      "local_sidecar": {
+        "source": ".cache/coastal/bathy/summer_isles/42_BGS_2005_4_SummerIsles.nc",
+        "variable": "elevation",
+        "bbox": [
+          -5.5,
+          57.9,
+          -5.2,
+          58.1
+        ],
+        "shape": [
+          1536,
+          2304
+        ],
+        "resolution_m": 11.09,
+        "vertical_datum": "Lowest Astronomical Tide (LAT)",
+        "positive": "down",
+        "source_positive": "down",
+        "source_positive_evidence": "positive down: only 0.000% of cells lie below the datum",
+        "land_mask_threshold_m": 0.0,
+        "n_finite_before_land_mask": 1096851,
+        "n_land_masked": 0,
+        "n_valid": 1096851,
+        "depth_min_m": 0.69,
+        "depth_max_m": 165.07,
+        "seabed_stability": null,
+        "stability_note": "seabed_stability is not in the EMODnet metadata and must be asserted by the caller: 'stable_rock' where the substrate does not move between survey and imagery, 'mobile_sediment' where it does. It decides whether depth error can carry a validation claim.",
+        "emodnet_area": {
+          "identifier": "BGS_2005_4_SummerIsles",
+          "resolution_arcmin_denom": 128,
+          "download_url": "https://downloads.emodnet-bathymetry.eu/high_resolution/42_BGS_2005_4_SummerIsles.emo.zip",
+          "edmo_id": 42,
+          "provider": null,
+          "survey_year": null,
+          "product_year": 2018,
+          "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_42_BGS_2005_4_SummerIsles/",
+          "properties": {
+            "edmo_id": 42,
+            "identifier": "BGS_2005_4_SummerIsles",
+            "resolution": 128,
+            "release": 2018,
+            "download_url": "https://downloads.emodnet-bathymetry.eu/high_resolution/42_BGS_2005_4_SummerIsles.emo.zip",
+            "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_42_BGS_2005_4_SummerIsles/"
+          }
+        },
+        "output": ".cache/coastal/bathy/summer_isles/BGS_2005_4_SummerIsles_depth.tif"
+      },
+      "independent_of_scene": true,
+      "independence_basis": "Historical EMODnet survey/DTM supplied separately from these 2026 Sentinel-2 scenes. This does not assert independence between depth products or establish survey accuracy/stability."
+    },
+    "uncertainty_m": null
+  },
+  "coarse_bathymetry": {
+    "uri": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/summer_isles/emodnet_mean_depth.tif",
+    "resolution_m": 88.7,
+    "survey_year": null,
+    "product_year": null,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry. Not for navigation.",
+    "provenance": {
+      "source": "emodnet_wcs_mean",
+      "fetch_bbox": [
+        -5.95,
+        57.8,
+        -5.15,
+        58.2
+      ],
+      "n_deep_water_cells": 152987,
+      "depth_max_m": 181.21,
+      "note": "Fetch bbox is extended west into the Minch, which is where the deep water is. The inshore Summer Isles archipelago does not reach optical depth.",
+      "local_sidecar": {
+        "source": ".cache/coastal/bathy/summer_isles/emodnet_mean_-5.950_57.800_-5.150_58.200.tif",
+        "coverage": "emodnet:mean",
+        "role": "coarse",
+        "shape": [
+          384,
+          768
+        ],
+        "resolution_m": 88.7,
+        "vertical_datum": "Lowest Astronomical Tide (LAT)",
+        "positive": "down",
+        "source_positive": "up",
+        "source_positive_evidence": "positive up: 65.7% of cells lie below the datum",
+        "land_mask_threshold_m": 0.0,
+        "n_finite_before_land_mask": 294912,
+        "n_land_masked": 101157,
+        "n_valid": 193755,
+        "n_deep_water_cells": 152987,
+        "deep_water_threshold_m": 50.0,
+        "depth_min_m": 0.0,
+        "depth_max_m": 181.21,
+        "output": ".cache/coastal/bathy/summer_isles/emodnet_mean_depth.tif"
+      },
+      "independent_of_scene": true,
+      "independence_basis": "Historical EMODnet survey/DTM supplied separately from these 2026 Sentinel-2 scenes. This does not assert independence between depth products or establish survey accuracy/stability."
+    },
+    "uncertainty_m": null
+  },
+  "deepwater_reference_uri": "deepwater_reference.geojson",
+  "tide_model": null,
+  "depth_valid_range_m": [
+    0.0,
+    40.0
+  ],
+  "external_ids": {},
+  "metadata": {
+    "region": "North Atlantic, cool-temperate",
+    "screening_bbox": [
+      -5.45,
+      57.95,
+      -5.25,
+      58.06
+    ],
+    "bathymetry_footprint": [
+      -5.7697,
+      57.8342,
+      -5.078,
+      58.1128
+    ],
+    "bathymetry_programme": "British Geological Survey (EDMO 42)",
+    "identifier_note": "The EMODnet identifier encodes 2005, which reads as the survey year, but the WFS does not publish one; survey_year is left unset.",
+    "regions_preregistered": false,
+    "reporting_area_provisional": true,
+    "registration_basis": "Existing screening bounds; dates previously inspected.",
+    "unresolved_inputs": [
+      "acquisition-time LAT tide",
+      "measured reference uncertainty"
+    ]
+  },
+  "attenuation_regions_uri": "attenuation_regions.geojson"
+}

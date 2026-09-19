@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0",
+  "purpose": "diagnostic",
+  "description": "Supplied six-scene baseline; experimental optical products.",
+  "limitations": [
+    "Existing dates are not a new held-out evaluation.",
+    "Missing tide/model/reference uncertainty stays flagged; defaults are sensitivity assumptions.",
+    "Different recorded ACOLITE build strings; equivalence of historical code not established.",
+    "No independent optical evidence; processing completion is not scientific validation."
+  ],
+  "depth_bins_m": [
+    0,
+    5,
+    10,
+    20,
+    40
+  ],
+  "scenes": [
+    {
+      "id": "sesimbra-2026-06-17",
+      "site": "sesimbra",
+      "date": "2026-06-17",
+      "aoi": "sesimbra/aoi.json",
+      "scene": "/Users/andrei/kelp_observe/outputs/s2/timeseries/2026-06-17/s2/acolite",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46"
+    },
+    {
+      "id": "sesimbra-2026-06-27",
+      "site": "sesimbra",
+      "date": "2026-06-27",
+      "aoi": "sesimbra/aoi.json",
+      "scene": "/Users/andrei/kelp_observe/outputs/s2/timeseries/2026-06-27/s2/acolite",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46"
+    },
+    {
+      "id": "donegal-2026-07-15",
+      "site": "donegal",
+      "date": "2026-07-15",
+      "aoi": "donegal/aoi.json",
+      "scene": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/acolite/donegal/2026-07-15",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46"
+    },
+    {
+      "id": "donegal-2026-08-24",
+      "site": "donegal",
+      "date": "2026-08-24",
+      "aoi": "donegal/aoi.json",
+      "scene": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/acolite/donegal/2026-08-24",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46"
+    },
+    {
+      "id": "summer_isles-2026-05-27",
+      "site": "summer_isles",
+      "date": "2026-05-27",
+      "aoi": "summer_isles/aoi.json",
+      "scene": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/acolite/summer_isles/2026-05-27",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46"
+    },
+    {
+      "id": "summer_isles-2026-09-09",
+      "site": "summer_isles",
+      "date": "2026-09-09",
+      "aoi": "summer_isles/aoi.json",
+      "scene": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/acolite/summer_isles/2026-09-09",
+      "config": "config.json",
+      "tide": null,
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46"
+    }
+  ],
+  "evidence": [],
+  "supporting_files": [
+    "/Users/andrei/oceanstream/sd-data-ingest/scripts/coastal/register_supplied_benchmark.py",
+    "/Users/andrei/oceanstream/sd-data-ingest/oceanstream/coastal/aois/sesimbra.json",
+    "/Users/andrei/kelp_observe/data/external/emodnet_hr_lidar_sesimbra.provenance.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/sesimbra/emodnet_mean_depth.tif.provenance.json",
+    "/Users/andrei/kelp_observe/data/aois/deepwater_reference.geojson",
+    "/Users/andrei/kelp_observe/data/aois/habitat_aoi.geojson",
+    "/Users/andrei/kelp_observe/data/aois/processing_extent.geojson",
+    "/Users/andrei/oceanstream/sd-data-ingest/benchmarks/coastal-beta/supplied-v2/sesimbra/habitat_aoi.geojson",
+    "/Users/andrei/oceanstream/sd-data-ingest/benchmarks/coastal-beta/supplied-v2/sesimbra/processing_extent.geojson",
+    "/Users/andrei/oceanstream/sd-data-ingest/oceanstream/coastal/aois/donegal.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/donegal/7mLoughSwillyLoughFoyle_depth.tif.provenance.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/donegal/emodnet_mean_depth.tif.provenance.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/benchmarks/coastal-beta/supplied-v2/donegal/habitat_aoi.geojson",
+    "/Users/andrei/oceanstream/sd-data-ingest/oceanstream/coastal/aois/summer_isles.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/summer_isles/BGS_2005_4_SummerIsles_depth.tif.provenance.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/summer_isles/emodnet_mean_depth.tif.provenance.json",
+    "/Users/andrei/oceanstream/sd-data-ingest/benchmarks/coastal-beta/supplied-v2/summer_isles/habitat_aoi.geojson",
+    "/Users/andrei/oceanstream/sd-data-ingest/benchmarks/coastal-beta/supplied-v2/inventory.json"
+  ]
+}

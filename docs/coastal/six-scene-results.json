@@ -1,0 +1,2588 @@
+{
+  "source_report": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/benchmark.json",
+  "lock_sha256": "164b3642f69405c0c38880d115fed8905932e7d03c94edbf49f7577b48ae9c3c",
+  "purpose": "diagnostic",
+  "gate": {
+    "evidence_complete": false,
+    "release_ready": false,
+    "reasons": [
+      "sesimbra/2026-06-17/attenuation:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-17/detectability:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-17/sdb_depth:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-17/rho_b:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-17/seabed_par:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-27/attenuation:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-27/detectability:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-27/sdb_depth:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-27/rho_b:accepted_independent_evidence_missing",
+      "sesimbra/2026-06-27/seabed_par:accepted_independent_evidence_missing",
+      "donegal/2026-07-15/attenuation:accepted_independent_evidence_missing",
+      "donegal/2026-07-15/detectability:accepted_independent_evidence_missing",
+      "donegal/2026-07-15/sdb_depth:accepted_independent_evidence_missing",
+      "donegal/2026-07-15/rho_b:accepted_independent_evidence_missing",
+      "donegal/2026-07-15/seabed_par:accepted_independent_evidence_missing",
+      "donegal/2026-08-24/attenuation:accepted_independent_evidence_missing",
+      "donegal/2026-08-24/detectability:accepted_independent_evidence_missing",
+      "donegal/2026-08-24/sdb_depth:accepted_independent_evidence_missing",
+      "donegal/2026-08-24/rho_b:accepted_independent_evidence_missing",
+      "donegal/2026-08-24/seabed_par:accepted_independent_evidence_missing",
+      "scientific_review_of_errors_uncertainty_and_operating_limits_required",
+      "diagnostic_benchmark_not_scientific_validation"
+    ]
+  },
+  "n_scenes": 6,
+  "n_completed": 6,
+  "n_execution_failed": 0,
+  "n_accepted_by_product": {
+    "attenuation": 0,
+    "detectability": 0,
+    "sdb_depth": 0,
+    "rho_b": 0,
+    "seabed_par": 0
+  },
+  "sdb_score_scope": "Unblended SDB versus spatially withheld native reference blocks, across the scene in the configured reference window. Pixel counts are correlated samples, not independent soundings. Tide is missing; these are conditional reference-agreement errors, not absolute SDB accuracy.",
+  "scenes": [
+    {
+      "id": "sesimbra-2026-06-17",
+      "site": "sesimbra",
+      "date": "2026-06-17",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 49.81,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/sesimbra-2026-06-17/runs/20260915T152611-ea1c10c47fd2",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+      "coverage": {
+        "valid_water_pixels": 7640294,
+        "reporting_pixels": 3906,
+        "requested_reporting_pixels_on_grid": 38808,
+        "reporting_fraction_on_grid": 0.10064935064935066,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 26589,
+        "reference_domain_water_pixels": 26589,
+        "reference_fraction_of_water": 0.9977814989842014,
+        "deep_depth_quantiles_m": [
+          99.65487747192383,
+          114.87792587280273,
+          420.19648437500007
+        ],
+        "calibration_regions": {
+          "sesimbra_local": {
+            "pixels": 146251,
+            "reference_pixels": 146206
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:attenuation_model_uncertainty_missing",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:no_discriminating_band_pair",
+            "sesimbra_local:no_finite_k_to_check",
+            "sesimbra_local:no_fit",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:attenuation_model_uncertainty_missing; sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:no_discriminating_band_pair; sesimbra_local:no_finite_k_to_check; sesimbra_local:no_fit; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "no_discriminating_band_pair",
+                  "no_finite_k_to_check",
+                  "no_fit",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; deep_mask_contaminated; no_discriminating_band_pair; no_finite_k_to_check; no_fit; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "no finite k values were fitted; no spectrally contrasted band pair available to test. 5 band(s) carry no floor claim: 707, 741, 785, 835, 866. Unreliable fits: 444 nm (no_fit); 489 nm (no_fit); 561 nm (no_fit); 667 nm (no_fit).",
+                    "flags": [
+                      "no_discriminating_band_pair",
+                      "no_finite_k_to_check",
+                      "no_fit"
+                    ],
+                    "fit_failures": {
+                      "444": [
+                        "no_fit"
+                      ],
+                      "489": [
+                        "no_fit"
+                      ],
+                      "561": [
+                        "no_fit"
+                      ],
+                      "667": [
+                        "no_fit"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 20.8659547179039,
+                        "n_bands": 4,
+                        "n_violations": 0,
+                        "violating_bands_nm": [],
+                        "worst_band_nm": null,
+                        "worst_ratio": null,
+                        "bands": {
+                          "444": {
+                            "wavelength_nm": 444.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.026044384119158576,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "489": {
+                            "wavelength_nm": 489.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.038039681775089304,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "561": {
+                            "wavelength_nm": 561.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.13444731767289114,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "667": {
+                            "wavelength_nm": 667.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.8959168276170716,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "707": "no tabulated pure-water absorption above 700 nm",
+                          "741": "no tabulated pure-water absorption above 700 nm",
+                          "785": "no tabulated pure-water absorption above 700 nm",
+                          "835": "no tabulated pure-water absorption above 700 nm",
+                          "866": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "no_finite_k_to_check"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": false,
+                        "solar_zenith_deg": 20.8659547179039,
+                        "n_pairs": 0,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {},
+                        "flags": [
+                          "no_discriminating_band_pair"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:attenuation_error_unavailable",
+            "sesimbra_local:attenuation_model_uncertainty_missing",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:no_discriminating_band_pair",
+            "sesimbra_local:no_finite_k_to_check",
+            "sesimbra_local:no_fit",
+            "sesimbra_local:no_usable_band",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:attenuation_error_unavailable; sesimbra_local:attenuation_model_uncertainty_missing; sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:no_discriminating_band_pair; sesimbra_local:no_finite_k_to_check; sesimbra_local:no_fit; sesimbra_local:no_usable_band; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "no_discriminating_band_pair",
+                  "no_finite_k_to_check",
+                  "no_fit",
+                  "no_usable_band",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; deep_mask_contaminated; no_discriminating_band_pair; no_finite_k_to_check; no_fit; no_usable_band; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 108739,
+                  "mae_m": 3.2731032371520996,
+                  "rmse_m": 3.9141130447387695,
+                  "bias_m": 2.8180911540985107
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 105993,
+                  "mae_m": 4.438112735748291,
+                  "rmse_m": 5.52400016784668,
+                  "bias_m": -3.1553568840026855
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 214732,
+                  "mae_m": 3.8481593132019043,
+                  "rmse_m": 4.77705717086792,
+                  "bias_m": -0.13043852150440216
+                }
+              ],
+              "n_evaluation_pixels": 2449120,
+              "map": {
+                "coverage_frac": 0.47706602297779394,
+                "retrieved_p5_m": 8.49962043762207,
+                "retrieved_p95_m": 22.562789916992188,
+                "retrieved_span_m": 14.063169479370117,
+                "calibration_span_m": 23.0,
+                "collapsed": false,
+                "reason": ""
+              },
+              "retrieval_depth_source": "reference_sdb_blend"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:bbp_555_implausible(0.11326)",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:local_qaa_comparison_unavailable",
+            "sesimbra_local:no_invertible_pixels",
+            "sesimbra_local:qaa_model_uncertainty_missing",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:bbp_555_implausible(0.11326); sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:local_qaa_comparison_unavailable; sesimbra_local:no_invertible_pixels; sesimbra_local:qaa_model_uncertainty_missing; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.11326)",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "local_qaa_comparison_unavailable",
+                  "no_invertible_pixels",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.11326); calibration_regions_exploratory; deep_mask_contaminated; local_qaa_comparison_unavailable; no_invertible_pixels; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:bbp_555_implausible(0.11326)",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:local_qaa_comparison_unavailable",
+            "sesimbra_local:qaa_model_uncertainty_missing",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:bbp_555_implausible(0.11326); sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:local_qaa_comparison_unavailable; sesimbra_local:qaa_model_uncertainty_missing; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.11326)",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.11326); calibration_regions_exploratory; deep_mask_contaminated; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 214732,
+        "mae_m": 3.8481593132019043,
+        "rmse_m": 4.77705717086792,
+        "bias_m": -0.13043852150440216
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": false,
+      "retrieval_depth_source": "reference_sdb_blend",
+      "attenuation_bands": {
+        "sesimbra_local": {
+          "444.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "489.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "561.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "667.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "707.0": {
+            "k_per_m": 0.01373379105015795,
+            "r_squared": 0.5118202273426653,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0032530979699813903
+          },
+          "741.0": {
+            "k_per_m": 0.004380149172063545,
+            "r_squared": 0.07587981230302354,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0037073667058797086
+          },
+          "785.0": {
+            "k_per_m": 0.016142825913010972,
+            "r_squared": 0.37242452100360446,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.005082401280879822
+          },
+          "835.0": {
+            "k_per_m": -0.0014497012422795795,
+            "r_squared": 0.042167922290994975,
+            "n_bins": 19,
+            "trust_failures": [
+              "k_nonpositive",
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0016757438633261405
+          },
+          "866.0": {
+            "k_per_m": 0.017499308837087574,
+            "r_squared": 0.4325931062117975,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.004860757355808963
+          }
+        }
+      }
+    },
+    {
+      "id": "sesimbra-2026-06-27",
+      "site": "sesimbra",
+      "date": "2026-06-27",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 47.37,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/sesimbra-2026-06-27/runs/20260915T152701-c96eb59b2594",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+      "coverage": {
+        "valid_water_pixels": 7293375,
+        "reporting_pixels": 14556,
+        "requested_reporting_pixels_on_grid": 38808,
+        "reporting_fraction_on_grid": 0.3750773036487322,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 24249,
+        "reference_domain_water_pixels": 24249,
+        "reference_fraction_of_water": 0.997065967401923,
+        "deep_depth_quantiles_m": [
+          109.30244178771973,
+          158.4459457397461,
+          606.5541931152347
+        ],
+        "calibration_regions": {
+          "sesimbra_local": {
+            "pixels": 225981,
+            "reference_pixels": 225964
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:attenuation_model_uncertainty_missing",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:no_discriminating_band_pair",
+            "sesimbra_local:no_finite_k_to_check",
+            "sesimbra_local:no_fit",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:attenuation_model_uncertainty_missing; sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:no_discriminating_band_pair; sesimbra_local:no_finite_k_to_check; sesimbra_local:no_fit; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "no_discriminating_band_pair",
+                  "no_finite_k_to_check",
+                  "no_fit",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; deep_mask_contaminated; no_discriminating_band_pair; no_finite_k_to_check; no_fit; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "no finite k values were fitted; no spectrally contrasted band pair available to test. 5 band(s) carry no floor claim: 707, 741, 785, 835, 866. Unreliable fits: 444 nm (no_fit); 489 nm (no_fit); 561 nm (no_fit); 667 nm (no_fit).",
+                    "flags": [
+                      "no_discriminating_band_pair",
+                      "no_finite_k_to_check",
+                      "no_fit"
+                    ],
+                    "fit_failures": {
+                      "444": [
+                        "no_fit"
+                      ],
+                      "489": [
+                        "no_fit"
+                      ],
+                      "561": [
+                        "no_fit"
+                      ],
+                      "667": [
+                        "no_fit"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 21.2489910962632,
+                        "n_bands": 4,
+                        "n_violations": 0,
+                        "violating_bands_nm": [],
+                        "worst_band_nm": null,
+                        "worst_ratio": null,
+                        "bands": {
+                          "444": {
+                            "wavelength_nm": 444.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.026058250662574545,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "489": {
+                            "wavelength_nm": 489.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.03806254322206775,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "561": {
+                            "wavelength_nm": 561.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.13453604318555207,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "667": {
+                            "wavelength_nm": 667.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.8965182167800699,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "707": "no tabulated pure-water absorption above 700 nm",
+                          "741": "no tabulated pure-water absorption above 700 nm",
+                          "785": "no tabulated pure-water absorption above 700 nm",
+                          "835": "no tabulated pure-water absorption above 700 nm",
+                          "866": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "no_finite_k_to_check"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": false,
+                        "solar_zenith_deg": 21.2489910962632,
+                        "n_pairs": 0,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {},
+                        "flags": [
+                          "no_discriminating_band_pair"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:attenuation_error_unavailable",
+            "sesimbra_local:attenuation_model_uncertainty_missing",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:no_discriminating_band_pair",
+            "sesimbra_local:no_finite_k_to_check",
+            "sesimbra_local:no_fit",
+            "sesimbra_local:no_usable_band",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:attenuation_error_unavailable; sesimbra_local:attenuation_model_uncertainty_missing; sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:no_discriminating_band_pair; sesimbra_local:no_finite_k_to_check; sesimbra_local:no_fit; sesimbra_local:no_usable_band; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "no_discriminating_band_pair",
+                  "no_finite_k_to_check",
+                  "no_fit",
+                  "no_usable_band",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; deep_mask_contaminated; no_discriminating_band_pair; no_finite_k_to_check; no_fit; no_usable_band; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 78396,
+                  "mae_m": 3.9023611545562744,
+                  "rmse_m": 4.609231472015381,
+                  "bias_m": 3.642331838607788
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 96712,
+                  "mae_m": 4.283365726470947,
+                  "rmse_m": 5.321524143218994,
+                  "bias_m": -2.854801893234253
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 175108,
+                  "mae_m": 4.112789630889893,
+                  "rmse_m": 5.015153408050537,
+                  "bias_m": 0.053970351815223694
+                }
+              ],
+              "n_evaluation_pixels": 2334048,
+              "map": {
+                "coverage_frac": 0.4527604802182163,
+                "retrieved_p5_m": 9.661422729492188,
+                "retrieved_p95_m": 32.976036071777344,
+                "retrieved_span_m": 23.314613342285156,
+                "calibration_span_m": 23.0,
+                "collapsed": false,
+                "reason": ""
+              },
+              "retrieval_depth_source": "reference_sdb_blend"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:bbp_555_implausible(0.08315)",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:local_qaa_comparison_unavailable",
+            "sesimbra_local:qaa_model_uncertainty_missing",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:bbp_555_implausible(0.08315); sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:local_qaa_comparison_unavailable; sesimbra_local:qaa_model_uncertainty_missing; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.08315)",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.08315); calibration_regions_exploratory; deep_mask_contaminated; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "sesimbra_local:bbp_555_implausible(0.08315)",
+            "sesimbra_local:calibration_regions_exploratory",
+            "sesimbra_local:deep_mask_contaminated",
+            "sesimbra_local:local_qaa_comparison_unavailable",
+            "sesimbra_local:qaa_model_uncertainty_missing",
+            "sesimbra_local:reference_uncertainty_assumed",
+            "sesimbra_local:reporting_area_provisional",
+            "sesimbra_local:tide_correction_missing"
+          ],
+          "summary": "sesimbra_local:bbp_555_implausible(0.08315); sesimbra_local:calibration_regions_exploratory; sesimbra_local:deep_mask_contaminated; sesimbra_local:local_qaa_comparison_unavailable; sesimbra_local:qaa_model_uncertainty_missing; sesimbra_local:reference_uncertainty_assumed; sesimbra_local:reporting_area_provisional; sesimbra_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "sesimbra_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.08315)",
+                  "calibration_regions_exploratory",
+                  "deep_mask_contaminated",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.08315); calibration_regions_exploratory; deep_mask_contaminated; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 175108,
+        "mae_m": 4.112789630889893,
+        "rmse_m": 5.015153408050537,
+        "bias_m": 0.053970351815223694
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": false,
+      "retrieval_depth_source": "reference_sdb_blend",
+      "attenuation_bands": {
+        "sesimbra_local": {
+          "444.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "489.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "561.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 1,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "667.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "707.0": {
+            "k_per_m": 0.005014797679164913,
+            "r_squared": 0.21972281798541138,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0022920064147883227
+          },
+          "741.0": {
+            "k_per_m": 0.003911831504420185,
+            "r_squared": 0.09101362632823895,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.002998341918260286
+          },
+          "785.0": {
+            "k_per_m": 0.008005642472652008,
+            "r_squared": 0.30970004693844266,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0028988117733630865
+          },
+          "835.0": {
+            "k_per_m": 0.0030582971740188538,
+            "r_squared": 0.16185392335742999,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0016879262426768619
+          },
+          "866.0": {
+            "k_per_m": 0.010360163136532522,
+            "r_squared": 0.3475876963059924,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared"
+            ],
+            "k_standard_error": 0.0034424766818138977
+          }
+        }
+      }
+    },
+    {
+      "id": "donegal-2026-07-15",
+      "site": "donegal",
+      "date": "2026-07-15",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 32.66,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/donegal-2026-07-15/runs/20260915T152748-711cd3f849de",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "coverage": {
+        "valid_water_pixels": 5323296,
+        "reporting_pixels": 911372,
+        "requested_reporting_pixels_on_grid": 2124059,
+        "reporting_fraction_on_grid": 0.4290709438862103,
+        "deep_pixels": 4019,
+        "deep_candidates_before_sampling": 4019,
+        "reference_domain_water_pixels": 1629726,
+        "reference_fraction_of_water": 0.9914310607563435,
+        "deep_depth_quantiles_m": [
+          59.634664916992186,
+          62.562782287597656,
+          65.0
+        ],
+        "calibration_regions": {
+          "donegal_local": {
+            "pixels": 928547,
+            "reference_pixels": 911372
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "donegal_local:attenuation_model_uncertainty_missing",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:k_below_pure_water_floor",
+            "donegal_local:no_discriminating_band_pair",
+            "donegal_local:no_fit",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:scene_depth_gradient",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:attenuation_model_uncertainty_missing; donegal_local:calibration_regions_exploratory; donegal_local:k_below_pure_water_floor; donegal_local:no_discriminating_band_pair; donegal_local:no_fit; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:scene_depth_gradient; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "no_discriminating_band_pair",
+                  "no_fit",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; no_discriminating_band_pair; no_fit; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "1 band(s) below the pure-water floor (worst 560 nm at 0.61x); no spectrally contrasted band pair available to test. 5 band(s) carry no floor claim: 704, 740, 783, 833, 865. Unreliable fits: 443 nm (no_fit, scene_depth_gradient); 492 nm (scene_depth_gradient); 560 nm (scene_depth_gradient); 665 nm (no_fit, scene_depth_gradient).",
+                    "flags": [
+                      "k_below_pure_water_floor",
+                      "no_discriminating_band_pair",
+                      "no_fit",
+                      "scene_depth_gradient"
+                    ],
+                    "fit_failures": {
+                      "443": [
+                        "no_fit",
+                        "scene_depth_gradient"
+                      ],
+                      "492": [
+                        "scene_depth_gradient"
+                      ],
+                      "560": [
+                        "scene_depth_gradient"
+                      ],
+                      "665": [
+                        "no_fit",
+                        "scene_depth_gradient"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 35.3516569944195,
+                        "n_bands": 4,
+                        "n_violations": 1,
+                        "violating_bands_nm": [
+                          560.0
+                        ],
+                        "worst_band_nm": 560.0,
+                        "worst_ratio": 0.607547435107918,
+                        "bands": {
+                          "443": {
+                            "wavelength_nm": 443.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.026205950597996946,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "492": {
+                            "wavelength_nm": 492.0,
+                            "k_per_m": 0.06820197440030279,
+                            "floor_per_m": 0.04186470266696447,
+                            "ratio": 1.6291044735908542,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "560": {
+                            "wavelength_nm": 560.0,
+                            "k_per_m": 0.08346592211255836,
+                            "floor_per_m": 0.13738173727576086,
+                            "ratio": 0.607547435107918,
+                            "violated": true,
+                            "shortfall_per_m": 0.0539158151632025
+                          },
+                          "665": {
+                            "wavelength_nm": 665.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.9142178889544857,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "704": "no tabulated pure-water absorption above 700 nm",
+                          "740": "no tabulated pure-water absorption above 700 nm",
+                          "783": "no tabulated pure-water absorption above 700 nm",
+                          "833": "no tabulated pure-water absorption above 700 nm",
+                          "865": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "k_below_pure_water_floor"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": false,
+                        "solar_zenith_deg": 35.3516569944195,
+                        "n_pairs": 0,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {},
+                        "flags": [
+                          "no_discriminating_band_pair"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "donegal_local:attenuation_error_unavailable",
+            "donegal_local:attenuation_model_uncertainty_missing",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:k_below_pure_water_floor",
+            "donegal_local:no_discriminating_band_pair",
+            "donegal_local:no_fit",
+            "donegal_local:no_usable_band",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:scene_depth_gradient",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:attenuation_error_unavailable; donegal_local:attenuation_model_uncertainty_missing; donegal_local:calibration_regions_exploratory; donegal_local:k_below_pure_water_floor; donegal_local:no_discriminating_band_pair; donegal_local:no_fit; donegal_local:no_usable_band; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:scene_depth_gradient; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "no_discriminating_band_pair",
+                  "no_fit",
+                  "no_usable_band",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; no_discriminating_band_pair; no_fit; no_usable_band; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "sdb_depth_range_collapsed",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; sdb_depth_range_collapsed; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 159180,
+                  "mae_m": 3.967877149581909,
+                  "rmse_m": 4.819650650024414,
+                  "bias_m": 3.6049625873565674
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 273787,
+                  "mae_m": 2.7710039615631104,
+                  "rmse_m": 3.637535810470581,
+                  "bias_m": -2.0070202350616455
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 432967,
+                  "mae_m": 3.2110326290130615,
+                  "rmse_m": 4.111835479736328,
+                  "bias_m": 0.05622081086039543
+                }
+              ],
+              "n_evaluation_pixels": 1906182,
+              "map": {
+                "coverage_frac": 0.5248375640623675,
+                "retrieved_p5_m": 10.662572860717773,
+                "retrieved_p95_m": 21.05310821533203,
+                "retrieved_span_m": 10.390535354614258,
+                "calibration_span_m": 23.0,
+                "collapsed": true,
+                "reason": "retrieved depth spans only 10.4 m against a 23.0 m calibration range \u2014 the fitted slope is near zero, so the map is effectively constant"
+              },
+              "retrieval_depth_source": "reference_only"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "donegal_local:bbp_555_implausible(0.02956)",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:local_qaa_comparison_unavailable",
+            "donegal_local:qaa_model_uncertainty_missing",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:bbp_555_implausible(0.02956); donegal_local:calibration_regions_exploratory; donegal_local:local_qaa_comparison_unavailable; donegal_local:qaa_model_uncertainty_missing; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02956)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02956); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "donegal_local:bbp_555_implausible(0.02956)",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:local_qaa_comparison_unavailable",
+            "donegal_local:qaa_model_uncertainty_missing",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:bbp_555_implausible(0.02956); donegal_local:calibration_regions_exploratory; donegal_local:local_qaa_comparison_unavailable; donegal_local:qaa_model_uncertainty_missing; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02956)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02956); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 432967,
+        "mae_m": 3.2110326290130615,
+        "rmse_m": 4.111835479736328,
+        "bias_m": 0.05622081086039543
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": true,
+      "retrieval_depth_source": "reference_only",
+      "attenuation_bands": {
+        "donegal_local": {
+          "443.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": null
+          },
+          "492.0": {
+            "k_per_m": 0.06820197440030279,
+            "r_squared": 0.809159018627072,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.008033251573558558
+          },
+          "560.0": {
+            "k_per_m": 0.08346592211255836,
+            "r_squared": 0.9208981883842882,
+            "n_bins": 18,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.006305705380024885
+          },
+          "665.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 1,
+            "trust_failures": [
+              "no_fit",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": null
+          },
+          "704.0": {
+            "k_per_m": 0.08529120662756134,
+            "r_squared": 0.7314587511496201,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.012534019898937605
+          },
+          "740.0": {
+            "k_per_m": 0.0559589946479128,
+            "r_squared": 0.9352188521492202,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0035720138638927275
+          },
+          "783.0": {
+            "k_per_m": 0.05726010757580141,
+            "r_squared": 0.9410543623319383,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0034757311642187286
+          },
+          "833.0": {
+            "k_per_m": 0.05772089456257071,
+            "r_squared": 0.9283705868487485,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0038886029635918844
+          },
+          "865.0": {
+            "k_per_m": 0.06354442730284583,
+            "r_squared": 0.9312861578072179,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0041863308868449614
+          }
+        }
+      }
+    },
+    {
+      "id": "donegal-2026-08-24",
+      "site": "donegal",
+      "date": "2026-08-24",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 32.7,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/donegal-2026-08-24/runs/20260915T152820-8765534321ef",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "coverage": {
+        "valid_water_pixels": 6440612,
+        "reporting_pixels": 884024,
+        "requested_reporting_pixels_on_grid": 2124059,
+        "reporting_fraction_on_grid": 0.4161955953200923,
+        "deep_pixels": 147,
+        "deep_candidates_before_sampling": 147,
+        "reference_domain_water_pixels": 2940204,
+        "reference_fraction_of_water": 0.9919737441100318,
+        "deep_depth_quantiles_m": [
+          62.195214080810544,
+          65.5999984741211,
+          67.77086944580078
+        ],
+        "calibration_regions": {
+          "donegal_local": {
+            "pixels": 906716,
+            "reference_pixels": 884024
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "donegal_local:attenuation_model_uncertainty_missing",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:k_below_pure_water_floor",
+            "donegal_local:no_discriminating_band_pair",
+            "donegal_local:no_fit",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:scene_depth_gradient",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:attenuation_model_uncertainty_missing; donegal_local:calibration_regions_exploratory; donegal_local:k_below_pure_water_floor; donegal_local:no_discriminating_band_pair; donegal_local:no_fit; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:scene_depth_gradient; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "no_discriminating_band_pair",
+                  "no_fit",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; no_discriminating_band_pair; no_fit; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "2 band(s) below the pure-water floor (worst 560 nm at 0.62x); no spectrally contrasted band pair available to test. 5 band(s) carry no floor claim: 704, 740, 783, 833, 865. Unreliable fits: 443 nm (no_fit, scene_depth_gradient); 492 nm (scene_depth_gradient); 560 nm (scene_depth_gradient); 665 nm (no_fit, scene_depth_gradient).",
+                    "flags": [
+                      "k_below_pure_water_floor",
+                      "no_discriminating_band_pair",
+                      "no_fit",
+                      "scene_depth_gradient"
+                    ],
+                    "fit_failures": {
+                      "443": [
+                        "no_fit",
+                        "scene_depth_gradient"
+                      ],
+                      "492": [
+                        "scene_depth_gradient"
+                      ],
+                      "560": [
+                        "scene_depth_gradient"
+                      ],
+                      "665": [
+                        "no_fit",
+                        "scene_depth_gradient"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 45.468208453535,
+                        "n_bands": 4,
+                        "n_violations": 2,
+                        "violating_bands_nm": [
+                          492.0,
+                          560.0
+                        ],
+                        "worst_band_nm": 560.0,
+                        "worst_ratio": 0.6245786218946857,
+                        "bands": {
+                          "443": {
+                            "wavelength_nm": 443.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.026905005694160777,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          },
+                          "492": {
+                            "wavelength_nm": 492.0,
+                            "k_per_m": 0.0392549866124203,
+                            "floor_per_m": 0.043140288004614766,
+                            "ratio": 0.9099379820603226,
+                            "violated": true,
+                            "shortfall_per_m": 0.003885301392194465
+                          },
+                          "560": {
+                            "wavelength_nm": 560.0,
+                            "k_per_m": 0.08864142658946267,
+                            "floor_per_m": 0.1419219670384573,
+                            "ratio": 0.6245786218946857,
+                            "violated": true,
+                            "shortfall_per_m": 0.053280540448994634
+                          },
+                          "665": {
+                            "wavelength_nm": 665.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.9449420929884963,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "704": "no tabulated pure-water absorption above 700 nm",
+                          "740": "no tabulated pure-water absorption above 700 nm",
+                          "783": "no tabulated pure-water absorption above 700 nm",
+                          "833": "no tabulated pure-water absorption above 700 nm",
+                          "865": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "k_below_pure_water_floor"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": false,
+                        "solar_zenith_deg": 45.468208453535,
+                        "n_pairs": 0,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {},
+                        "flags": [
+                          "no_discriminating_band_pair"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "donegal_local:attenuation_error_unavailable",
+            "donegal_local:attenuation_model_uncertainty_missing",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:k_below_pure_water_floor",
+            "donegal_local:no_discriminating_band_pair",
+            "donegal_local:no_fit",
+            "donegal_local:no_usable_band",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:scene_depth_gradient",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:attenuation_error_unavailable; donegal_local:attenuation_model_uncertainty_missing; donegal_local:calibration_regions_exploratory; donegal_local:k_below_pure_water_floor; donegal_local:no_discriminating_band_pair; donegal_local:no_fit; donegal_local:no_usable_band; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:scene_depth_gradient; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "no_discriminating_band_pair",
+                  "no_fit",
+                  "no_usable_band",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; no_discriminating_band_pair; no_fit; no_usable_band; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "sdb_depth_range_collapsed",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; sdb_depth_range_collapsed; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 145591,
+                  "mae_m": 4.499539852142334,
+                  "rmse_m": 5.399506092071533,
+                  "bias_m": 4.3840484619140625
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 260307,
+                  "mae_m": 3.0293467044830322,
+                  "rmse_m": 3.9163079261779785,
+                  "bias_m": -2.4127414226531982
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 405898,
+                  "mae_m": 3.556687831878662,
+                  "rmse_m": 4.50483512878418,
+                  "bias_m": 0.025189843028783798
+                }
+              ],
+              "n_evaluation_pixels": 2289431,
+              "map": {
+                "coverage_frac": 0.6350143850702886,
+                "retrieved_p5_m": 12.168107986450195,
+                "retrieved_p95_m": 22.83940315246582,
+                "retrieved_span_m": 10.671295166015625,
+                "calibration_span_m": 23.0,
+                "collapsed": true,
+                "reason": "retrieved depth spans only 10.7 m against a 23.0 m calibration range \u2014 the fitted slope is near zero, so the map is effectively constant"
+              },
+              "retrieval_depth_source": "reference_only"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "donegal_local:bbp_555_implausible(0.02311)",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:local_qaa_comparison_unavailable",
+            "donegal_local:qaa_model_uncertainty_missing",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:bbp_555_implausible(0.02311); donegal_local:calibration_regions_exploratory; donegal_local:local_qaa_comparison_unavailable; donegal_local:qaa_model_uncertainty_missing; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02311)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02311); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "donegal_local:bbp_555_implausible(0.02311)",
+            "donegal_local:calibration_regions_exploratory",
+            "donegal_local:local_qaa_comparison_unavailable",
+            "donegal_local:qaa_model_uncertainty_missing",
+            "donegal_local:reference_uncertainty_assumed",
+            "donegal_local:reporting_area_provisional",
+            "donegal_local:tide_correction_missing"
+          ],
+          "summary": "donegal_local:bbp_555_implausible(0.02311); donegal_local:calibration_regions_exploratory; donegal_local:local_qaa_comparison_unavailable; donegal_local:qaa_model_uncertainty_missing; donegal_local:reference_uncertainty_assumed; donegal_local:reporting_area_provisional; donegal_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "donegal_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02311)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02311); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 405898,
+        "mae_m": 3.556687831878662,
+        "rmse_m": 4.50483512878418,
+        "bias_m": 0.025189843028783798
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": true,
+      "retrieval_depth_source": "reference_only",
+      "attenuation_bands": {
+        "donegal_local": {
+          "443.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": null
+          },
+          "492.0": {
+            "k_per_m": 0.0392549866124203,
+            "r_squared": 0.7988989126002514,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.004776740706706731
+          },
+          "560.0": {
+            "k_per_m": 0.08864142658946267,
+            "r_squared": 0.8916749542036608,
+            "n_bins": 14,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.008953496414009493
+          },
+          "665.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 1,
+            "trust_failures": [
+              "no_fit",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": null
+          },
+          "704.0": {
+            "k_per_m": 0.08532229473716332,
+            "r_squared": 0.7006189838600285,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.013527241555001105
+          },
+          "740.0": {
+            "k_per_m": 0.08710322129098987,
+            "r_squared": 0.8375322116274133,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.009304491225198164
+          },
+          "783.0": {
+            "k_per_m": 0.08912356527228114,
+            "r_squared": 0.9010112413798214,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.007164665599507498
+          },
+          "833.0": {
+            "k_per_m": 0.08646403781154698,
+            "r_squared": 0.8874247538377367,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0074690735400543455
+          },
+          "865.0": {
+            "k_per_m": 0.08591081635993836,
+            "r_squared": 0.8233980964011969,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.00964975186919551
+          }
+        }
+      }
+    },
+    {
+      "id": "summer_isles-2026-05-27",
+      "site": "summer_isles",
+      "date": "2026-05-27",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 13.82,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/summer_isles-2026-05-27/runs/20260915T152853-21eb2ed97173",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "coverage": {
+        "valid_water_pixels": 2210401,
+        "reporting_pixels": 252749,
+        "requested_reporting_pixels_on_grid": 1448260,
+        "reporting_fraction_on_grid": 0.1745190780660931,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 476976,
+        "reference_domain_water_pixels": 662630,
+        "reference_fraction_of_water": 0.9035003151011965,
+        "deep_depth_quantiles_m": [
+          55.24856452941894,
+          82.76431274414062,
+          129.87002716064453
+        ],
+        "calibration_regions": {
+          "summer_isles_local": {
+            "pixels": 750820,
+            "reference_pixels": 638489
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:attenuation_model_uncertainty_missing",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:k_below_pure_water_floor",
+            "summer_isles_local:low_r_squared",
+            "summer_isles_local:no_fit",
+            "summer_isles_local:quantile_unstable",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:attenuation_model_uncertainty_missing; summer_isles_local:calibration_regions_exploratory; summer_isles_local:k_below_pure_water_floor; summer_isles_local:low_r_squared; summer_isles_local:no_fit; summer_isles_local:quantile_unstable; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "low_r_squared",
+                  "no_fit",
+                  "quantile_unstable",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; low_r_squared; no_fit; quantile_unstable; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "3 band(s) below the pure-water floor (worst 561 nm at 0.13x). 5 band(s) carry no floor claim: 707, 741, 785, 835, 866. Unreliable fits: 444 nm (low_r_squared, quantile_unstable); 489 nm (low_r_squared); 561 nm (low_r_squared, quantile_unstable); 667 nm (no_fit).",
+                    "flags": [
+                      "k_below_pure_water_floor",
+                      "low_r_squared",
+                      "no_fit",
+                      "quantile_unstable"
+                    ],
+                    "fit_failures": {
+                      "444": [
+                        "low_r_squared",
+                        "quantile_unstable"
+                      ],
+                      "489": [
+                        "low_r_squared"
+                      ],
+                      "561": [
+                        "low_r_squared",
+                        "quantile_unstable"
+                      ],
+                      "667": [
+                        "no_fit"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 37.0333910404554,
+                        "n_bands": 4,
+                        "n_violations": 3,
+                        "violating_bands_nm": [
+                          444.0,
+                          489.0,
+                          561.0
+                        ],
+                        "worst_band_nm": 561.0,
+                        "worst_ratio": 0.1316628764784138,
+                        "bands": {
+                          "444": {
+                            "wavelength_nm": 444.0,
+                            "k_per_m": 0.00464326540629074,
+                            "floor_per_m": 0.02686003951729736,
+                            "ratio": 0.1728688970580466,
+                            "violated": true,
+                            "shortfall_per_m": 0.02221677411100662
+                          },
+                          "489": {
+                            "wavelength_nm": 489.0,
+                            "k_per_m": 0.011373258891858484,
+                            "floor_per_m": 0.03938443382164142,
+                            "ratio": 0.2887754828053151,
+                            "violated": true,
+                            "shortfall_per_m": 0.028011174929782934
+                          },
+                          "561": {
+                            "wavelength_nm": 561.0,
+                            "k_per_m": 0.018388868688226978,
+                            "floor_per_m": 0.13966631430266407,
+                            "ratio": 0.1316628764784138,
+                            "violated": true,
+                            "shortfall_per_m": 0.1212774456144371
+                          },
+                          "667": {
+                            "wavelength_nm": 667.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.9312916360655058,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "707": "no tabulated pure-water absorption above 700 nm",
+                          "741": "no tabulated pure-water absorption above 700 nm",
+                          "785": "no tabulated pure-water absorption above 700 nm",
+                          "835": "no tabulated pure-water absorption above 700 nm",
+                          "866": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "k_below_pure_water_floor"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": true,
+                        "solar_zenith_deg": 37.0333910404554,
+                        "n_pairs": 1,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {
+                          "444/561": {
+                            "wavelengths_nm": [
+                              444.0,
+                              561.0
+                            ],
+                            "observed": 0.25250413633457924,
+                            "expected_pure_water": 0.19231580393172168,
+                            "ratio_to_expected": 1.3129661274443485,
+                            "below_pure_water": false,
+                            "near_unity": false
+                          }
+                        },
+                        "flags": []
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:attenuation_error_unavailable",
+            "summer_isles_local:attenuation_model_uncertainty_missing",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:k_below_pure_water_floor",
+            "summer_isles_local:low_r_squared",
+            "summer_isles_local:no_fit",
+            "summer_isles_local:no_usable_band",
+            "summer_isles_local:quantile_unstable",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:attenuation_error_unavailable; summer_isles_local:attenuation_model_uncertainty_missing; summer_isles_local:calibration_regions_exploratory; summer_isles_local:k_below_pure_water_floor; summer_isles_local:low_r_squared; summer_isles_local:no_fit; summer_isles_local:no_usable_band; summer_isles_local:quantile_unstable; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "low_r_squared",
+                  "no_fit",
+                  "no_usable_band",
+                  "quantile_unstable",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; low_r_squared; no_fit; no_usable_band; quantile_unstable; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "sdb_depth_range_collapsed",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; sdb_depth_range_collapsed; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 36544,
+                  "mae_m": 7.292139053344727,
+                  "rmse_m": 7.908628940582275,
+                  "bias_m": 7.290221214294434
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 81636,
+                  "mae_m": 4.369999885559082,
+                  "rmse_m": 5.234429836273193,
+                  "bias_m": -3.651191234588623
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 118180,
+                  "mae_m": 5.273593902587891,
+                  "rmse_m": 6.1860785484313965,
+                  "bias_m": -0.26785266399383545
+                }
+              ],
+              "n_evaluation_pixels": 853563,
+              "map": {
+                "coverage_frac": 0.5216296594873808,
+                "retrieved_p5_m": 13.037246704101562,
+                "retrieved_p95_m": 19.196876525878906,
+                "retrieved_span_m": 6.159629821777344,
+                "calibration_span_m": 23.0,
+                "collapsed": true,
+                "reason": "retrieved depth spans only 6.2 m against a 23.0 m calibration range \u2014 the fitted slope is near zero, so the map is effectively constant"
+              },
+              "retrieval_depth_source": "reference_only"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:bbp_555_implausible(0.03975)",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:local_qaa_comparison_unavailable",
+            "summer_isles_local:qaa_model_uncertainty_missing",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:bbp_555_implausible(0.03975); summer_isles_local:calibration_regions_exploratory; summer_isles_local:local_qaa_comparison_unavailable; summer_isles_local:qaa_model_uncertainty_missing; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.03975)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.03975); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:bbp_555_implausible(0.03975)",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:local_qaa_comparison_unavailable",
+            "summer_isles_local:qaa_model_uncertainty_missing",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:bbp_555_implausible(0.03975); summer_isles_local:calibration_regions_exploratory; summer_isles_local:local_qaa_comparison_unavailable; summer_isles_local:qaa_model_uncertainty_missing; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.03975)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.03975); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 118180,
+        "mae_m": 5.273593902587891,
+        "rmse_m": 6.1860785484313965,
+        "bias_m": -0.26785266399383545
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": true,
+      "retrieval_depth_source": "reference_only",
+      "attenuation_bands": {
+        "summer_isles_local": {
+          "444.0": {
+            "k_per_m": 0.00464326540629074,
+            "r_squared": 0.04749577177032149,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.0050431865043533055
+          },
+          "489.0": {
+            "k_per_m": 0.011373258891858484,
+            "r_squared": 0.30549654023349104,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared"
+            ],
+            "k_standard_error": 0.004159053655588782
+          },
+          "561.0": {
+            "k_per_m": 0.018388868688226978,
+            "r_squared": 0.40601607252971017,
+            "n_bins": 13,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.006728013562508904
+          },
+          "667.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 1,
+            "trust_failures": [
+              "no_fit"
+            ],
+            "k_standard_error": null
+          },
+          "707.0": {
+            "k_per_m": 0.009196131689506724,
+            "r_squared": 0.16787127312500794,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.00496578356242745
+          },
+          "741.0": {
+            "k_per_m": 0.010526866243596677,
+            "r_squared": 0.2537381682773081,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable"
+            ],
+            "k_standard_error": 0.004378520211183319
+          },
+          "785.0": {
+            "k_per_m": 0.008347222679539778,
+            "r_squared": 0.18090721069234839,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared"
+            ],
+            "k_standard_error": 0.0043078061433981536
+          },
+          "835.0": {
+            "k_per_m": 0.011186984547397711,
+            "r_squared": 0.31352648125148364,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared"
+            ],
+            "k_standard_error": 0.004014794843236071
+          },
+          "866.0": {
+            "k_per_m": 0.010074212258322284,
+            "r_squared": 0.2888803697387252,
+            "n_bins": 19,
+            "trust_failures": [
+              "low_r_squared"
+            ],
+            "k_standard_error": 0.0038335307775028016
+          }
+        }
+      }
+    },
+    {
+      "id": "summer_isles-2026-09-09",
+      "site": "summer_isles",
+      "date": "2026-09-09",
+      "success": true,
+      "status": "rejected",
+      "message": "Retrieval complete; inspect per-product rejection reasons.",
+      "elapsed_seconds": 13.47,
+      "output_dir": "/Users/andrei/oceanstream/sd-data-ingest/out/coastal-beta/supplied-v3/runs/20260915T152610-40b881ba9424/summer_isles-2026-09-09/runs/20260915T152907-762d8a99d0ff",
+      "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+      "coverage": {
+        "valid_water_pixels": 2140226,
+        "reporting_pixels": 252249,
+        "requested_reporting_pixels_on_grid": 1448260,
+        "reporting_fraction_on_grid": 0.17417383618963445,
+        "deep_pixels": 5000,
+        "deep_candidates_before_sampling": 432573,
+        "reference_domain_water_pixels": 659242,
+        "reference_fraction_of_water": 0.9111257409264255,
+        "deep_depth_quantiles_m": [
+          58.89190521240234,
+          85.64737701416016,
+          130.5169891357422
+        ],
+        "calibration_regions": {
+          "summer_isles_local": {
+            "pixels": 741345,
+            "reference_pixels": 637983
+          }
+        }
+      },
+      "product_verdicts": {
+        "attenuation": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:attenuation_model_uncertainty_missing",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:k_below_pure_water_floor",
+            "summer_isles_local:low_r_squared",
+            "summer_isles_local:no_fit",
+            "summer_isles_local:quantile_unstable",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:scene_depth_gradient",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:attenuation_model_uncertainty_missing; summer_isles_local:calibration_regions_exploratory; summer_isles_local:k_below_pure_water_floor; summer_isles_local:low_r_squared; summer_isles_local:no_fit; summer_isles_local:quantile_unstable; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:scene_depth_gradient; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "low_r_squared",
+                  "no_fit",
+                  "quantile_unstable",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; low_r_squared; no_fit; quantile_unstable; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {
+                  "floors": {
+                    "passed": false,
+                    "summary": "3 band(s) below the pure-water floor (worst 559 nm at 0.10x). 5 band(s) carry no floor claim: 704, 739, 780, 833, 864. Unreliable fits: 442 nm (scene_depth_gradient); 492 nm (scene_depth_gradient); 559 nm (low_r_squared, quantile_unstable, scene_depth_gradient); 665 nm (no_fit, scene_depth_gradient).",
+                    "flags": [
+                      "k_below_pure_water_floor",
+                      "low_r_squared",
+                      "no_fit",
+                      "quantile_unstable",
+                      "scene_depth_gradient"
+                    ],
+                    "fit_failures": {
+                      "442": [
+                        "scene_depth_gradient"
+                      ],
+                      "492": [
+                        "scene_depth_gradient"
+                      ],
+                      "559": [
+                        "low_r_squared",
+                        "quantile_unstable",
+                        "scene_depth_gradient"
+                      ],
+                      "665": [
+                        "no_fit",
+                        "scene_depth_gradient"
+                      ]
+                    },
+                    "checks": {
+                      "pure_water_floor": {
+                        "passed": false,
+                        "solar_zenith_deg": 53.1352850740082,
+                        "n_bands": 4,
+                        "n_violations": 3,
+                        "violating_bands_nm": [
+                          442.0,
+                          492.0,
+                          559.0
+                        ],
+                        "worst_band_nm": 559.0,
+                        "worst_ratio": 0.10139585531871469,
+                        "bands": {
+                          "442": {
+                            "wavelength_nm": 442.0,
+                            "k_per_m": 0.004916819354944027,
+                            "floor_per_m": 0.02695515255340135,
+                            "ratio": 0.18240740226579039,
+                            "violated": true,
+                            "shortfall_per_m": 0.02203833319845732
+                          },
+                          "492": {
+                            "wavelength_nm": 492.0,
+                            "k_per_m": 0.006305999923170744,
+                            "floor_per_m": 0.04429741047646672,
+                            "ratio": 0.14235594937362867,
+                            "violated": true,
+                            "shortfall_per_m": 0.03799141055329598
+                          },
+                          "559": {
+                            "wavelength_nm": 559.0,
+                            "k_per_m": 0.014686171213785635,
+                            "floor_per_m": 0.14483995590966725,
+                            "ratio": 0.10139585531871469,
+                            "violated": true,
+                            "shortfall_per_m": 0.13015378469588162
+                          },
+                          "665": {
+                            "wavelength_nm": 665.0,
+                            "k_per_m": null,
+                            "floor_per_m": 0.972812958126384,
+                            "ratio": null,
+                            "violated": false,
+                            "shortfall_per_m": 0.0
+                          }
+                        },
+                        "skipped_bands": {
+                          "704": "no tabulated pure-water absorption above 700 nm",
+                          "739": "no tabulated pure-water absorption above 700 nm",
+                          "780": "no tabulated pure-water absorption above 700 nm",
+                          "833": "no tabulated pure-water absorption above 700 nm",
+                          "864": "no tabulated pure-water absorption above 700 nm"
+                        },
+                        "flags": [
+                          "k_below_pure_water_floor"
+                        ]
+                      },
+                      "lyzenga_ratio": {
+                        "passed": true,
+                        "solar_zenith_deg": 53.1352850740082,
+                        "n_pairs": 1,
+                        "below_pure_water_pairs": [],
+                        "near_unity_pairs": [],
+                        "pairs": {
+                          "442/559": {
+                            "wavelengths_nm": [
+                              442.0,
+                              559.0
+                            ],
+                            "observed": 0.33479245770529353,
+                            "expected_pure_water": 0.1861030154566779,
+                            "ratio_to_expected": 1.7989631005373385,
+                            "below_pure_water": false,
+                            "near_unity": false
+                          }
+                        },
+                        "flags": []
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "detectability": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:attenuation_error_unavailable",
+            "summer_isles_local:attenuation_model_uncertainty_missing",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:k_below_pure_water_floor",
+            "summer_isles_local:low_r_squared",
+            "summer_isles_local:no_fit",
+            "summer_isles_local:no_usable_band",
+            "summer_isles_local:quantile_unstable",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:scene_depth_gradient",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:attenuation_error_unavailable; summer_isles_local:attenuation_model_uncertainty_missing; summer_isles_local:calibration_regions_exploratory; summer_isles_local:k_below_pure_water_floor; summer_isles_local:low_r_squared; summer_isles_local:no_fit; summer_isles_local:no_usable_band; summer_isles_local:quantile_unstable; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:scene_depth_gradient; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "attenuation_error_unavailable",
+                  "attenuation_model_uncertainty_missing",
+                  "calibration_regions_exploratory",
+                  "k_below_pure_water_floor",
+                  "low_r_squared",
+                  "no_fit",
+                  "no_usable_band",
+                  "quantile_unstable",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "scene_depth_gradient",
+                  "tide_correction_missing"
+                ],
+                "summary": "attenuation_error_unavailable; attenuation_model_uncertainty_missing; calibration_regions_exploratory; k_below_pure_water_floor; low_r_squared; no_fit; no_usable_band; quantile_unstable; reference_uncertainty_assumed; reporting_area_provisional; scene_depth_gradient; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "sdb_depth": {
+          "passed": false,
+          "flags": [
+            "calibration_regions_exploratory",
+            "reference_uncertainty_assumed",
+            "reporting_area_provisional",
+            "sdb_depth_range_collapsed",
+            "tide_correction_missing"
+          ],
+          "summary": "calibration_regions_exploratory; reference_uncertainty_assumed; reporting_area_provisional; sdb_depth_range_collapsed; tide_correction_missing",
+          "evidence": {
+            "validation": {
+              "validation_scheme": "native_reference_blocks_with_interpolation_buffer",
+              "stumpf": "fitted",
+              "validation": [
+                {
+                  "stratum_label": "shallow (<12 m reference)",
+                  "n": 35541,
+                  "mae_m": 7.625683307647705,
+                  "rmse_m": 8.128015518188477,
+                  "bias_m": 7.625639915466309
+                },
+                {
+                  "stratum_label": "deep (>=12 m reference)",
+                  "n": 78703,
+                  "mae_m": 4.473493576049805,
+                  "rmse_m": 5.306033134460449,
+                  "bias_m": -3.879422903060913
+                },
+                {
+                  "stratum_label": "all held-out blocks",
+                  "n": 114244,
+                  "mae_m": 5.454131603240967,
+                  "rmse_m": 6.320433616638184,
+                  "bias_m": -0.3002285361289978
+                }
+              ],
+              "n_evaluation_pixels": 838300,
+              "map": {
+                "coverage_frac": 0.5050665789394191,
+                "retrieved_p5_m": 14.350679397583008,
+                "retrieved_p95_m": 16.263275146484375,
+                "retrieved_span_m": 1.9125957489013672,
+                "calibration_span_m": 23.0,
+                "collapsed": true,
+                "reason": "retrieved depth spans only 1.9 m against a 23.0 m calibration range \u2014 the fitted slope is near zero, so the map is effectively constant"
+              },
+              "retrieval_depth_source": "reference_only"
+            }
+          }
+        },
+        "rho_b": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:bbp_555_implausible(0.02019)",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:local_qaa_comparison_unavailable",
+            "summer_isles_local:qaa_model_uncertainty_missing",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:bbp_555_implausible(0.02019); summer_isles_local:calibration_regions_exploratory; summer_isles_local:local_qaa_comparison_unavailable; summer_isles_local:qaa_model_uncertainty_missing; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02019)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02019); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        },
+        "seabed_par": {
+          "passed": false,
+          "flags": [
+            "summer_isles_local:bbp_555_implausible(0.02019)",
+            "summer_isles_local:calibration_regions_exploratory",
+            "summer_isles_local:local_qaa_comparison_unavailable",
+            "summer_isles_local:qaa_model_uncertainty_missing",
+            "summer_isles_local:reference_uncertainty_assumed",
+            "summer_isles_local:reporting_area_provisional",
+            "summer_isles_local:tide_correction_missing"
+          ],
+          "summary": "summer_isles_local:bbp_555_implausible(0.02019); summer_isles_local:calibration_regions_exploratory; summer_isles_local:local_qaa_comparison_unavailable; summer_isles_local:qaa_model_uncertainty_missing; summer_isles_local:reference_uncertainty_assumed; summer_isles_local:reporting_area_provisional; summer_isles_local:tide_correction_missing",
+          "evidence": {
+            "products": {
+              "summer_isles_local": {
+                "passed": false,
+                "flags": [
+                  "bbp_555_implausible(0.02019)",
+                  "calibration_regions_exploratory",
+                  "local_qaa_comparison_unavailable",
+                  "qaa_model_uncertainty_missing",
+                  "reference_uncertainty_assumed",
+                  "reporting_area_provisional",
+                  "tide_correction_missing"
+                ],
+                "summary": "bbp_555_implausible(0.02019); calibration_regions_exploratory; local_qaa_comparison_unavailable; qaa_model_uncertainty_missing; reference_uncertainty_assumed; reporting_area_provisional; tide_correction_missing",
+                "evidence": {}
+              }
+            }
+          }
+        }
+      },
+      "sdb_reference_scores": {
+        "stratum_label": "all held-out blocks",
+        "n": 114244,
+        "mae_m": 5.454131603240967,
+        "rmse_m": 6.320433616638184,
+        "bias_m": -0.3002285361289978
+      },
+      "sdb_reference_window_m": [
+        2.0,
+        25.0
+      ],
+      "sdb_depth_range_collapsed": true,
+      "retrieval_depth_source": "reference_only",
+      "attenuation_bands": {
+        "summer_isles_local": {
+          "442.0": {
+            "k_per_m": 0.004916819354944027,
+            "r_squared": 0.5550597169967806,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0010676792445453943
+          },
+          "492.0": {
+            "k_per_m": 0.006305999923170744,
+            "r_squared": 0.7017739302718848,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0009970195805229611
+          },
+          "559.0": {
+            "k_per_m": 0.014686171213785635,
+            "r_squared": 0.37188877780721363,
+            "n_bins": 9,
+            "trust_failures": [
+              "low_r_squared",
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.007213132910796553
+          },
+          "665.0": {
+            "k_per_m": null,
+            "r_squared": null,
+            "n_bins": 0,
+            "trust_failures": [
+              "no_fit",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": null
+          },
+          "704.0": {
+            "k_per_m": 0.01631623736599031,
+            "r_squared": 0.9107691989092609,
+            "n_bins": 19,
+            "trust_failures": [
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0012386505008540464
+          },
+          "739.0": {
+            "k_per_m": 0.027519193448518522,
+            "r_squared": 0.9286784208011704,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0018496477935056681
+          },
+          "780.0": {
+            "k_per_m": 0.027318485159622992,
+            "r_squared": 0.9085119095936679,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0021025635048292027
+          },
+          "833.0": {
+            "k_per_m": 0.027504040065564717,
+            "r_squared": 0.920911466111212,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0019548788751368182
+          },
+          "864.0": {
+            "k_per_m": 0.02702126252023809,
+            "r_squared": 0.9122438210181099,
+            "n_bins": 19,
+            "trust_failures": [
+              "quantile_unstable",
+              "scene_depth_gradient"
+            ],
+            "k_standard_error": 0.0020326591696850963
+          }
+        }
+      }
+    }
+  ]
+}

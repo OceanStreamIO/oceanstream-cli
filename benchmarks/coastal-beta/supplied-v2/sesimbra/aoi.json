@@ -1,0 +1,203 @@
+{
+  "name": "sesimbra",
+  "processing_bbox": [
+    -9.3,
+    38.15,
+    -8.8,
+    38.55
+  ],
+  "label": "Sesimbra / Arr\u00e1bida natural kelp reef",
+  "habitat_bbox": [
+    -9.212,
+    38.4,
+    -9.192,
+    38.42
+  ],
+  "fine_bathymetry": {
+    "uri": "/Users/andrei/kelp_observe/data/external/emodnet_hr_lidar_sesimbra.tif",
+    "resolution_m": 14.46875,
+    "survey_year": 2011,
+    "product_year": 2020,
+    "seabed_stability": "stable_rock",
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": 29.0,
+    "attribution": "EMODnet Bathymetry HR-DTM HR_Lidar_Sul (EDMO 590). Not for navigation.",
+    "provenance": {
+      "source": "emodnet_hr_dtm",
+      "identifier": "HR_Lidar_Sul",
+      "edmo_id": 590,
+      "resolution_arcmin_denom": 128,
+      "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_590_HR_Lidar_Sul/",
+      "subset_bbox": [
+        -9.26,
+        38.38,
+        -9.14,
+        38.45
+      ],
+      "note": "Discovered via the EMODnet Bathymetry HR-DTM WFS (emodnet:hr_bathymetry_area). The WFS publishes a product release year and no seabed stability, so both are taken from the source programme instead: the tile is 2011 DGT/APA airborne LiDAR over rocky reef. seabed_stability drives whether depth MAE may carry the accuracy claim, so it is recorded from the survey, not guessed from the release.",
+      "local_sidecar": {
+        "source_nc": "/Users/andrei/kelp_observe/data/external/590_HR_Lidar_Sul.nc",
+        "identifier": "HR_Lidar_Sul",
+        "edmo_id": 590,
+        "provider": "Instituto Hidrografico, Portugal",
+        "originators": [
+          "Direcao-Geral do Territorio (DGT)",
+          "Agencia Portuguesa do Ambiente (APA)",
+          "Instituto Hidrografico (IHPT)"
+        ],
+        "survey_year": 2011,
+        "product_year": 2020,
+        "source_crs": "PT-TM06 / ETRS89 (reprojected to WGS84 by EMODnet)",
+        "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/api/records/SDN_CPRD_590_HR_Lidar_Sul",
+        "download_url": "https://downloads.emodnet-bathymetry.eu/high_resolution/590_HR_Lidar_Sul.emo.zip",
+        "use_limitation": "public",
+        "use_constraint": "DO NOT USE FOR NAVIGATION",
+        "attribution": "EMODnet Bathymetry HR-DTM 590_HR_Lidar_Sul \u2014 LiDAR survey 2011, DGT / APA, distributed by Instituto Hidrografico (EDMO 590). Not for navigation.",
+        "vertical_datum": "Lowest Astronomical Tide (LAT)",
+        "bbox": [
+          -9.26,
+          38.38,
+          -9.14,
+          38.45
+        ],
+        "shape": [
+          538,
+          717
+        ],
+        "resolution_m": [
+          11.36,
+          14.49
+        ],
+        "n_finite_before_land_mask": 75648,
+        "n_land_masked": 34931,
+        "n_valid": 40717,
+        "depth_min_m": 0.02,
+        "depth_max_m": 28.8,
+        "layer_spec": {
+          "tile_name": "emodnet_hr_lidar_sesimbra",
+          "layer_name": "Bathymetry \u2014 EMODnet HR LiDAR (11 m)",
+          "group_label": "Bathymetry",
+          "description": "Airborne bathymetric LiDAR digital terrain model of the Arrabida coast, 1/128 arc-minute (about 11 x 14 m). Depth in metres below Lowest Astronomical Tide, positive down; land and intertidal masked. Surveyed 2011, gridded by EMODnet 2020. Validated against 60 CCMAR diver quadrats: MAE 1.77 m at 60/60 coverage, versus 13.35 m at 30/60 for the 115 m EMODnet DTM. Carries an uncorrected LAT-to-water-level datum offset of about -1.3 m. Reaches about 29 m depth. Not for navigation.",
+          "attribution": "EMODnet Bathymetry HR-DTM 590_HR_Lidar_Sul \u2014 LiDAR survey 2011, DGT / APA, distributed by Instituto Hidrografico (EDMO 590). Not for navigation.",
+          "default_opacity": 0.75,
+          "z_index": 3,
+          "temporal_mode": "static",
+          "zoom_range": "10-17",
+          "colormap": "deep",
+          "vmin_m": 0.0,
+          "vmax_m": 30.0,
+          "units": "m",
+          "positive": "down",
+          "legend": [
+            {
+              "code": "0-5",
+              "name": "0-5 m",
+              "description": "Shallow subtidal"
+            },
+            {
+              "code": "5-10",
+              "name": "5-10 m",
+              "description": "Shallow reef; C2 7-8 m stratum"
+            },
+            {
+              "code": "10-20",
+              "name": "10-20 m",
+              "description": "Deep reef; C2 15-16 m stratum"
+            },
+            {
+              "code": "20-30",
+              "name": "20-30 m",
+              "description": "LiDAR penetration limit"
+            }
+          ]
+        }
+      },
+      "independent_of_scene": true,
+      "independence_basis": "Historical EMODnet survey/DTM supplied separately from these 2026 Sentinel-2 scenes. This does not assert independence between depth products or establish survey accuracy/stability."
+    },
+    "uncertainty_m": null
+  },
+  "coarse_bathymetry": {
+    "uri": "/Users/andrei/oceanstream/sd-data-ingest/.cache/coastal/bathy/sesimbra/emodnet_mean_depth.tif",
+    "resolution_m": 103.45,
+    "survey_year": null,
+    "product_year": null,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry. Not for navigation.",
+    "provenance": {
+      "source": "emodnet_wcs_mean",
+      "fetch_bbox": [
+        -9.3,
+        38.15,
+        -8.8,
+        38.55
+      ],
+      "n_deep_water_cells": 121769,
+      "depth_max_m": 1932.5,
+      "note": "Southern edge reaches the shelf break off Cape Espichel, where the floor drops past 1900 m. The AOI alone only reaches ~119 m. Reproduces the prototype grid cell for cell.",
+      "local_sidecar": {
+        "source": ".cache/coastal/bathy/sesimbra/emodnet_mean_-9.300_38.150_-8.800_38.550.tif",
+        "coverage": "emodnet:mean",
+        "role": "coarse",
+        "shape": [
+          384,
+          480
+        ],
+        "resolution_m": 103.45,
+        "vertical_datum": "Lowest Astronomical Tide (LAT)",
+        "positive": "down",
+        "source_positive": "up",
+        "source_positive_evidence": "positive up: 82.2% of cells lie below the datum",
+        "land_mask_threshold_m": 0.0,
+        "n_finite_before_land_mask": 184320,
+        "n_land_masked": 32881,
+        "n_valid": 151439,
+        "n_deep_water_cells": 121769,
+        "deep_water_threshold_m": 50.0,
+        "depth_min_m": 0.0,
+        "depth_max_m": 1932.5,
+        "output": ".cache/coastal/bathy/sesimbra/emodnet_mean_depth.tif"
+      },
+      "independent_of_scene": true,
+      "independence_basis": "Historical EMODnet survey/DTM supplied separately from these 2026 Sentinel-2 scenes. This does not assert independence between depth products or establish survey accuracy/stability."
+    },
+    "uncertainty_m": null
+  },
+  "deepwater_reference_uri": "deepwater_reference.geojson",
+  "tide_model": null,
+  "depth_valid_range_m": [
+    0.0,
+    40.0
+  ],
+  "external_ids": {
+    "earthstudio": "a3d3ba9f-d30f-4f14-9df1-3f9f444e60e7"
+  },
+  "metadata": {
+    "region": "Iberian Atlantic, warm-temperate",
+    "screening_bbox": [
+      -9.24,
+      38.39,
+      -9.15,
+      38.43
+    ],
+    "screening_note": "The prototype's clarity_bbox, kept verbatim. It contains the 60 CCMAR diver quadrats and the habitat_bbox, so date rankings taken over it describe the water the golden retrievals were measured in.",
+    "bathymetry_footprint": [
+      -9.2293,
+      36.9873,
+      -8.7693,
+      38.5193
+    ],
+    "geometry_provenance": "Taken from the lee_demo prototype's SiteProfile (kelp_observe/tools/lee_demo/sites.py), which is where the Phase 4.2 reference retrievals were produced. The wider Arr\u00e1bida strip in the KelpObserve project documentation (-9.15, 38.39, -8.90, 38.51) is the field-campaign AOI and excludes every quadrat; it is not this AOI.",
+    "regions_preregistered": false,
+    "reporting_area_provisional": true,
+    "registration_basis": "Existing screening bounds; dates previously inspected.",
+    "unresolved_inputs": [
+      "acquisition-time LAT tide",
+      "measured reference uncertainty"
+    ],
+    "reporting_geometry_source": "habitat_aoi.geojson"
+  },
+  "attenuation_regions_uri": "attenuation_regions.geojson"
+}

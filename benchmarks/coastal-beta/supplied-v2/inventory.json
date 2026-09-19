@@ -1,0 +1,74 @@
+[
+  {
+    "site": "sesimbra",
+    "date": "2026-06-17",
+    "shape": [
+      4441,
+      3605
+    ],
+    "crs": "EPSG:32629",
+    "acquisition_time": "2026-06-17T11:30:47.184598+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+    "available_rhos_files": 11
+  },
+  {
+    "site": "sesimbra",
+    "date": "2026-06-27",
+    "shape": [
+      4441,
+      3605
+    ],
+    "crs": "EPSG:32629",
+    "acquisition_time": "2026-06-27T11:30:46.405805+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T15:51:46",
+    "available_rhos_files": 11
+  },
+  {
+    "site": "donegal",
+    "date": "2026-07-15",
+    "shape": [
+      5046,
+      2010
+    ],
+    "crs": "EPSG:32629",
+    "acquisition_time": "2026-07-15T11:46:22.579138+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+    "available_rhos_files": 11
+  },
+  {
+    "site": "donegal",
+    "date": "2026-08-24",
+    "shape": [
+      5046,
+      2010
+    ],
+    "crs": "EPSG:32629",
+    "acquisition_time": "2026-08-24T11:46:17.827864+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+    "available_rhos_files": 11
+  },
+  {
+    "site": "summer_isles",
+    "date": "2026-05-27",
+    "shape": [
+      2288,
+      1852
+    ],
+    "crs": "EPSG:32630",
+    "acquisition_time": "2026-05-27T11:55:06.906289+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+    "available_rhos_files": 11
+  },
+  {
+    "site": "summer_isles",
+    "date": "2026-09-09",
+    "shape": [
+      2288,
+      1852
+    ],
+    "crs": "EPSG:32630",
+    "acquisition_time": "2026-09-09T11:55:06.924699+00:00",
+    "acolite_version": "Generic GitHub Clone c2026-08-27T16:51:46",
+    "available_rhos_files": 11
+  }
+]

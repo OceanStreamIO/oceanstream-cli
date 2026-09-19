@@ -1,0 +1,56 @@
+{
+  "experiment_registration": "experiment.json",
+  "acolite_dir": "../../../.cache/coastal/reference/key-west-2017/acolite-transect/dsf_current",
+  "reference_elevation_raster": "../../../.cache/coastal/reference/key-west-2017/lidar-transect/elevation_mllw_10m.tif",
+  "reference_resampling": "nearest",
+  "minimum_reference_coverage": 1.0,
+  "output_dir": "../../../out/coastal-beta/key-west-v2/dsf_current",
+  "reporting_bounds": [
+    423000,
+    2715000,
+    426000,
+    2731000
+  ],
+  "reporting_crs": "EPSG:6346",
+  "vertical_datum": {
+    "source": "MLLW",
+    "target": "MLLW",
+    "elevation_correction_m": 0.0,
+    "correction_source": "Input already converted spatially from NAVD88/GEOID12B using cached NOAA VDatum API; see additional provenance. Do not add the correction twice.",
+    "uncertainty_m": 0.077,
+    "uncertainty_scope": "NOAA datum-conversion API value only, not total bathymetric/model uncertainty; confidence level not inferred."
+  },
+  "published_coefficients": {
+    "m0": 5.9,
+    "m1": 5.8,
+    "n": 1000
+  },
+  "spatial_split": {
+    "block_px": 50,
+    "buffer_px": 1
+  },
+  "min_calibration_depth_span_m": 2.0,
+  "min_fit_pixels": 200,
+  "paper_recipe": {
+    "atmospheric_correction_matched": false,
+    "roi_matched": false,
+    "calibration_points_matched": false,
+    "lidar_survey_matched": false,
+    "sentinel_processing_baseline_matched": false,
+    "reconstruction_variant": "dsf_current",
+    "note": "EXP epsilon1 NIR865/SWIR1600 from companion paper; modern ACOLITE and scene-mean geometry workaround. DSF is the current alternative. Authors full ROI/chart calibration/source-identity not available."
+  },
+  "additional_provenance_files": [
+    "experiment.json",
+    "../../../.cache/coastal/reference/key-west-2017/scene/scene-manifest.json",
+    "../../../.cache/coastal/reference/key-west-2017/lidar-transect/lidar_preparation.json",
+    "../../../.cache/coastal/reference/key-west-2017/lidar-transect/elevation_mllw_10m.provenance.json",
+    "../../../.cache/coastal/reference/key-west-2017/datum-transect/surface_geoid12b.json",
+    "../../../.cache/coastal/reference/key-west-2017/lidar/reference-paper.pdf",
+    "../../../scripts/coastal/fetch_key_west_scene.py",
+    "../../../scripts/coastal/prepare_key_west_acolite.py",
+    "../../../scripts/coastal/prepare_key_west_lidar.py",
+    "../../../scripts/coastal/key_west_vdatum.py"
+  ],
+  "input_lock": "input-lock.json"
+}
