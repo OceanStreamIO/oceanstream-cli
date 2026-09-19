@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 
+from oceanstream.echodata.products import open_product_uri
+
 if TYPE_CHECKING:
     import xarray as xr
 
@@ -209,12 +211,11 @@ def extract_segment_coordinates(
     Returns:
         List of segment dicts with coordinates and properties
     """
-    import xarray as xr
     
     zarr_path = Path(zarr_path)
     
     try:
-        ds = xr.open_zarr(zarr_path)
+        ds = open_product_uri(zarr_path)
     except Exception as e:
         logger.error(f"Could not open Zarr at {zarr_path}: {e}")
         return []
@@ -322,10 +323,9 @@ def _extract_date_coordinates(
     date_str: str,
 ) -> tuple[list[list[float]], dict[str, Any]]:
     """Extract coordinates for a specific date from Zarr."""
-    import xarray as xr
     
     try:
-        ds = xr.open_zarr(zarr_path)
+        ds = open_product_uri(zarr_path)
     except Exception:
         return [], {}
     

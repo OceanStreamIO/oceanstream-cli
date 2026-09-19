@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 
+from oceanstream.echodata.products import open_product_uri
+
 if TYPE_CHECKING:
     import xarray as xr
 
@@ -698,8 +700,7 @@ def _detect_frequencies(echodata_dir: Path) -> list[float]:
             continue
         
         try:
-            import xarray as xr
-            ds = xr.open_zarr(zarr_stores[0])
+            ds = open_product_uri(zarr_stores[0])
             
             if "frequency_nominal" in ds:
                 freq_hz = ds["frequency_nominal"].values
@@ -759,8 +760,7 @@ def _get_zarr_extent(zarr_path: Path) -> dict[str, Any]:
     extent = {}
     
     try:
-        import xarray as xr
-        ds = xr.open_zarr(zarr_path)
+        ds = open_product_uri(zarr_path)
         
         # Temporal extent
         if "ping_time" in ds.dims or "ping_time" in ds.coords:

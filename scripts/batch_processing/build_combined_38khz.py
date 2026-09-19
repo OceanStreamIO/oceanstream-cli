@@ -35,6 +35,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from oceanstream.echodata.products import open_product_uri
+
 load_dotenv()
 
 import matplotlib
@@ -168,7 +170,7 @@ def open_azure_zarr(zarr_path: str) -> xr.Dataset:
     """Open a zarr store from Azure Blob Storage (lazy)."""
     conn_str = _connection_string()
     store = f"az://{CONTAINER}/{zarr_path}"
-    return xr.open_zarr(store, storage_options={"connection_string": conn_str}, chunks={})
+    return open_product_uri(store, storage_options={"connection_string": conn_str}, chunks={})
 
 
 # ---------------------------------------------------------------------------
@@ -613,7 +615,7 @@ def main() -> None:
         if not zarr_path.exists():
             log.error("Zarr not found at %s — run without --echogram-only first.", zarr_path)
             sys.exit(1)
-        campaign_ds = xr.open_zarr(str(zarr_path)).load()
+        campaign_ds = open_product_uri(str(zarr_path)).load()
         log.info("Loaded shape: %s", dict(campaign_ds.sizes))
         _generate_echograms(campaign_ds)
         campaign_ds.close()

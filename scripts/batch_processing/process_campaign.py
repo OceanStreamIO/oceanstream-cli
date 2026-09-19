@@ -656,15 +656,21 @@ def denoise_day(
     presets can share one immutable stage-4 Sv source while writing their own
     products. Nothing is ever written to the source container.
 
-    With *emit_diagnostics* the full-resolution stage masks are written to a
-    separate ``{day}--{category}--masks.zarr`` and dropped from the data path,
-    and a ``{day}--{category}--denoise_stats.json`` is emitted. In *strict*
-    mode a filter that could not run on a configured channel aborts the day.
+    The result is stored as a masked-Sv store (see ``oceanstream.echodata.
+    products``): one flag bit per step and the per-ping background level, over
+    the source Sv. Readers get the denoised Sv back from ``open_sv_from_azure``.
+
+    With *emit_diagnostics* a ``{day}--{category}--denoise_stats.json`` is
+    emitted; the per-stage masks are the store's flag bits. In *strict* mode a
+    filter that could not run on a configured channel aborts the day.
 
     Returns the denoised zarr path.
     """
+    import json
+
     import dask
     import numpy as np
+    import xarray as xr
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
     from oceanstream.echodata.denoise import apply_denoising
 
@@ -707,12 +713,20 @@ def denoise_day(
                 ds, ds_denoised, stage_cubes, stage_status
             )
 
-        # Step 2: echopype background noise removal per channel.
-        # This directly modifies Sv values (not just masking) and is applied
-        # per-channel with frequency-specific parameters.
-        if "background" in denoise_config.methods:
-            from echopype.clean import remove_background_noise as ep_remove_background_noise
+        # Step 2: background noise removal per channel (De Robertis &
+        # Higginbottom). The only step that changes Sv values rather than
+        # removing cells, and it is fully described by one noise level per
+        # channel per ping — so that level is kept, not a new copy of Sv.
+        # products.background_corrected is the same arithmetic as echopype's
+        # remove_background_noise, and the reader uses it too.
+        from oceanstream.echodata import products
 
+        background_level = None
+        background_snr: dict[str, float | None] = {}
+        # Each step's bit is taken as soon as its inputs exist, so no extra
+        # full-resolution float copy of Sv outlives the step that made it.
+        background_bit = None
+        if "background" in denoise_config.methods:
             # Build per-frequency params when frequency-specific mode is on,
             # mirroring the Prefect flow's per-channel dispatch.
             if denoise_config.use_frequency_specific:
@@ -721,79 +735,73 @@ def denoise_day(
                 bgn_freq_params = None
             bgn_global = denoise_config.to_background_params()
 
-            # Capture parent attrs for provenance propagation.
-            parent_attrs = dict(ds_denoised.attrs)
-            parent_attrs.setdefault("processing_level", "Level 2A")
-            parent_attrs["input_processing_level"] = parent_attrs["processing_level"]
-
-            # Background is an Sv transform, not a mask. The before/after pair
-            # is reduced to statistics inside the callback so two more
-            # full-resolution copies of Sv never coexist.
             diag_by_channel = {e["channel"]: e for e in diag_channels}
-
-            def _remove_bgn_one_channel(ch_ds):
-                # Propagate processing-level attrs lost by groupby channel split
-                ch_ds.attrs.update(parent_attrs)
+            before = ds_denoised["Sv"]
+            corrected = np.empty(before.shape, dtype=before.dtype)
+            channel_axis = before.dims.index("channel")
+            levels = []
+            for index, label in enumerate(ds_denoised["channel"].values):
+                # A slice, not a label list: views, not per-channel copies.
+                ch_ds = ds_denoised.isel(channel=slice(index, index + 1))
 
                 # Resolve params: per-frequency if available, else global
                 if bgn_freq_params is not None:
-                    freq = str(int(ch_ds["frequency_nominal"]))
+                    freq = str(int(ch_ds["frequency_nominal"].values.ravel()[0]))
                     opts = bgn_freq_params.get(freq, bgn_global)
                 else:
                     opts = bgn_global
+                snr = products.parse_db(opts.get("SNR_threshold", "3.0dB"))
 
-                result = ep_remove_background_noise(
+                level = products.estimate_background_level(
                     ch_ds,
                     ping_num=opts.get("ping_window", 50),
                     range_sample_num=opts.get("range_window", 20),
-                    SNR_threshold=opts.get("SNR_threshold", "3.0dB"),
-                    background_noise_max=opts.get("background_noise_max"),
+                    background_noise_max=products.parse_db(opts.get("background_noise_max")),
                 )
-                # Use Sv_corrected (background-noise-removed), not original Sv
-                out = result["Sv_corrected"] if "Sv_corrected" in result else result["Sv"]
+                out = products.background_corrected(ch_ds["Sv"], level, ch_ds, snr)
+                out = out.transpose(*before.dims).values
                 if emit_diagnostics:
                     import denoise_diagnostics as _diag
 
-                    label = str(np.asarray(ch_ds["channel"].values).ravel()[0])
-                    entry = diag_by_channel.get(label)
+                    entry = diag_by_channel.get(str(label))
                     if entry is not None:
-                        _diag.add_background_stats(
-                            entry,
-                            np.asarray(ch_ds["Sv"].values),
-                            np.asarray(out.values),
-                        )
-                return out
+                        _diag.add_background_stats(entry, np.asarray(ch_ds["Sv"].values), out)
+                np.moveaxis(corrected, channel_axis, 0)[index] = np.moveaxis(
+                    out, channel_axis, 0
+                )[0]
+                background_snr[str(label)] = snr
+                levels.append(level)
+                del out, ch_ds
 
-            sv_clean = ds_denoised.groupby("channel").map(_remove_bgn_one_channel)
-            sv_clean.name = "Sv"
+            background_level = xr.concat(levels, dim="channel")
+            sv_clean = before.copy(data=corrected)
+            background_bit = before.notnull() & sv_clean.isnull()
+            del before, corrected
             ds_denoised["Sv"] = sv_clean
+            del sv_clean
+            ds_denoised.attrs.setdefault("processing_level", "Level 2A")
             logger.info("  Background noise removal applied per channel")
 
         # Sanity clip — mask Sv samples louder than sv_clip_max_db as NaN.
         # Catches residual electrical noise / cross-talk / ring-down that the
         # mask-based denoisers miss (they threshold on gradients, not absolute
         # values). Legitimate biology sits well below the default -10 dB clip.
+        clip_bit = None
         if sv_clip_max_db is not None and "Sv" in ds_denoised:
             if emit_diagnostics:
                 _apply_clip_diagnostics(diag_channels, ds_denoised, sv_clip_max_db)
+            # Finite and above the threshold: exactly what .where(<=) turns NaN.
+            clip_bit = ds_denoised["Sv"] > sv_clip_max_db
             n_before = int(np.isfinite(ds_denoised["Sv"].values).sum())
-            ds_denoised["Sv"] = ds_denoised["Sv"].where(ds_denoised["Sv"] <= sv_clip_max_db)
-            n_after = int(np.isfinite(ds_denoised["Sv"].values).sum())
-            n_clipped = n_before - n_after
+            ds_denoised["Sv"] = ds_denoised["Sv"].where(~clip_bit)
+            n_clipped = int(clip_bit.sum())
             pct = (n_clipped / n_before * 100) if n_before > 0 else 0.0
             logger.info(
                 "  Sv clip @ %.1f dB: masked %d samples (%.4f%% of finite)",
                 sv_clip_max_db, n_clipped, pct,
             )
 
-        # Full-resolution masks are diagnostics, not products: ~0.4 GiB each and
-        # they would otherwise be carried through prune → MVBS → NASC. Persist
-        # them to a dedicated store and drop them from the data path.
         if emit_diagnostics:
-            _save_mask_diagnostics(
-                ds_denoised, stage_cubes, stage_status, output_container,
-                day_key, category, chunks,
-            )
             _write_denoise_stats(
                 ds=ds,
                 ds_denoised=ds_denoised,
@@ -808,24 +816,41 @@ def denoise_day(
                 source_zarr=zarr_path,
                 sv_clip_max_db=sv_clip_max_db,
             )
-            ds_denoised = ds_denoised.drop_vars(
-                [v for v in ("noise_mask",) if v in ds_denoised], errors="ignore"
-            )
+
+        # One bit per step, each only on the cells that step removed. "other"
+        # holds anything the combined mask removed that no stage cube explains,
+        # so the rebuild is exact even if the two ever disagree.
+        source_finite = ds["Sv"].notnull()
+        steps = {name: cube for name, cube in stage_cubes.items() if name in products.FLAG_BITS}
+        if "noise_mask" in ds_denoised:
+            explained = None
+            for cube in steps.values():
+                explained = cube if explained is None else (explained | cube)
+            combined = ds_denoised["noise_mask"].astype(bool) & source_finite
+            steps["other"] = combined if explained is None else (combined & ~explained)
+        steps["background"] = background_bit
+        steps["clip"] = clip_bit
+        flags = products.build_flags(ds["Sv"], steps)
+        del steps
+
+        store = products.masked_sv_dataset(
+            source=ds,
+            flags=flags,
+            background_level=background_level,
+            background_snr=background_snr,
+            source_container=read_container,
+            source_path=zarr_path,
+            store_container=output_container,
+            sv_attrs=ds_denoised["Sv"].attrs,
+            dataset_attrs=ds_denoised.attrs,
+            chunks=chunks,
+        )
+        store.attrs["stage_status"] = json.dumps(stage_status)
         stage_cubes.clear()
         diag_channels.clear()
 
-        # Rechunk to uniform sizes — denoising/groupby operations produce
-        # non-uniform chunks at concatenation boundaries that Zarr cannot write.
         output_zarr = f"{day_key}/{day_key}--{category}--denoised.zarr"
-        rechunk_spec = {"ping_time": chunks.get("ping_time", 1000)}
-        if "range_sample" in ds_denoised.dims:
-            rechunk_spec["range_sample"] = -1
-        ds_denoised = ds_denoised.chunk(rechunk_spec)
-        for var in ds_denoised.data_vars:
-            ds_denoised[var].encoding.clear()
-        for coord in ds_denoised.coords:
-            ds_denoised[coord].encoding.clear()
-        save_dataset_to_azure(ds_denoised, zarr_path=output_zarr, container=output_container)
+        save_dataset_to_azure(store, zarr_path=output_zarr, container=output_container)
 
         if save_netcdf:
             _save_netcdf_to_blob(ds_denoised, f"{day_key}/{day_key}--{category}--denoised.nc", output_container)
@@ -917,47 +942,6 @@ def _apply_clip_diagnostics(diag_channels, ds_denoised, threshold) -> None:
         sv = np.asarray(ds_denoised["Sv"].isel(channel=ch).values)
         diag.add_clip_stats(entry, sv, threshold)
         del sv
-
-
-def _save_mask_diagnostics(
-    ds_denoised, stage_cubes, stage_status, output_container, day_key, category, chunks
-) -> str:
-    """Write the full-resolution stage masks to a dedicated compressed store."""
-    import json
-
-    import xarray as xr
-    from oceanstream.echodata.storage import save_dataset_to_azure
-
-    data_vars = {}
-    for name, cube in stage_cubes.items():
-        da = cube.astype(bool)
-        da.attrs["long_name"] = f"{name} noise mask (True = flagged)"
-        da.attrs["channel_status"] = json.dumps(stage_status.get(name, {}))
-        data_vars[f"mask_{name}"] = da
-    if "noise_mask" in ds_denoised:
-        data_vars["noise_mask"] = ds_denoised["noise_mask"].astype(bool)
-
-    if not data_vars:
-        return ""
-
-    masks = xr.Dataset(data_vars)
-    masks.attrs["description"] = (
-        "Full-resolution denoise stage masks. Diagnostics only — deliberately "
-        "kept out of the denoised/pruned/MVBS/NASC data path."
-    )
-    masks.attrs["stage_status"] = json.dumps(stage_status)
-    rechunk = {"ping_time": chunks.get("ping_time", 1000)}
-    if "range_sample" in masks.dims:
-        rechunk["range_sample"] = -1
-    masks = masks.chunk(rechunk)
-    for var in masks.variables.values():
-        var.encoding.clear()
-
-    path = f"{day_key}/{day_key}--{category}--masks.zarr"
-    save_dataset_to_azure(masks, zarr_path=path, container=output_container)
-    logger.info("  Saved mask diagnostics: %s", path)
-    masks.close()
-    return path
 
 
 def _write_denoise_stats(
@@ -1097,8 +1081,26 @@ def mask_seabed_day(
             logger.warning("Seabed detection failed for %s/%s: %s — skipping", day_key, category, e)
             ds_masked = ds
 
+    # Seabed masking only removes cells, so on top of a masked store it is
+    # one more flag bit; an old full store is still written out in full.
+    from oceanstream.echodata import products
+
+    seabed = ds["Sv"].notnull() & ds_masked["Sv"].isnull()
+    extra = {}
+    if "seabed_depth" in ds_masked.coords:
+        extra["seabed_depth"] = ds_masked["seabed_depth"]
+    store = products.extend_masked(
+        ds, {"seabed": seabed},
+        store_container=output_container,
+        dataset_attrs=ds_masked.attrs,
+        extra_coords=extra,
+        chunks=chunks,
+    )
+
     output_zarr = f"{day_key}/{day_key}--{category}--masked.zarr"
-    save_dataset_to_azure(ds_masked, zarr_path=output_zarr, container=output_container)
+    save_dataset_to_azure(
+        ds_masked if store is None else store, zarr_path=output_zarr, container=output_container
+    )
     logger.info("  Saved masked: %s", output_zarr)
 
     ds.close()
@@ -1259,19 +1261,19 @@ def prune_day(
         _release_memory()
         return zarr_path  # fall back to input path
 
-    # Re-chunk uniformly along ping_time and drop stale zarr chunk-encoding
-    # inherited from the source zarr (drop_noisy_pings leaves a ragged final
-    # chunk which xarray's zarr writer rejects as misaligned with encoding).
-    rechunk = {"ping_time": min(1000, n_after)}
-    if "range_sample" in ds_pruned.dims:
-        rechunk["range_sample"] = -1
-    ds_pruned = ds_pruned.chunk(rechunk)
-    for var in ds_pruned.variables.values():
-        var.encoding.pop("chunks", None)
-        var.encoding.pop("preferred_chunks", None)
+    # Pruning only selects pings, so the store records which ones survived
+    # over its parent; readers rebuild the pruned Sv from that.
+    from oceanstream.echodata import products
 
+    view = products.pruned_view_dataset(
+        parent=ds,
+        kept_ping_times=ds_pruned["ping_time"].values,
+        parent_container=output_container,
+        parent_path=zarr_path,
+        store_container=output_container,
+    )
     output_zarr = f"{day_key}/{day_key}--{category}--pruned.zarr"
-    save_dataset_to_azure(ds_pruned, zarr_path=output_zarr, container=output_container)
+    save_dataset_to_azure(view, zarr_path=output_zarr, container=output_container)
     logger.info("  Saved pruned: %s", output_zarr)
 
     ds.close()

@@ -70,6 +70,7 @@ Usage (on Azure batch VM):
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import logging
@@ -1508,7 +1509,7 @@ def build_combined_zarr(
                     if not local_path.exists():
                         log.warning("  Local MVBS not found: %s — skipping", local_path)
                         continue
-                    ds = xr.open_zarr(str(local_path), chunks=None)
+                    ds = open_product_uri(str(local_path), chunks=None)
                 else:
                     ds = _open_azure_zarr(zarr_path, container)
             except Exception as e:
@@ -1925,7 +1926,7 @@ def _extract_track_from_local_zarr(
     Returns a GeoJSON Feature (LineString) or None.
     """
     try:
-        ds = xr.open_zarr(str(zarr_path), chunks={})
+        ds = open_product_uri(str(zarr_path), chunks={})
         has_lat = "latitude" in ds.coords or "latitude" in ds.data_vars
         has_lon = "longitude" in ds.coords or "longitude" in ds.data_vars
         if not (has_lat and has_lon):
@@ -2115,10 +2116,10 @@ def _extract_nasc_from_local_zarr(
     Returns a list of GeoJSON Feature dicts (Points).
     """
     try:
-        ds = xr.open_zarr(str(zarr_path), consolidated=False)
+        ds = open_product_uri(str(zarr_path), consolidated=False)
     except Exception:
         try:
-            ds = xr.open_zarr(str(zarr_path))
+            ds = open_product_uri(str(zarr_path))
         except Exception as e:
             log.warning("  Failed to open NASC zarr %s: %s", zarr_path.name, e)
             return []
@@ -3097,7 +3098,7 @@ def run_echogram_only(args: argparse.Namespace) -> None:
             continue
 
         log.info("--echogram-only: loading %s zarr %s", freq_label, zarr_path)
-        campaign_ds = xr.open_zarr(str(zarr_path)).load()
+        campaign_ds = open_product_uri(str(zarr_path)).load()
         log.info("Loaded %s shape: %s", freq_label, dict(campaign_ds.sizes))
 
         for cmap_name, cmap in COLORMAPS:

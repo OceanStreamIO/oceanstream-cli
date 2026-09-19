@@ -17,6 +17,7 @@ Usage:
 """
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import logging
@@ -166,12 +167,11 @@ def main():
                 log.info("Stage 9 (%s) complete (%.1fs)", freq_label, time.time() - t0)
             else:
                 # Load from existing combined zarr
-                import xarray as xr
                 zarr_path = OUTPUT_DIR / f"campaign_mvbs_combined_{freq_stem}.zarr"
                 if not zarr_path.exists():
                     log.warning("No combined zarr for %s, skipping stage 10", freq_label)
                     continue
-                campaign_ds = xr.open_zarr(str(zarr_path)).load()
+                campaign_ds = open_product_uri(str(zarr_path)).load()
 
             if 10 in stages:
                 log.info("=" * 70)

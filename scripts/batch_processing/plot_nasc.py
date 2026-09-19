@@ -20,12 +20,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
+from oceanstream.echodata.products import open_product_uri
+
 
 def load_nasc(zarr_dir: str, day: str, category: str) -> xr.Dataset:
     path = Path(zarr_dir) / day / f"{day}--{category}--nasc.zarr"
     if not path.exists():
         sys.exit(f"NASC zarr not found: {path}")
-    return xr.open_zarr(path)
+    return open_product_uri(path)
 
 
 def summarize(ds: xr.Dataset, channel_idx: int = 0,
@@ -183,7 +185,7 @@ def main():
     if args.category == "long_pulse":
         sp_path = Path(args.zarr_dir) / args.day / f"{args.day}--short_pulse--nasc.zarr"
         if sp_path.exists():
-            ds_sp = xr.open_zarr(sp_path)
+            ds_sp = open_product_uri(sp_path)
             sp_prefix = f"{args.day}--short_pulse"
             print("--- short_pulse ---")
             summarize(ds_sp, channel_idx=0,

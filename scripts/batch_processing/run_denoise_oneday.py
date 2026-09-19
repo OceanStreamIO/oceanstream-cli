@@ -8,6 +8,7 @@ Outputs PNG echograms into  local-raw-01/<day>/echograms/
 """
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import logging
@@ -15,7 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-import xarray as xr
 
 # Ensure oceanstream is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -108,7 +108,7 @@ def run(day: str, category: str, base_dir: Path) -> None:
 
     # ── 1. Load raw Sv ──────────────────────────────────────────
     logger.info("Loading %s", zarr_path)
-    ds_raw = xr.open_zarr(str(zarr_path))
+    ds_raw = open_product_uri(str(zarr_path))
     logger.info(
         "  shape: channel=%d  ping_time=%d  range_sample=%d",
         ds_raw.sizes.get("channel", 0),

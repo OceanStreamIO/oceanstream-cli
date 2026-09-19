@@ -194,7 +194,14 @@ def open_sv_from_azure(
     if not ds.data_vars:
         # Zarr v3 stores lack consolidated metadata — retry without it
         ds = xr.open_zarr(uri, consolidated=False, **open_kw)
-    return ds
+
+    # Masked-Sv and pruned-view stores come back as the Sv they stand for.
+    from oceanstream.echodata.products import resolve_product
+
+    return resolve_product(
+        ds,
+        lambda p, c: open_sv_from_azure(zarr_path=p, container=c or container, chunks=chunks),
+    )
 
 
 def get_azure_zarr_store(

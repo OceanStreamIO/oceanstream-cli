@@ -2,12 +2,12 @@
 """Regenerate campaign echograms with gap-free sequential x-axis and depth."""
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
-import xarray as xr
 from pathlib import Path
 
 TRANSDUCER_DEPTH = 1.9
@@ -43,7 +43,7 @@ def find_day_boundaries(ping_time, threshold_s=GAP_THRESHOLD_S):
 for category in ["long_pulse", "short_pulse"]:
     zarr_path = ZARR_DIR / f"campaign_mvbs_{category}.zarr"
     print(f"Loading {zarr_path.name}...")
-    ds = xr.open_zarr(str(zarr_path))
+    ds = open_product_uri(str(zarr_path))
     ds = ds.load()
     print(f"  Shape: {dict(ds.sizes)}")
 

@@ -224,9 +224,11 @@ Code revision consistency across arms: **{"yes" if metrics.get("code_revision_co
 | 8 | NASC: 10 m × 0.5 nmi integration | `--nasc.zarr` |
 | 9 | Echograms from the **saved** pruned product | PNG |
 
-Full-resolution stage masks are written to a separate `--masks.zarr` and
-dropped from the data path before pruning, so they do not propagate into MVBS
-or NASC.
+`--denoised.zarr` stores no Sv of its own: it holds one flag bit per stage
+and the per-ping background noise level over the stage-4 Sv, and readers
+rebuild the denoised Sv on open. `--pruned.zarr` likewise holds only which
+pings were kept. The stage masks are therefore always available, and never
+propagate into MVBS or NASC.
 
 ### Deviations from Ryan et al. (2015)
 

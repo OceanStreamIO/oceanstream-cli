@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 
+from oceanstream.echodata.products import open_product_uri
+
 if TYPE_CHECKING:
     import matplotlib.colors as mcolors
     import xarray as xr
@@ -161,7 +163,7 @@ def combine_38khz_day(
             if isinstance(src, xr.Dataset):
                 ds = src
             else:
-                ds = xr.open_zarr(str(src), chunks=None)
+                ds = open_product_uri(str(src), chunks=None)
                 opened_paths.append(ds)
             ds = _clear_encoding(ds)
         except Exception as exc:

@@ -58,6 +58,8 @@ from experiment_contract import (
     write_json_atomic,
 )
 
+from oceanstream.echodata.products import open_product_uri
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s"
 )
@@ -117,7 +119,7 @@ def open_product(root: Path, day: str, category: str, suffix: str) -> xr.Dataset
     if not path.exists():
         logger.warning("Missing product %s", path)
         return None
-    return xr.open_zarr(str(path))
+    return open_product_uri(str(path))
 
 
 def channel_frequencies(ds: xr.Dataset) -> list[float | None]:
@@ -710,7 +712,7 @@ def record_echograms(
     if not source_path.exists():
         logger.warning("No source Sv at %s — skipping echogram figures", source_path)
         return
-    src = xr.open_zarr(str(source_path))
+    src = open_product_uri(str(source_path))
 
     try:
         freqs = channel_frequencies(src)

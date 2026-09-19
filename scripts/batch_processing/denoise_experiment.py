@@ -26,6 +26,7 @@ Usage:
 """
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import argparse
 import gc
 import logging
@@ -481,7 +482,7 @@ def main():
     log.info("Experiments: %d", len(experiments))
 
     log.info("Loading %s ...", zarr_path)
-    ds = xr.open_zarr(str(zarr_path))
+    ds = open_product_uri(str(zarr_path))
     ds = ds.load()
     log.info("Loaded: %s", dict(ds.sizes))
 

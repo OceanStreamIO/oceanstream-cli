@@ -6,6 +6,7 @@ commonly used for biomass estimation in fisheries acoustics.
 
 from __future__ import annotations
 
+from oceanstream.echodata.products import open_product_uri
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
@@ -431,7 +432,7 @@ def compute_nasc(
     # Load Sv if path provided
     if isinstance(sv_dataset, (str, Path)):
         logger.info(f"Loading Sv from {sv_dataset}")
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
     
     # Ensure required variables
     sv_dataset = _ensure_location(sv_dataset)
@@ -513,12 +514,11 @@ def compute_nasc_denoised(
     Returns:
         xarray.Dataset with NASC from denoised data
     """
-    import xarray as xr
     import numpy as np
     
     # Load Sv if path provided
     if isinstance(sv_dataset, (str, Path)):
-        sv_dataset = xr.open_zarr(sv_dataset)
+        sv_dataset = open_product_uri(sv_dataset)
     
     # Apply mask
     sv_denoised = sv_dataset.copy()
