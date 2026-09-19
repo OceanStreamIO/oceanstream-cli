@@ -268,6 +268,89 @@ class TestCalibrateBands:
         assert out[489.0].frac_nonpositive_residual == pytest.approx(30 / SHAPE[0], abs=0.02)
 
 
+def _calibration(
+    wavelength_nm: float, k_per_m: float, r_squared: float
+) -> attenuation.BandCalibration:
+    return attenuation.BandCalibration(
+        wavelength_nm=wavelength_nm,
+        k_per_m=k_per_m,
+        intercept=0.0,
+        r_squared=r_squared,
+        n_bins=10,
+        n_pixels=1000,
+        depth_range_m=(1.0, 20.0),
+        deep_water_reference=DEEP_REFERENCE,
+        frac_nonpositive_residual=0.5,
+    )
+
+
+class TestTrustGates:
+    """The diagnostics were computed and documented long before anything acted
+    on them. These fix that: a fit that fails them must not read as a result."""
+
+    def test_a_clean_fit_is_trusted(
+        self, depth_field: np.ndarray, deep_mask: np.ndarray
+    ) -> None:
+        reflectance = {489.0: _synthetic_band(0.12, depth_field, noise=5e-5, seed=1)}
+        water = np.ones(SHAPE, dtype=bool)
+        out = attenuation.calibrate_bands(reflectance, depth_field, water, deep_mask)
+        assert out[489.0].trustworthy
+        assert out[489.0].trust_failures == ()
+
+    def test_negative_k_is_rejected(
+        self, depth_field: np.ndarray, deep_mask: np.ndarray
+    ) -> None:
+        # Reflectance rising with depth. Whatever this is, it is not attenuation.
+        band = DEEP_REFERENCE + RHO_B_OVER_PI * np.exp(0.05 * depth_field)
+        band[-10:, :] = DEEP_REFERENCE
+        water = np.ones(SHAPE, dtype=bool)
+        out = attenuation.calibrate_bands({489.0: band}, depth_field, water, deep_mask)
+        assert out[489.0].k_per_m < 0
+        assert not out[489.0].trustworthy
+        assert "k_nonpositive" in out[489.0].trust_failures
+
+    def test_a_contaminated_reference_is_rejected(self, depth_field: np.ndarray) -> None:
+        # L_inf taken over bright shallow water rather than deep water, which is
+        # the Lough Swilly failure in miniature.
+        shallow_mask = np.zeros(SHAPE, dtype=bool)
+        shallow_mask[:10, :] = True
+        water = np.ones(SHAPE, dtype=bool)
+        out = attenuation.calibrate_bands(
+            {489.0: _synthetic_band(0.12, depth_field)}, depth_field, water, shallow_mask
+        )
+        assert not out[489.0].trustworthy
+
+    def test_artefact_check_passes_when_the_ordering_is_physical(self) -> None:
+        calibrations = {
+            489.0: _calibration(489.0, k_per_m=0.09, r_squared=0.90),
+            833.0: _calibration(833.0, k_per_m=0.01, r_squared=0.05),
+        }
+        assert attenuation.depth_correlated_artefact(calibrations) is None
+
+    def test_artefact_check_fires_when_nir_outfits_the_visible(self) -> None:
+        calibrations = {
+            560.0: _calibration(560.0, k_per_m=0.02, r_squared=0.63),
+            833.0: _calibration(833.0, k_per_m=0.04, r_squared=0.70),
+        }
+        message = attenuation.depth_correlated_artefact(calibrations)
+        assert message is not None
+        assert "833" in message
+
+    def test_scene_gradient_condemns_every_band(
+        self, depth_field: np.ndarray, deep_mask: np.ndarray
+    ) -> None:
+        # The gradient is common-mode, so a band fitting cleanly is no defence.
+        water = np.ones(SHAPE, dtype=bool)
+        reflectance = {
+            560.0: _synthetic_band(0.09, depth_field, noise=5e-3, seed=2),
+            833.0: _synthetic_band(0.09, depth_field),
+        }
+        out = attenuation.calibrate_bands(reflectance, depth_field, water, deep_mask)
+        assert out[833.0].r_squared > out[560.0].r_squared
+        for calibration in out.values():
+            assert "scene_depth_gradient" in calibration.trust_failures
+
+
 class TestLyzengaRatios:
     def test_ratios_are_emitted_for_every_pair(self) -> None:
         calibrations = {

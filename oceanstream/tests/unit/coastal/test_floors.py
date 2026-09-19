@@ -225,3 +225,78 @@ class TestSceneFloorVerdict:
         assert floors.scene_floor_verdict(k)["passed"] is False
         lenient = QCConfig(k_floor_slack=0.10)
         assert floors.pure_water_floor_check(k, config=lenient)["passed"] is True
+
+
+# The nine Sentinel-2 bands the comparison harness actually fits. Only the four
+# visible ones can be scored against a floor; 707-866 nm are both beyond the
+# Pope & Fry table and opaque within the fit window.
+S2_ALL_NM = (444.0, 489.0, 561.0, 667.0, 707.0, 741.0, 783.0, 835.0, 866.0)
+S2_ASSESSABLE_NM = (444.0, 489.0, 561.0, 667.0)
+
+
+class TestAssessableBands:
+    """Which bands a floor claim may be made about at all."""
+
+    def test_only_the_visible_bands_are_scored(self) -> None:
+        k = dict.fromkeys(S2_ALL_NM, 0.05)
+        result = floors.pure_water_floor_check(k)
+        assert set(result["bands"]) == {f"{nm:.0f}" for nm in S2_ASSESSABLE_NM}
+        assert set(result["skipped_bands"]) == {"707", "741", "783", "835", "866"}
+
+    def test_the_sesimbra_violation_count_matches_the_reference_run(self) -> None:
+        """The harness fits nine bands; the prototype reported two violations.
+
+        Scoring the five unassessable bands is what inflated that to seven, and
+        it is why no harness verdict was comparable with the reference run.
+        """
+        k = dict(SESIMBRA_K) | dict.fromkeys((707.0, 741.0, 783.0, 835.0, 866.0), 0.02)
+        result = floors.pure_water_floor_check(k)
+        assert result["n_violations"] == 2
+        assert result["violating_bands_nm"] == [561.0, 667.0]
+        assert result["worst_band_nm"] == 667.0
+        assert result["worst_ratio"] == pytest.approx(0.083, abs=0.005)
+
+    def test_a_skipped_band_cannot_fail_the_scene(self) -> None:
+        """An absurd NIR k must not change the verdict, in either direction."""
+        good = _physical_k()
+        assert floors.scene_floor_verdict(good)["passed"] is True
+        assert floors.scene_floor_verdict(good | {835.0: 1e-9})["passed"] is True
+
+    def test_each_exclusion_states_its_reason(self) -> None:
+        skipped = floors.pure_water_floor_check(
+            dict.fromkeys((*S2_ALL_NM, 690.0), 0.05)
+        )["skipped_bands"]
+        assert "no tabulated pure-water absorption" in skipped["835"]
+        assert "extinguishes" in skipped["690"]
+
+    def test_an_opaque_band_inside_the_table_is_still_excluded(self) -> None:
+        """690 nm is tabulated but its floor is above 1/m — the two limits are
+        independent, so neither alone is sufficient."""
+        assert float(lee.kb_pure_water(690.0)) >= 1.0
+        result = floors.pure_water_floor_check({489.0: 0.2, 690.0: 0.2})
+        assert "690" in result["skipped_bands"]
+        assert "extinguishes" in result["skipped_bands"]["690"]
+
+    def test_exclusions_are_visible_in_the_summary_even_when_passing(self) -> None:
+        verdict = floors.scene_floor_verdict(_physical_k() | {835.0: 0.02})
+        assert verdict["passed"] is True
+        assert "835" in verdict["summary"]
+
+    def test_a_scene_with_no_assessable_band_fails(self) -> None:
+        verdict = floors.scene_floor_verdict(dict.fromkeys((835.0, 866.0), 0.02))
+        assert verdict["passed"] is False
+        assert "no_assessable_band" in verdict["checks"]["pure_water_floor"]["flags"]
+        assert "no band could be scored" in verdict["summary"]
+
+    def test_the_ratio_check_ignores_unassessable_bands(self) -> None:
+        """444/835 clears ratio_contrast_max only because the extrapolated NIR
+        floor is ~7x too low, so it was being tested on a fabricated basis."""
+        pairs = floors.lyzenga_ratio_check(dict.fromkeys(S2_ALL_NM, 0.05))["pairs"]
+        assert all(
+            wl <= 700.0 for pair in pairs.values() for wl in pair["wavelengths_nm"]
+        )
+
+    def test_the_limits_are_configurable(self) -> None:
+        k = {489.0: 0.2, 835.0: 0.2}
+        permissive = QCConfig(floor_max_wavelength_nm=900.0, floor_opaque_min_per_m=99.0)
+        assert "835" in floors.pure_water_floor_check(k, config=permissive)["bands"]

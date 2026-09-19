@@ -110,6 +110,21 @@ __all__ = [
     "par_weights",
     "seabed_par_fraction",
     "euphotic_depth",
+    # Products + STAC (Phase 3.4)
+    "ProductSpec",
+    "ProductWriter",
+    "WrittenProduct",
+    "RASTER_PRODUCTS",
+    "JSON_PRODUCTS",
+    "STATUS_PUBLISHABLE",
+    "STATUS_DIAGNOSTIC",
+    "get_spec",
+    "raster_stats",
+    "write_json_document",
+    "emit_stac",
+    "build_item",
+    "build_collection",
+    "merge_item_into_collection",
     # High-level API (Phase 1+)
     "CoastalProcessor",
     "CoastalResult",
@@ -310,6 +325,29 @@ def __getattr__(name: str) -> object:  # noqa: PLR0911, PLR0912
     ):
         from oceanstream.coastal import detectability as _detectability
         return getattr(_detectability, name)
+    # Products + STAC
+    if name in (
+        "ProductSpec",
+        "ProductWriter",
+        "WrittenProduct",
+        "RASTER_PRODUCTS",
+        "JSON_PRODUCTS",
+        "STATUS_PUBLISHABLE",
+        "STATUS_DIAGNOSTIC",
+        "get_spec",
+        "raster_stats",
+        "write_json_document",
+    ):
+        from oceanstream.coastal import products as _products
+        return getattr(_products, name)
+    if name in (
+        "emit_stac",
+        "build_item",
+        "build_collection",
+        "merge_item_into_collection",
+    ):
+        from oceanstream.coastal.stac import coastal_emit as _emit
+        return getattr(_emit, name)
     # High-level processor
     if name in ("CoastalProcessor", "CoastalResult"):
         from oceanstream.coastal.processor import CoastalProcessor, CoastalResult

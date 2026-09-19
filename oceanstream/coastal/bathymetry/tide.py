@@ -73,6 +73,12 @@ class TideCorrection:
     def __post_init__(self) -> None:
         if not np.isfinite(self.offset_m):
             raise ValueError(f"TideCorrection.offset_m must be finite; got {self.offset_m}.")
+        if not self.source.strip():
+            raise ValueError("A tide correction requires its source.")
+        if self.uncertainty_m is not None and (
+            not np.isfinite(self.uncertainty_m) or self.uncertainty_m < 0
+        ):
+            raise ValueError("Tide uncertainty must be finite and nonnegative.")
         if abs(self.offset_m) > IMPLAUSIBLE_OFFSET_M:
             raise ValueError(
                 f"Tide offset of {self.offset_m:.2f} m exceeds the plausible range "
@@ -82,8 +88,7 @@ class TideCorrection:
             )
         if self.derivation not in {"model", "declared", "fitted"}:
             raise ValueError(
-                f"Unknown derivation {self.derivation!r}; expected 'model', "
-                "'declared' or 'fitted'."
+                f"Unknown derivation {self.derivation!r}; expected 'model', 'declared' or 'fitted'."
             )
 
     @property
@@ -111,9 +116,7 @@ class TideCorrection:
             "derivation": self.derivation,
             "source": self.source,
             "when": None if self.when is None else self.when.isoformat(),
-            "uncertainty_m": (
-                None if self.uncertainty_m is None else round(self.uncertainty_m, 4)
-            ),
+            "uncertainty_m": (None if self.uncertainty_m is None else round(self.uncertainty_m, 4)),
             "is_independent": self.is_independent,
             **({"metadata": self.metadata} if self.metadata else {}),
         }
@@ -245,9 +248,7 @@ def fit_offset_from_reference(
     valid = np.isfinite(modelled) & np.isfinite(reference)
     n = int(valid.sum())
     if n < 3:
-        raise ValueError(
-            f"Need at least 3 paired finite depths to fit an offset; got {n}."
-        )
+        raise ValueError(f"Need at least 3 paired finite depths to fit an offset; got {n}.")
     slope, intercept = np.polyfit(reference[valid], modelled[valid], 1)
     residual = modelled[valid] - (slope * reference[valid] + intercept)
     return TideCorrection(

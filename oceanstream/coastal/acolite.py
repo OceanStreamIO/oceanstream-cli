@@ -40,6 +40,18 @@ _REQUIRED_WINDOWS = {
     "red": (650, 680),
 }
 
+#: Injected into every run, ahead of the caller's own keys so they can still be
+#: overridden. These are not preferences. ACOLITE's default output is a single
+#: L2R NetCDF, and everything downstream of this module reads per-band GeoTIFFs,
+#: so a run without ``l2r_export_geotiff`` completes successfully and leaves
+#: nothing :class:`~.scene.Scene` can open. ``output_geolocation`` yields the
+#: per-pixel solar zenith raster; without it the pure-water floor is computed
+#: from a fallback angle, which is a guess dressed as a measurement.
+REQUIRED_OUTPUT_SETTINGS: Mapping[str, str] = {
+    "l2r_export_geotiff": "True",
+    "output_geolocation": "True",
+}
+
 
 def acolite_settings(
     aoi_limit: tuple[float, float, float, float],
@@ -57,7 +69,8 @@ def acolite_settings(
 
     A ``template`` is appended to rather than parsed, so an operator's tuned
     settings survive verbatim and the injected keys — which must win — come
-    last.
+    last. :data:`REQUIRED_OUTPUT_SETTINGS` is injected too, before ``extra``, so
+    a caller can still override it but cannot forget it.
     """
     lines = []
     if template is not None:
@@ -76,6 +89,8 @@ def acolite_settings(
     lines.append(f"inputfile={Path(input_path).resolve()}")
     lines.append(f"output={Path(output_dir).resolve()}")
     lines.append("limit={},{},{},{}".format(*aoi_limit))
+    for key, value in REQUIRED_OUTPUT_SETTINGS.items():
+        lines.append(f"{key}={value}")
     for key, value in (extra or {}).items():
         lines.append(f"{key}={value}")
     return "\n".join(lines) + "\n"
@@ -212,12 +227,17 @@ def correct_scene(
     template: Path | None = None,
     extra: Mapping[str, str] | None = None,
     force: bool = False,
+    python_executable: str | None = None,
 ) -> Path:
     """Atmospherically correct one L1 bundle. Returns the output directory.
 
     Skips the run when ``output_dir`` already holds a complete band set, unless
     ``force``. A re-run costs minutes per scene and the check is cheap, so the
     default is to trust existing output.
+
+    ``python_executable`` selects the interpreter ACOLITE runs under. It usually
+    has to be set: ACOLITE imports ``osgeo``, and the GDAL Python bindings are
+    rarely present in the environment calling this library.
     """
     output_dir = Path(output_dir)
     if not force and output_is_complete(output_dir):
@@ -226,12 +246,22 @@ def correct_scene(
     settings_path = write_acolite_settings(
         output_dir, aoi_limit, Path(input_path), template=template, extra=extra
     )
-    run_acolite(settings_path, acolite_path)
+    run_acolite(settings_path, acolite_path, python_executable=python_executable)
     if not output_is_complete(output_dir):
+        if not _band_wavelengths(output_dir):
+            raise RuntimeError(
+                f"ACOLITE exited successfully but wrote no bands at all to "
+                f"{output_dir}. It exits 0 on its own import failures, so check "
+                f"the console output for those first. Otherwise check whether it "
+                f"wrote only an L2R NetCDF: per-band GeoTIFFs need "
+                f"'l2r_export_geotiff', which this library injects unless a "
+                f"caller overrides it through extra."
+            )
         raise RuntimeError(
             f"ACOLITE exited successfully but {output_dir} is missing the "
-            f"{', '.join(missing_windows(output_dir))} band(s). This usually means "
-            "the AOI limit falls outside the tile footprint, or the input bundle "
-            "is partially masked. Check acolite_settings.txt in that directory."
+            f"{', '.join(missing_windows(output_dir))} band(s). It wrote some "
+            "bands, so it ran: the AOI limit probably clips the tile footprint, "
+            "or the input bundle is partially masked. Check acolite_settings.txt "
+            "in that directory."
         )
     return output_dir

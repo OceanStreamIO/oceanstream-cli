@@ -31,6 +31,30 @@ atmospheric correction, sun glint that tracks bathymetry, adjacency from a
 nearby shore, or a depth reference misaligned with the imagery. Products built
 on that k are not conservative, they are wrong in an unknown direction. Gate on
 them rather than shipping them with a caveat.
+
+Which bands may be scored
+-------------------------
+Both gates score only bands where a floor is a meaningful claim. Two limits
+disqualify a band, for unrelated reasons:
+
+*Beyond the tabulated absorption.* ``optics.water.a_water`` interpolates Pope &
+Fry 1997, which stops at 700 nm, and extrapolates flat above it. So
+``kb_pure_water(866)`` returns a number computed from a_w = 0.624 when the true
+value is near 4.6 — about 7x too low. Asserting a floor there states a physical
+limit we do not have.
+
+*Opaque within the fit window.* At 707 nm pure water alone extinguishes the
+bottom signal inside about 3.5 m, against a fit window running to 20 m. The
+regression over such a band has no bottom decay to track, so its slope is not an
+attenuation that can be under a floor — it is noise, or a gradient that merely
+correlates with depth.
+
+Excluded bands are listed in ``skipped_bands`` with a reason, never dropped
+quietly: a band that vanishes from a report is indistinguishable from a band
+that passed. They also keep being *fitted*, because
+:func:`~oceanstream.coastal.optics.attenuation.depth_correlated_artefact`
+detects a common-mode gradient precisely by noticing that an opaque band fits
+better than a bottom-carrying one.
 """
 
 from __future__ import annotations
@@ -65,6 +89,36 @@ def _as_k_map(k_by_band: KByBand) -> dict[float, float]:
     return out
 
 
+def _assessable_bands(
+    k_map: Mapping[float, float],
+    zenith: float,
+    config: QCConfig,
+) -> tuple[dict[float, float], dict[str, str]]:
+    """Split bands into those a floor claim applies to, and those it does not.
+
+    Returns ``(assessable, skipped)`` where ``skipped`` maps the band label to
+    the reason it cannot be scored. See the module docstring for why each limit
+    exists.
+    """
+    assessable: dict[float, float] = {}
+    skipped: dict[str, str] = {}
+    for wavelength, k in k_map.items():
+        if wavelength > config.floor_max_wavelength_nm:
+            skipped[f"{wavelength:.0f}"] = (
+                f"no tabulated pure-water absorption above {config.floor_max_wavelength_nm:.0f} nm"
+            )
+            continue
+        floor = float(lee.kb_pure_water(wavelength, zenith))
+        if floor >= config.floor_opaque_min_per_m:
+            skipped[f"{wavelength:.0f}"] = (
+                f"pure water extinguishes the bottom signal within "
+                f"{4.6 / floor:.1f} m; no decay to measure"
+            )
+            continue
+        assessable[wavelength] = k
+    return assessable, skipped
+
+
 def pure_water_floor_check(
     k_by_band: KByBand,
     solar_zenith_deg: float | None = None,
@@ -89,11 +143,12 @@ def pure_water_floor_check(
         ``passed`` is False if any band is below its floor. ``bands`` carries
         per-band ``ratio = k / floor``; below 1 is unphysical. ``worst_ratio``
         is the headline number: 0.18 means the fit found under a fifth of the
-        attenuation pure water alone guarantees.
+        attenuation pure water alone guarantees. ``skipped_bands`` names the
+        bands no floor claim applies to, with the reason for each.
     """
     cfg = config or QCConfig()
     zenith = cfg.floor_solar_zenith_deg if solar_zenith_deg is None else solar_zenith_deg
-    k_map = _as_k_map(k_by_band)
+    k_map, skipped = _assessable_bands(_as_k_map(k_by_band), zenith, cfg)
 
     bands: dict[str, dict[str, Any]] = {}
     violations: list[float] = []
@@ -116,7 +171,7 @@ def pure_water_floor_check(
     worst = min(finite.values(), key=lambda b: b["ratio"]) if finite else None
     flags: list[str] = []
     if not finite:
-        flags.append("no_finite_k_to_check")
+        flags.append("no_assessable_band" if skipped and not bands else "no_finite_k_to_check")
     if violations:
         flags.append("k_below_pure_water_floor")
 
@@ -129,6 +184,7 @@ def pure_water_floor_check(
         "worst_band_nm": float(worst["wavelength_nm"]) if worst else None,
         "worst_ratio": float(worst["ratio"]) if worst else float("nan"),
         "bands": bands,
+        "skipped_bands": skipped,
         "flags": flags,
     }
     if violations:
@@ -149,9 +205,11 @@ def lyzenga_ratio_check(
     """Verify spectrally-contrasted ``k`` ratios stay above their pure-water value.
 
     Only band pairs whose pure-water ratio is below ``config.ratio_contrast_max``
-    are tested. Blue/red qualifies at about 0.035; blue/green does not, at about
-    0.3, and testing it would only add noise — when two bands are nearly equally
-    attenuated by water, a ratio near 1 is the expected result and says nothing.
+    are tested, and only among bands a floor claim applies to at all (see the
+    module docstring). Blue/red qualifies at about 0.035; blue/green does not, at
+    about 0.3, and testing it would only add noise — when two bands are nearly
+    equally attenuated by water, a ratio near 1 is the expected result and says
+    nothing.
 
     Two ways to fail, recorded separately because they point at different
     problems:
@@ -168,7 +226,7 @@ def lyzenga_ratio_check(
     """
     cfg = config or QCConfig()
     zenith = cfg.floor_solar_zenith_deg if solar_zenith_deg is None else solar_zenith_deg
-    k_map = _as_k_map(k_by_band)
+    k_map, _ = _assessable_bands(_as_k_map(k_by_band), zenith, cfg)
     wavelengths = sorted(k_map)
 
     pairs: dict[str, dict[str, Any]] = {}
@@ -231,6 +289,12 @@ def lyzenga_ratio_check(
 def _failure_reasons(floor: dict[str, Any], ratio: dict[str, Any]) -> list[str]:
     """Human-readable reasons a scene failed, in the order they matter."""
     reasons: list[str] = []
+    if "no_assessable_band" in floor["flags"]:
+        reasons.append(
+            "no band could be scored against a floor ("
+            + "; ".join(f"{nm} nm: {why}" for nm, why in floor["skipped_bands"].items())
+            + ")"
+        )
     if "no_finite_k_to_check" in floor["flags"]:
         reasons.append("no finite k values were fitted")
     if floor["n_violations"]:
@@ -244,10 +308,7 @@ def _failure_reasons(floor: dict[str, Any], ratio: dict[str, Any]) -> list[str]:
             )
         )
     if ratio["below_pure_water_pairs"]:
-        reasons.append(
-            "k ratio below pure water for "
-            + ", ".join(ratio["below_pure_water_pairs"])
-        )
+        reasons.append("k ratio below pure water for " + ", ".join(ratio["below_pure_water_pairs"]))
     if ratio["near_unity_pairs"]:
         reasons.append(
             "k ratio near unity for "
@@ -277,15 +338,43 @@ def scene_floor_verdict(
     floor = pure_water_floor_check(k_by_band, solar_zenith_deg, config)
     ratio = lyzenga_ratio_check(k_by_band, solar_zenith_deg, config)
     passed = bool(floor["passed"] and ratio["passed"])
-    summary = (
+    fit_failures = {
+        f"{nm:g}": list(value.trust_failures)
+        for nm, value in k_by_band.items()
+        if hasattr(value, "trust_failures")
+        and value.trust_failures
+        and f"{nm:.0f}" not in floor["skipped_bands"]
+    }
+    if fit_failures:
+        passed = False
+    n_skipped = len(floor["skipped_bands"])
+    # Named even on success, so "all bands passed" cannot be read as "all bands".
+    skipped_note = (
+        f" {n_skipped} band(s) carry no floor claim: " + ", ".join(floor["skipped_bands"]) + "."
+        if n_skipped
+        else ""
+    )
+    core = (
         f"k(lambda) clears the pure-water floor in all {floor['n_bands']} band(s) "
-        f"and {ratio['n_pairs']} discriminating ratio(s) are physical."
+        f"and {ratio['n_pairs']} discriminating ratio(s) are physical"
         if passed
         else "; ".join(_failure_reasons(floor, ratio))
     )
+    summary = core.rstrip(".") + "." + skipped_note
+    if fit_failures:
+        summary += (
+            " Unreliable fits: "
+            + "; ".join(f"{nm} nm ({', '.join(reasons)})" for nm, reasons in fit_failures.items())
+            + "."
+        )
     return {
         "passed": passed,
         "summary": summary,
-        "flags": sorted(set(floor["flags"]) | set(ratio["flags"])),
+        "flags": sorted(
+            set(floor["flags"])
+            | set(ratio["flags"])
+            | {reason for reasons in fit_failures.values() for reason in reasons}
+        ),
+        "fit_failures": fit_failures,
         "checks": {"pure_water_floor": floor, "lyzenga_ratio": ratio},
     }

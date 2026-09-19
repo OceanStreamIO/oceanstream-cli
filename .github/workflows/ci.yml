@@ -1,14 +1,15 @@
 name: CI
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  build-test:
+  coastal-beta:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.11', '3.12', '3.13']
     steps:
@@ -16,19 +17,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Build and install the root wheel
         run: |
-          pip install --upgrade pip
-          pip install -e oceanstream
-          pip install -r requirements-dev.txt || true
-      - name: Lint (ruff)
-        run: ruff check .
-      - name: Type check (mypy)
-        run: mypy oceanstream
-      - name: Tests with coverage
-        run: pytest --cov=oceanstream --cov-report=xml --cov-report=term
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+          python -m pip install --upgrade pip
+          python -m pip install build pytest pytest-cov mypy ruff jsonschema
+          python -m build --wheel
+          python -m pip install "$(echo dist/oceanstream-*.whl)[coastal,coastal-acquire]"
+          python -m pip check
+      - name: Coastal lint
+        # Numerical constants, local optional imports, and scientific function
+        # signatures retain their existing style; E/F/I/UP are enforced.
+        run: ruff check oceanstream/coastal --select E,F,I,UP
+      - name: Coastal type checks
+        run: mypy oceanstream/coastal --follow-imports=silent
+      - name: Coastal regression and offline STAC schema checks
+        run: pytest oceanstream/tests/unit/coastal --cov=oceanstream/coastal --cov-report=xml --cov-report=term
+      - name: Installed wheel and complete CLI smoke tests
+        working-directory: /tmp
+        run: python "$GITHUB_WORKSPACE/scripts/ci/coastal_wheel_smoke.py"
+      - uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
+          name: coastal-coverage-${{ matrix.python-version }}
           path: coverage.xml

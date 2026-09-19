@@ -98,6 +98,15 @@ class BathymetryReference:
     max_reliable_depth_m: float | None = None
     attribution: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
+    uncertainty_m: float | None = None
+
+    def __post_init__(self) -> None:
+        import math
+
+        if self.uncertainty_m is not None and (
+            not math.isfinite(self.uncertainty_m) or self.uncertainty_m <= 0
+        ):
+            raise ValueError("Bathymetry uncertainty must be finite and positive.")
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,9 @@ class AOI:
     #: mapping, so the library never needs to import those systems.
     external_ids: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: GeoJSON/GPKG polygons, with unique ``region_id`` properties. Registered
+    #: before evaluation; absent means whole-scene diagnostic fitting only.
+    attenuation_regions_uri: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -233,7 +245,16 @@ class AOI:
 
     @classmethod
     def from_json(cls, path: str | Path) -> AOI:
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        source = Path(path).resolve()
+        data = json.loads(source.read_text())
+        for key in ("deepwater_reference_uri", "attenuation_regions_uri"):
+            if data.get(key) and "://" not in data[key]:
+                data[key] = str((source.parent / data[key]).resolve())
+        for key in ("fine_bathymetry", "coarse_bathymetry"):
+            ref = data.get(key)
+            if ref and "://" not in ref["uri"]:
+                ref["uri"] = str((source.parent / ref["uri"]).resolve())
+        return cls.from_dict(data)
 
     @classmethod
     def from_geojson(cls, path: str | Path, name: str | None = None) -> AOI:
@@ -286,8 +307,7 @@ class AOI:
         name = payload.get("slug") or payload.get("name") or aoi_id
         if name is None:
             raise ValueError(
-                "EarthStudio AOI record carries no 'slug', 'name' or 'id' to "
-                "name the AOI with."
+                "EarthStudio AOI record carries no 'slug', 'name' or 'id' to name the AOI with."
             )
         return cls(
             name=str(name),
@@ -319,9 +339,7 @@ def _bbox_of_geojson_geometry(geometry: Mapping[str, Any]) -> BBox:
 
     if geometry.get("type") == "GeometryCollection":
         points = [
-            pt
-            for geom in geometry.get("geometries", [])
-            for pt in _coords(geom.get("coordinates"))
+            pt for geom in geometry.get("geometries", []) for pt in _coords(geom.get("coordinates"))
         ]
     else:
         points = _coords(geometry.get("coordinates"))

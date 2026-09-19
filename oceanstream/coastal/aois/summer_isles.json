@@ -1,0 +1,78 @@
+{
+  "name": "summer_isles",
+  "processing_bbox": [
+    -5.5,
+    57.9,
+    -5.2,
+    58.1
+  ],
+  "label": "Summer Isles, Wester Ross, Scotland",
+  "habitat_bbox": null,
+  "fine_bathymetry": {
+    "uri": "https://downloads.emodnet-bathymetry.eu/high_resolution/42_BGS_2005_4_SummerIsles.emo.zip",
+    "resolution_m": 14.46875,
+    "survey_year": null,
+    "product_year": 2018,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry HR-DTM BGS_2005_4_SummerIsles (EDMO 42). Not for navigation.",
+    "provenance": {
+      "source": "emodnet_hr_dtm",
+      "identifier": "BGS_2005_4_SummerIsles",
+      "edmo_id": 42,
+      "resolution_arcmin_denom": 128,
+      "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_42_BGS_2005_4_SummerIsles/",
+      "note": "Discovered via the EMODnet Bathymetry HR-DTM WFS (emodnet:hr_bathymetry_area). The WFS publishes a product release year, not a survey year, and does not publish seabed stability; both are left unset rather than inferred."
+    },
+    "uncertainty_m": null
+  },
+  "coarse_bathymetry": {
+    "uri": "https://ows.emodnet-bathymetry.eu/wcs?coverageId=emodnet:mean",
+    "resolution_m": 88.7,
+    "survey_year": null,
+    "product_year": null,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry. Not for navigation.",
+    "provenance": {
+      "source": "emodnet_wcs_mean",
+      "fetch_bbox": [
+        -5.95,
+        57.8,
+        -5.15,
+        58.2
+      ],
+      "n_deep_water_cells": 152987,
+      "depth_max_m": 181.21,
+      "note": "Fetch bbox is extended west into the Minch, which is where the deep water is. The inshore Summer Isles archipelago does not reach optical depth."
+    },
+    "uncertainty_m": null
+  },
+  "deepwater_reference_uri": null,
+  "tide_model": null,
+  "depth_valid_range_m": [
+    0.0,
+    40.0
+  ],
+  "external_ids": {},
+  "metadata": {
+    "region": "North Atlantic, cool-temperate",
+    "screening_bbox": [
+      -5.45,
+      57.95,
+      -5.25,
+      58.06
+    ],
+    "bathymetry_footprint": [
+      -5.7697,
+      57.8342,
+      -5.078,
+      58.1128
+    ],
+    "bathymetry_programme": "British Geological Survey (EDMO 42)",
+    "identifier_note": "The EMODnet identifier encodes 2005, which reads as the survey year, but the WFS does not publish one; survey_year is left unset."
+  },
+  "attenuation_regions_uri": null
+}
