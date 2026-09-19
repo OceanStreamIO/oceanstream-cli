@@ -24,7 +24,6 @@ from oceanstream.providers.r2r.r2r_metadata import (
     parse_file_info,
 )
 from oceanstream.sensors.processor_base import SensorDescriptor
-from oceanstream.sensors.processors import get_sensor_processor
 
 from ..base import ProcessingModule, ProviderBase
 
@@ -191,6 +190,7 @@ class R2RProvider(ProviderBase):
                 continue
 
             sensor_type = sensor_info.sensor_type or "example"
+            from oceanstream.sensors.processors import get_sensor_processor
             processor = get_sensor_processor(sensor_type)
             if processor is None:
                 # Unknown sensor type for now – skip rather than

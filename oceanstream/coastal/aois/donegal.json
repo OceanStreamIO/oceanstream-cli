@@ -1,0 +1,77 @@
+{
+  "name": "donegal",
+  "processing_bbox": [
+    -7.7,
+    55.1,
+    -7.4,
+    55.55
+  ],
+  "label": "Lough Swilly, Donegal, Ireland",
+  "habitat_bbox": null,
+  "fine_bathymetry": {
+    "uri": "https://downloads.emodnet-bathymetry.eu/high_resolution/366_7mLoughSwillyLoughFoyle.emo.zip",
+    "resolution_m": 7.234375,
+    "survey_year": null,
+    "product_year": 2018,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry HR-DTM 7mLoughSwillyLoughFoyle (EDMO 366). Not for navigation.",
+    "provenance": {
+      "source": "emodnet_hr_dtm",
+      "identifier": "7mLoughSwillyLoughFoyle",
+      "edmo_id": 366,
+      "resolution_arcmin_denom": 256,
+      "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_366_7mLoughSwillyLoughFoyle/",
+      "note": "Discovered via the EMODnet Bathymetry HR-DTM WFS (emodnet:hr_bathymetry_area). The WFS publishes a product release year, not a survey year, and does not publish seabed stability; both are left unset rather than inferred."
+    },
+    "uncertainty_m": null
+  },
+  "coarse_bathymetry": {
+    "uri": "https://ows.emodnet-bathymetry.eu/wcs?coverageId=emodnet:mean",
+    "resolution_m": 90.9,
+    "survey_year": null,
+    "product_year": null,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry. Not for navigation.",
+    "provenance": {
+      "source": "emodnet_wcs_mean",
+      "fetch_bbox": [
+        -7.9,
+        55.1,
+        -7.2,
+        55.7
+      ],
+      "n_deep_water_cells": 186231,
+      "depth_max_m": 93.6,
+      "note": "Lough Swilly bottoms out near 34 m, so a deep-water reference read inside it is taken off illuminated seabed rather than off water. Widening this fetch bbox alone does not fix that: the grid is reprojected onto the scene and clipped to processing_bbox, so depth beyond that extent is discarded. processing_bbox is therefore extended north to 55.55 as well, which is where water past 60 m first appears."
+    },
+    "uncertainty_m": null
+  },
+  "deepwater_reference_uri": null,
+  "tide_model": null,
+  "depth_valid_range_m": [
+    0.0,
+    40.0
+  ],
+  "external_ids": {},
+  "metadata": {
+    "region": "North Atlantic, cool-temperate",
+    "screening_bbox": [
+      -7.65,
+      55.15,
+      -7.45,
+      55.3
+    ],
+    "bathymetry_footprint": [
+      -7.9474,
+      54.9984,
+      -6.8914,
+      55.3073
+    ],
+    "bathymetry_programme": "INFOMAR (EDMO 366)"
+  },
+  "attenuation_regions_uri": null
+}

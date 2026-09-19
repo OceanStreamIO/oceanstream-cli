@@ -212,3 +212,7 @@ Contributions are welcome! Please open an issue or submit a pull request for any
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Coastal optics
+
+The standalone Sentinel-2 coastal library and CLI are installed with `pip install ".[coastal]"` from the repository root. See [the executable quickstart, inputs, products and failure codes](coastal/README.md). The scientific beta remains blocked pending independent validation at Sesimbra and Donegal.

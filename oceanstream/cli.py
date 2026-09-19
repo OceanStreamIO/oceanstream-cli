@@ -2233,11 +2233,17 @@ if typer:
                 "'acolite_dir' key. Pass the directory ACOLITE wrote, or a JSON "
                 "with {'acolite_dir': ..., 'sensor': ..., 'solar_zenith_deg': ...}."
             )
-        return Scene.from_acolite_dir(
-            acolite_dir,
+        directory = Path(acolite_dir)
+        if not directory.is_absolute():
+            directory = path.parent / directory
+        scene = Scene.from_acolite_dir(
+            directory,
             sensor=payload.get("sensor", "sentinel2"),
             solar_zenith_fallback_deg=payload.get("solar_zenith_deg", solar_zenith),
         )
+        if payload.get("acolite_version"):
+            scene.metadata["acolite_version"] = payload["acolite_version"]
+        return scene
 
     @coastal_app.command(
         "detect",
@@ -2253,6 +2259,8 @@ if typer:
         output_dir: Path = typer.Option(Path("out/coastal"), "-o", "--output-dir", help="Output directory."),
         campaign_id: Optional[str] = typer.Option(None, "--campaign-id", help="Groups scenes in the run report."),
         solar_zenith_deg: Optional[float] = typer.Option(None, "--solar-zenith", help="Fallback solar zenith when the scene metadata carries none."),
+        config_file: Optional[Path] = typer.Option(None, "--config", exists=True, help="Coastal configuration JSON."),
+        tide_file: Optional[Path] = typer.Option(None, "--tide", exists=True, help="Independent tide correction JSON."),
         n_clusters: int = typer.Option(4, "--clusters", min=2, help="Spectral classes for the bottom clustering."),
         no_stac: bool = typer.Option(False, "--no-stac", help="Write products without emitting a STAC item."),
         fail_on_reject: bool = typer.Option(False, "--fail-on-reject", help=f"Exit {_EXIT_REJECTED} when the scene fails QC."),
@@ -2273,17 +2281,16 @@ if typer:
             typer.echo(f"  bathymetry: {aoi_obj.fine_bathymetry or aoi_obj.coarse_bathymetry}")
             raise typer.Exit(_EXIT_OK)
 
-        if not yes and output_dir.exists() and any(output_dir.iterdir()):
-            typer.confirm(f"{output_dir} is not empty. Overwrite products?", abort=True)
-
         scene_obj = _load_coastal_scene(scene, solar_zenith_deg)
-        processor = CoastalProcessor(campaign_id=campaign_id, verbose=verbose)
+        from oceanstream.coastal.commands import processor_options, read_tide
+        processor = CoastalProcessor(campaign_id=campaign_id, verbose=verbose, **processor_options(config_file))
         result = processor.run(
             aoi_obj,
             scene_obj,
             output_dir,
             emit_stac=not no_stac,
             n_clusters=n_clusters,
+            tide_correction=read_tide(tide_file),
         )
 
         typer.echo(f"status:   {result.status}")
@@ -2315,87 +2322,27 @@ if typer:
         output_dir: Path = typer.Option(Path("out/coastal/attenuation"), "-o", "--output-dir"),
         solar_zenith_deg: float = typer.Option(35.0, "--solar-zenith", help="Used for the pure-water floor, which depends on path length."),
         sensor: str = typer.Option("sentinel2", "--sensor"),
+        aoi: Optional[Path] = typer.Option(None, "--aoi", exists=True),
+        config_file: Optional[Path] = typer.Option(None, "--config", exists=True),
+        tide_file: Optional[Path] = typer.Option(None, "--tide", exists=True),
         verbose: bool = typer.Option(False, "-v"),
     ) -> None:
-        import numpy as np
-
-        from oceanstream.coastal.io.rasters import read_band, reproject_to_grid
-        from oceanstream.coastal.masks import composite_mask, deep_water_pixels
-        from oceanstream.coastal.optics.attenuation import (
-            calibrate_bands,
-            lyzenga_ratios,
-        )
-        from oceanstream.coastal.products import write_json_document
-        from oceanstream.coastal.qc.floors import scene_floor_verdict
+        from oceanstream.coastal.aoi import AOI, BathymetryReference
+        from oceanstream.coastal.commands import processor_options, read_tide
+        from oceanstream.coastal.processor import CoastalProcessor
         from oceanstream.coastal.scene import Scene
-        from oceanstream.coastal.sensors import get_sensor
+        from oceanstream.coastal.stac.coastal_emit import geographic_bounds
 
-        if verbose:
-            logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
-
-        scene_obj = Scene.from_acolite_dir(
-            acolite_dir, sensor=sensor, solar_zenith_fallback_deg=solar_zenith_deg
-        )
-        profile = get_sensor(scene_obj.sensor)
-        roles = profile.resolve_roles(scene_obj.wavelengths_nm)
-
-        depth, depth_grid = read_band(bathymetry)
-        if not depth_grid.matches(scene_obj.grid):
-            depth = reproject_to_grid(depth, scene_obj.grid, src_grid=depth_grid)
-
-        valid, _ = composite_mask(
-            blue=scene_obj.rhos[roles["blue"]],
-            red=scene_obj.rhos[roles["red"]],
-            nir=scene_obj.rhos[roles["nir"]],
-            swir=scene_obj.rhos[roles["swir1"]] if "swir1" in roles else None,
-        )
-        deep = deep_water_pixels(valid, depth)
-        reflectance = {
-            float(wl): scene_obj.rhos[i]
-            for i, wl in enumerate(scene_obj.wavelengths_nm)
-            if float(wl) < 1000.0
-        }
-        calibrations = calibrate_bands(
-            reflectance, depth, water_mask=valid, deep_mask=deep
-        )
-        if not calibrations:
-            typer.echo("No band produced an attenuation fit.", err=True)
-            raise typer.Exit(_EXIT_INSUFFICIENT)
-
-        verdict = scene_floor_verdict(
-            calibrations, solar_zenith_deg=float(scene_obj.solar_zenith_deg)
-        )
-        payload = {
-            "scene": scene_obj.describe(),
-            "reference_bathymetry": str(bathymetry),
-            "bands": {
-                str(nm): {
-                    "k_per_m": c.k_per_m,
-                    "r_squared": c.r_squared,
-                    "n_bins": c.n_bins,
-                    "n_pixels": c.n_pixels,
-                    "k_pure_water_floor": c.k_pure_water_floor,
-                    "below_pure_water_floor": c.k_below_pure_water_floor,
-                    "quantile_spread": c.quantile_spread,
-                }
-                for nm, c in calibrations.items()
-            },
-            "lyzenga_ratios": lyzenga_ratios(calibrations),
-            "verdict": verdict,
-        }
-        output_dir.mkdir(parents=True, exist_ok=True)
-        href = write_json_document(output_dir / "attenuation.json", payload)
-
-        for nm, c in sorted(calibrations.items()):
-            flag = "  BELOW FLOOR" if c.k_below_pure_water_floor else ""
-            typer.echo(
-                f"  {nm:7.1f} nm  k={c.k_per_m:8.5f}  floor={c.k_pure_water_floor:8.5f}"
-                f"  R2={c.r_squared:.3f}{flag}"
-            )
-        typer.echo(f"verdict: {'PASS' if verdict['passed'] else 'FAIL'} — {verdict['summary']}")
-        typer.echo(f"written: {href}")
-        if not np.isfinite(scene_obj.solar_zenith_deg):
-            typer.echo("warning: solar zenith unknown; the floor is only as good as it.", err=True)
+        scene_obj = Scene.from_acolite_dir(acolite_dir, sensor=sensor, solar_zenith_fallback_deg=solar_zenith_deg)
+        aoi_obj = _load_coastal_aoi(aoi) if aoi else AOI(
+            name="coastal", processing_bbox=geographic_bounds(scene_obj.grid),
+            fine_bathymetry=BathymetryReference(uri=str(bathymetry)))
+        result = CoastalProcessor(verbose=verbose, **processor_options(config_file)).run(
+            aoi_obj, scene_obj, output_dir, emit_stac=False, tide_correction=read_tide(tide_file))
+        typer.echo(f"status: {result.status} — {result.message}")
+        if not result.success:
+            raise typer.Exit(_EXIT_INSUFFICIENT if result.status == "insufficient_data" else _EXIT_FAILED)
+        typer.echo(f"written: {result.products['attenuation']}")
 
     @coastal_app.command(
         "detectability",
@@ -2405,7 +2352,8 @@ if typer:
         attenuation: Path = typer.Option(..., "--attenuation", exists=True, help="attenuation.json from 'coastal attenuation' or a coastal run."),
         output_dir: Path = typer.Option(Path("out/coastal/detectability"), "-o", "--output-dir"),
         epsilon_rhos: Optional[float] = typer.Option(None, "--epsilon", help="Reflectance noise floor. Defaults to the library's fallback."),
-        solar_zenith_deg: float = typer.Option(35.0, "--solar-zenith"),
+        solar_zenith_deg: Optional[float] = typer.Option(None, "--solar-zenith"),
+        region: Optional[str] = typer.Option(None, "--region", help="Calibration region ID."),
         verbose: bool = typer.Option(False, "-v"),
     ) -> None:
         from oceanstream.coastal.detectability import scene_detectability
@@ -2415,7 +2363,15 @@ if typer:
             logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
 
         payload = json.loads(attenuation.read_text())
-        k_by_band = _k_by_band_from_payload(payload)
+        from oceanstream.coastal.commands import region_payload, reread_verdict
+        from oceanstream.coastal.optics.attenuation import calibrations_from_payload
+        selected = region_payload(payload, region)
+        k_by_band = calibrations_from_payload(selected)
+        upstream = reread_verdict(selected, solar_zenith_deg)
+        from oceanstream.coastal.config import DetectabilityConfig
+        from oceanstream.coastal.qc.verdicts import verdict
+        angle = solar_zenith_deg if solar_zenith_deg is not None else selected.get("solar_zenith_deg", 35.)
+        epsilon = epsilon_rhos if epsilon_rhos is not None else selected.get("epsilon_rhos")
         if not k_by_band:
             typer.echo(
                 f"{attenuation} carries no per-band k. Expected a 'bands' or "
@@ -2426,13 +2382,25 @@ if typer:
 
         detect = scene_detectability(
             k_by_band,
-            epsilon_rhos=epsilon_rhos,
-            solar_zenith_deg=solar_zenith_deg,
+            epsilon_rhos=epsilon,
+            solar_zenith_deg=angle,
+            config=DetectabilityConfig(**selected.get("detectability_config", {})),
         )
+        flags = list(upstream["flags"])
+        saved = selected.get("detectability_verdict", {})
+        if not saved.get("passed", False):
+            flags += saved.get("flags") or ["detectability_uncertainty_unverified"]
+        if epsilon is None:
+            flags.append("reflectance_noise_unmeasured")
+        if epsilon_rhos is not None or solar_zenith_deg is not None:
+            flags.append("sensitivity_scenario_requires_revalidation")
+        if detect.status != "ok":
+            flags.append(detect.status)
+        upstream = verdict(flags)
         output_dir.mkdir(parents=True, exist_ok=True)
-        href = write_json_document(output_dir / "detectability.json", detect.to_dict())
+        href = write_json_document(output_dir / "detectability.json", {"schema_version": "2.0", **detect.to_dict(), "numerical_status": detect.status, "status": detect.status if upstream["passed"] else "diagnostic_only", "verdict": upstream, "oceanstream:status": "diagnostic_only" if not upstream["passed"] else "publishable"})
 
-        for band in detect.bands:
+        for band in detect.bands.values():
             usable = "usable" if band.usable else "not usable"
             typer.echo(
                 f"  {band.wavelength_nm:7.1f} nm  z_max={band.z_max_m:6.2f} m  "
@@ -2600,7 +2568,9 @@ if typer:
         if verbose:
             logging.getLogger("oceanstream.coastal").setLevel(logging.INFO)
 
-        path = run_dir / "attenuation.json"
+        from oceanstream.coastal.provenance import resolve_run
+        from oceanstream.coastal.commands import reread_verdict
+        path = resolve_run(run_dir) / "attenuation.json"
         if not path.exists():
             typer.echo(
                 f"No attenuation.json in {run_dir}. The gates are judgements "
@@ -2610,12 +2580,11 @@ if typer:
             raise typer.Exit(_EXIT_INSUFFICIENT)
 
         payload = json.loads(path.read_text())
-        k_by_band = _k_by_band_from_payload(payload)
         theta = solar_zenith_deg
         if theta is None:
             provenance = payload.get("oceanstream:provenance", {})
             theta = provenance.get("solar_zenith_deg")
-        verdict = scene_floor_verdict(k_by_band, solar_zenith_deg=theta)
+        verdict = reread_verdict(payload, theta)
 
         typer.echo(f"verdict: {'PASS' if verdict['passed'] else 'FAIL'}")
         typer.echo(f"summary: {verdict['summary']}")

@@ -355,6 +355,14 @@ def write_cog(
             f"Array shape {data.shape} does not match grid {grid.shape}. "
             "Reproject with reproject_to_grid() before writing."
         )
+    colon_keys = sorted(k for k in (tags or {}) if ":" in k)
+    if colon_keys:
+        raise ValueError(
+            f"GeoTIFF tag keys cannot contain ':' — got {colon_keys}. GDAL reads "
+            "a colon as a metadata-domain separator and silently collapses every "
+            "such key into one tag named after the prefix, keeping only the last "
+            "value. Use underscores, e.g. 'OCEANSTREAM_CAVEAT'."
+        )
 
     uri_str = str(uri)
     profile = grid.to_profile(dtype=dtype, count=1, nodata=nodata)

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 # QAA v6 / IOP retrieval
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RetrievalConfig:
     """Scene-mean IOP retrieval knobs.
@@ -73,6 +74,7 @@ class RetrievalConfig:
 # ---------------------------------------------------------------------------
 # Masking
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MaskConfig:
@@ -137,6 +139,7 @@ class MaskConfig:
 # ---------------------------------------------------------------------------
 # Satellite-derived bathymetry (Stumpf log-ratio)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class BathymetryConfig:
@@ -231,6 +234,7 @@ class BathymetryConfig:
 # Empirical two-way attenuation (reef_calibration)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AttenuationConfig:
     """Deep-water-referenced regression for empirical two-way k(λ) per band.
@@ -277,10 +281,41 @@ class AttenuationConfig:
     #: red-edge ~710 for an even stronger null.
     null_channel_nm: float = 667.0
 
+    # --- Fit-quality gates -------------------------------------------------
+    # A regression always returns a slope, so these decide whether that slope
+    # is a measurement. Calibrated against two runs of the same code: the
+    # Sesimbra 2026-06-27 golden scene, where the bottom-carrying bands score
+    # R2 0.87-0.91 with a quantile spread under 10% of k and a non-positive
+    # residual fraction of 0.47-0.51 in every band; and a Lough Swilly control
+    # fitted against a nearshore-only depth grid, which returned k = 0.0026 at
+    # 665 nm from a contaminated deep-water reference while showing a spread of
+    # 165% of k and residual fractions ranging from 0.21 to 0.80.
+
+    #: Minimum R2 before a band's slope is treated as a measurement.
+    min_r_squared: float = 0.5
+
+    #: Maximum ``quantile_spread / |k|``. At or above this the fit is an
+    #: artefact of the substrate tracker rather than a property of the water.
+    max_quantile_spread_ratio: float = 0.35
+
+    #: Upper bound on ``frac_nonpositive_residual``. The check is one-sided by
+    #: necessity: ``ln`` needs a positive residual, so pixels below L_inf are
+    #: dropped before fitting, and a reference contaminated by shallow water
+    #: therefore discards most of the scene and fits the biased remnant. A
+    #: *low* fraction is not evidence of anything — a wholly bottom-lit scene
+    #: legitimately scores near zero.
+    max_nonpositive_residual: float = 0.70
+
+    #: Pure-water floor (per metre) at or above which a band cannot retain any
+    #: bottom signal across the fit window. Used to detect a regression that is
+    #: tracking a depth-correlated gradient instead of attenuation.
+    opaque_floor_min_per_m: float = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Quality-control diagnostics (ac_uncertainty, point_diagnostic)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class QCConfig:
@@ -383,10 +418,61 @@ class QCConfig:
     #: bound with only measurement slack allowed.
     ratio_floor_slack: float = 0.10
 
+    # -- Which bands the floor gates may score --------------------------------
+    #
+    # A floor is an assertion about physics, so it may only be made where the
+    # physics is known and the measurement was possible. Two independent limits
+    # disqualify a band, and both must be reported rather than silently applied,
+    # because a band dropped without a reason looks like a band that passed.
+
+    #: Upper wavelength (nm) at which pure-water absorption is still tabulated.
+    #: ``optics.water.a_water`` extrapolates flat beyond the Pope & Fry table
+    #: and says so; past this point ``kb_pure_water`` returns a number but not a
+    #: physical floor, and at 866 nm that number is roughly 7x too low.
+    floor_max_wavelength_nm: float = 700.0
+
+    #: Pure-water floor (per metre) at or above which a band cannot retain bottom
+    #: signal across the fit window, so its fitted k measures nothing to compare
+    #: against a floor. Mirrors ``AttenuationConfig.opaque_floor_min_per_m``,
+    #: which makes the same split for a different purpose: there it selects the
+    #: bands used to *detect* a depth-correlated artefact, and those bands must
+    #: keep being fitted for that check to work. Here it excludes them from being
+    #: scored. Keep the two values in step.
+    floor_opaque_min_per_m: float = 1.0
+
+    # -- Additive offset (Phase 5) ------------------------------------------
+    #
+    # The offset is measured where water-leaving reflectance is physically
+    # zero, so these thresholds bound the *validity of the sample*, not the
+    # answer. None of them can be tuned to move the offset in a chosen
+    # direction without also invalidating the band they are read from.
+
+    #: Shortest wavelength taken to be black over optically deep water. Pure
+    #: water absorption at 800 nm is ~2.1 m^-1, so the two-way transmission
+    #: past the depths used here is negligible.
+    offset_nir_min_nm: float = 800.0
+
+    #: Minimum deep-water pixels before the offset is believable.
+    min_offset_pixels: int = 50
+
+    #: Bands at or above this are used only to check the deep-water sample for
+    #: cloud and glint, never to estimate the offset itself.
+    offset_swir_min_nm: float = 1500.0
+
+    #: Median SWIR reflectance over the deep-water sample above which the
+    #: sample is contaminated. Pure water absorbs ~670 m^-1 at 1600 nm, so any
+    #: signal there is cloud, glint or foam rather than water.
+    offset_swir_max: float = 0.01
+
+    #: Spread across the NIR bands, as a fraction of the offset, beyond which
+    #: a single scalar no longer describes the residual.
+    offset_band_spread_max: float = 0.5
+
 
 # ---------------------------------------------------------------------------
 # Detectability (Phase 3)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class DetectabilityConfig:
@@ -451,3 +537,29 @@ class DetectabilityConfig:
     #: (see :class:`AttenuationConfig`), so extrapolating far past it reports
     #: precision the fit does not have.
     par_max_depth_m: float = 40.0
+
+
+@dataclass
+class UncertaintyConfig:
+    """Independent model-error estimates from validation, not fitting knobs.
+
+    None leaves conditional error propagation available but prevents a claim
+    that the uncertainty budget is complete. Source must identify the reference
+    evidence used for these one-sigma relative errors.
+    """
+
+    empirical_relative_sigma: float | None = None
+    qaa_relative_sigma: float | None = None
+    source: str | None = None
+
+    def __post_init__(self) -> None:
+        import math
+
+        for value in (self.empirical_relative_sigma, self.qaa_relative_sigma):
+            if value is not None and (not math.isfinite(value) or value < 0):
+                raise ValueError("Model uncertainties must be finite nonnegative fractions.")
+        if (
+            any(v is not None for v in (self.empirical_relative_sigma, self.qaa_relative_sigma))
+            and not self.source
+        ):
+            raise ValueError("Model uncertainty estimates require an independent evidence source.")

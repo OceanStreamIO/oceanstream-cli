@@ -33,18 +33,19 @@ from oceanstream.coastal.config import BathymetryConfig
 # Fit result
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class StumpfFit:
     """Result of a Stumpf regression against a reference depth surface."""
 
-    m0: float          # depth offset, metres
-    m1: float          # slope
-    n: float           # ratio scale factor, chosen per scene
-    ref_source: str    # human-readable provenance
-    n_pixels: int      # how many observations the fit used
-    mae_m: float       # mean absolute error against the reference, metres
-    rmse_m: float      # root-mean-square error, metres
-    bias_m: float      # signed mean residual on the held-out split
+    m0: float  # depth offset, metres
+    m1: float  # slope
+    n: float  # ratio scale factor, chosen per scene
+    ref_source: str  # human-readable provenance
+    n_pixels: int  # how many observations the fit used
+    mae_m: float  # mean absolute error against the reference, metres
+    rmse_m: float  # root-mean-square error, metres
+    bias_m: float  # signed mean residual on the held-out split
 
 
 @dataclass
@@ -62,6 +63,7 @@ class DepthValidation:
 # The log ratio
 # --------------------------------------------------------------------------
 
+
 def choose_ratio_scale(
     blue: np.ndarray,
     green: np.ndarray,
@@ -78,17 +80,17 @@ def choose_ratio_scale(
     the extreme tail.
     """
     cfg = config or BathymetryConfig()
-    sample = np.concatenate([
-        blue[valid & np.isfinite(blue)].ravel(),
-        green[valid & np.isfinite(green)].ravel(),
-    ])
+    sample = np.concatenate(
+        [
+            blue[valid & np.isfinite(blue)].ravel(),
+            green[valid & np.isfinite(green)].ravel(),
+        ]
+    )
     sample = sample[sample > 0]
     if sample.size < 100:
         return 1000.0
     floor = float(np.percentile(sample, 1))
-    return float(
-        max(1000.0, margin * cfg.min_scaled_reflectance / max(floor, 1e-6))
-    )
+    return float(max(1000.0, margin * cfg.min_scaled_reflectance / max(floor, 1e-6)))
 
 
 def stumpf_ratio(
@@ -118,14 +120,13 @@ def stumpf_ratio(
         )
 
     lo, hi = cfg.ratio_valid_range
-    return np.where(
-        np.isfinite(ratio) & (ratio > lo) & (ratio < hi), ratio, np.nan
-    )
+    return np.where(np.isfinite(ratio) & (ratio > lo) & (ratio < hi), ratio, np.nan)
 
 
 # --------------------------------------------------------------------------
 # Fitting
 # --------------------------------------------------------------------------
+
 
 def fit_stumpf(
     blue_reflectance: np.ndarray,
@@ -135,6 +136,9 @@ def fit_stumpf(
     n: float | None = None,
     ref_source: str = "reference bathymetry",
     config: BathymetryConfig | None = None,
+    *,
+    calibration_mask: np.ndarray | None = None,
+    evaluation_mask: np.ndarray | None = None,
 ) -> StumpfFit:
     """Fit m0, m1 by least squares against a reference depth *raster*.
 
@@ -145,17 +149,12 @@ def fit_stumpf(
     """
     cfg = config or BathymetryConfig()
     if n is None:
-        n = choose_ratio_scale(
-            blue_reflectance, green_reflectance, valid, config=cfg
-        )
+        n = choose_ratio_scale(blue_reflectance, green_reflectance, valid, config=cfg)
 
     ratio = stumpf_ratio(blue_reflectance, green_reflectance, n, config=cfg)
     lo_ref, hi_ref = cfg.fit_reference_range_m
     fit_valid = (
-        valid
-        & np.isfinite(ratio)
-        & (reference_depth_m > lo_ref)
-        & (reference_depth_m < hi_ref)
+        valid & np.isfinite(ratio) & (reference_depth_m > lo_ref) & (reference_depth_m < hi_ref)
     )
 
     n_pixels = int(fit_valid.sum())
@@ -171,12 +170,22 @@ def fit_stumpf(
     x = ratio[fit_valid].astype(np.float64)
     y = reference_depth_m[fit_valid].astype(np.float64)
 
-    rng = np.random.default_rng(cfg.rng_seed)
-    test = rng.random(x.size) < cfg.holdout_frac
-    train = ~test
-    if train.sum() < 100 or test.sum() < 50:
-        train = np.ones_like(test)
-        test = train
+    blocks = (
+        checkerboard_blocks((valid.shape[0], valid.shape[1]), cfg)
+        if calibration_mask is None
+        else calibration_mask
+    )
+    held_out = ~blocks if evaluation_mask is None else evaluation_mask
+    if blocks.shape != valid.shape or held_out.shape != valid.shape or (blocks & held_out).any():
+        raise ValueError("Calibration and evaluation masks must be disjoint on the fit grid.")
+    train, test = blocks[fit_valid], held_out[fit_valid]
+    if train.sum() < 2:
+        raise ValueError("Insufficient calibration blocks for Stumpf.")
+
+    if np.ptp(y[train]) < cfg.min_depth_span_m or np.ptp(x[train]) <= np.finfo(float).eps:
+        raise ValueError(
+            "Stumpf calibration blocks have insufficient depth or reflectance-ratio span."
+        )
 
     # H = m1 * ratio - m0, solved as a linear least squares.
     m1, minus_m0 = np.polyfit(x[train], y[train], deg=1)
@@ -188,9 +197,9 @@ def fit_stumpf(
         n=float(n),
         ref_source=ref_source,
         n_pixels=n_pixels,
-        mae_m=float(np.mean(np.abs(residuals))),
-        rmse_m=float(np.sqrt(np.mean(residuals * residuals))),
-        bias_m=float(np.mean(residuals)),
+        mae_m=float(np.mean(np.abs(residuals))) if test.any() else float("nan"),
+        rmse_m=float(np.sqrt(np.mean(residuals * residuals))) if test.any() else float("nan"),
+        bias_m=float(np.mean(residuals)) if test.any() else float("nan"),
     )
 
 
@@ -228,9 +237,7 @@ def fit_stumpf_on_points(
     """
     cfg = config or BathymetryConfig()
     if n is None:
-        n = choose_ratio_scale(
-            blue_reflectance, green_reflectance, valid, config=cfg
-        )
+        n = choose_ratio_scale(blue_reflectance, green_reflectance, valid, config=cfg)
 
     ratio_map = stumpf_ratio(blue_reflectance, green_reflectance, n, config=cfg)
     ratio = ratio_map[rows, cols]
@@ -340,11 +347,14 @@ def apply_stumpf(
 # Blend with a coarse reference surface
 # --------------------------------------------------------------------------
 
+
 def blend_stumpf(
     stumpf_depth: np.ndarray,
     reference_depth_m: np.ndarray,
     fit: StumpfFit,
     config: BathymetryConfig | None = None,
+    *,
+    reference_sigma_m: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Inverse-variance weighted blend of Stumpf and a coarse reference DTM.
 
@@ -356,28 +366,54 @@ def blend_stumpf(
     """
     cfg = config or BathymetryConfig()
 
-    # Stumpf uncertainty taken as the RMSE of the fit, uniform across the map.
-    stumpf_sigma = np.full_like(stumpf_depth, fit.rmse_m, dtype=np.float32)
-
-    if cfg.blend_smooth_sigma_px > 0:
-        stumpf_depth = ndimage.gaussian_filter(
-            np.nan_to_num(stumpf_depth, nan=0.0), sigma=cfg.blend_smooth_sigma_px
+    if stumpf_depth.shape != reference_depth_m.shape:
+        raise ValueError("SDB and reference depth must share a grid.")
+    if not np.isfinite(cfg.reference_sigma_m) or cfg.reference_sigma_m <= 0:
+        raise ValueError("reference_sigma_m must be finite and positive.")
+    sigma_ref = (
+        np.full(reference_depth_m.shape, cfg.reference_sigma_m)
+        if reference_sigma_m is None
+        else np.asarray(reference_sigma_m)
+    )
+    if sigma_ref.shape != reference_depth_m.shape or np.any(
+        np.isfinite(reference_depth_m) & (~np.isfinite(sigma_ref) | (sigma_ref <= 0))
+    ):
+        raise ValueError(
+            "Reference uncertainty must be finite and positive at every available depth."
         )
-
-    inv_var_stumpf = 1.0 / (stumpf_sigma**2)
-    inv_var_ref = 1.0 / (cfg.reference_sigma_m**2)
-    w_total = inv_var_stumpf + inv_var_ref
-
-    blended = (
-        stumpf_depth * inv_var_stumpf + reference_depth_m * inv_var_ref
-    ) / w_total
-    sigma_h = np.sqrt(1.0 / w_total)
+    available = np.isfinite(stumpf_depth)
+    smoothed = np.where(available, stumpf_depth, 0.0).astype(float)
+    if cfg.blend_smooth_sigma_px > 0:
+        support = ndimage.gaussian_filter(available.astype(float), cfg.blend_smooth_sigma_px)
+        numerator = ndimage.gaussian_filter(smoothed, cfg.blend_smooth_sigma_px)
+        smoothed = np.divide(numerator, support, out=np.zeros_like(numerator), where=support > 0)
+    # Smoothing must never create observations in holes. A zero/unknown error
+    # also cannot give an estimate infinite weight; retain the reference there.
+    available &= np.isfinite(fit.rmse_m) & (fit.rmse_m > 0)
+    w_sdb = np.where(available, 1.0 / fit.rmse_m**2 if fit.rmse_m > 0 else 0.0, 0.0)
+    w_ref = np.where(
+        np.isfinite(reference_depth_m),
+        np.divide(
+            1.0,
+            sigma_ref**2,
+            out=np.zeros_like(sigma_ref, dtype=float),
+            where=np.isfinite(sigma_ref) & (sigma_ref > 0),
+        ),
+        0.0,
+    )
+    w_total = w_sdb + w_ref
+    numerator = smoothed * w_sdb + np.nan_to_num(reference_depth_m) * w_ref
+    blended = np.divide(numerator, w_total, out=np.full_like(smoothed, np.nan), where=w_total > 0)
+    sigma_h = np.sqrt(
+        np.divide(1.0, w_total, out=np.full_like(smoothed, np.nan), where=w_total > 0)
+    )
     return blended.astype(np.float32), sigma_h.astype(np.float32)
 
 
 # --------------------------------------------------------------------------
 # Diagnostics
 # --------------------------------------------------------------------------
+
 
 def depth_map_diagnostics(
     depth_m: np.ndarray,
@@ -450,6 +486,7 @@ def stratum_balance(
 # Validation
 # --------------------------------------------------------------------------
 
+
 def _score_strata(
     residuals: np.ndarray,
     strata: list[tuple[str, np.ndarray]],
@@ -459,11 +496,7 @@ def _score_strata(
     for label, mask in strata:
         r = residuals[mask & np.isfinite(residuals)]
         if r.size == 0:
-            out.append(
-                DepthValidation(
-                    label, 0, float("nan"), float("nan"), float("nan")
-                )
-            )
+            out.append(DepthValidation(label, 0, float("nan"), float("nan"), float("nan")))
             continue
         out.append(
             DepthValidation(

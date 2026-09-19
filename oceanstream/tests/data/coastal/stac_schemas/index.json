@@ -1,0 +1,14 @@
+{
+  "https://stac-extensions.github.io/eo/v1.1.0/schema.json": "b4b9d1c2f057e069.json",
+  "https://stac-extensions.github.io/processing/v1.1.0/schema.json": "3937a83a73467a52.json",
+  "https://schemas.stacspec.org/v1.0.0/collection-spec/json-schema/collection.json": "76655a16242b30b7.json",
+  "http://json-schema.org/draft-07/schema": "8a956a16769ec600.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/item.json": "9bbc721e7792277d.json",
+  "https://geojson.org/schema/Geometry.json": "f67b736b0d3ce852.json",
+  "https://geojson.org/schema/Feature.json": "dcdfef2596db2c77.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/provider.json": "ebb2223b5425e778.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/licensing.json": "5f6d0e415c0f6be9.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/instrument.json": "99329e553e8f1fc8.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/datetime.json": "076f8b789912608b.json",
+  "https://schemas.stacspec.org/v1.0.0/item-spec/json-schema/basics.json": "9f4d8a5a8cddecc9.json"
+}

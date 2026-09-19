@@ -75,8 +75,18 @@ class Scene:
     rrs_derived_from_rhos: bool = False
     source_dir: Path | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    acquisition_datetime: dt.datetime | None = None
 
     def __post_init__(self) -> None:
+        wl = np.asarray(self.wavelengths_nm)
+        if not np.all(np.isfinite(wl)) or np.any(np.diff(wl) <= 0):
+            raise ValueError("Scene wavelengths must be finite, unique, and ascending.")
+        if self.acquisition_datetime is not None:
+            if self.acquisition_datetime.utcoffset() is None:
+                raise ValueError("acquisition_datetime requires a timezone.")
+            self.acquisition_datetime = self.acquisition_datetime.astimezone(dt.UTC)
+            if self.acquisition_datetime.date() != self.acquisition_date:
+                raise ValueError("Acquisition date and UTC acquisition time disagree.")
         if self.rrs_above.ndim != 3:
             raise ValueError(
                 f"Scene.rrs_above must be (n_bands, H, W); got shape {self.rrs_above.shape}."
@@ -152,6 +162,9 @@ class Scene:
         return {
             "sensor": self.sensor.name,
             "acquisition_date": self.acquisition_date.isoformat(),
+            "acquisition_datetime": self.acquisition_datetime.isoformat()
+            if self.acquisition_datetime
+            else None,
             "wavelengths_nm": [round(float(w), 1) for w in self.wavelengths_nm],
             "solar_zenith_deg": round(self.solar_zenith_deg, 3),
             "solar_zenith_source": self.solar_zenith_source,
@@ -174,13 +187,14 @@ class Scene:
         acquisition_date: dt.date | None = None,
         solar_zenith_fallback_deg: float | None = None,
         solar_azimuth_deg: float | None = None,
+        acquisition_datetime: dt.datetime | None = None,
     ) -> Scene:
         """Load a scene from an ACOLITE output directory.
 
         ACOLITE writes one GeoTIFF per band with the wavelength in the filename.
         When only L2R is present — the default — Rrs is derived as ``rhos / π``
         rather than forcing an L2W re-run, which is the same quantity by
-        definition for a Lambertian above-water reflectance.
+        the ACOLITE surface-reflectance convention (rho_s = pi * Rrs).
         """
         directory = Path(directory)
         profile = sensor if isinstance(sensor, SensorProfile) else get_sensor(sensor)
@@ -201,6 +215,22 @@ class Scene:
             )
 
         derived = not rrs_paths
+        all_paths = rrs_paths + rhos_paths
+        identities = {re.split(r"_L2[RW]_", p.stem)[0] for p in all_paths}
+        if len(identities) != 1:
+            raise ValueError(
+                "Mixed scene identities in ACOLITE directory; use one acquisition per directory."
+            )
+        for paths in (rrs_paths, rhos_paths):
+            centres = [wavelength_of(p) for p in paths]
+            if len(centres) != len(set(centres)):
+                raise ValueError("Duplicate wavelength in ACOLITE directory.")
+        if (
+            rrs_paths
+            and rhos_paths
+            and [wavelength_of(p) for p in rrs_paths] != [wavelength_of(p) for p in rhos_paths]
+        ):
+            raise ValueError("Rrs and rhos wavelength sets differ; export matching bands.")
         source_paths = rhos_paths if derived else rrs_paths
         wavelengths = np.array([wavelength_of(p) for p in source_paths], dtype=float)
 
@@ -221,12 +251,39 @@ class Scene:
         rrs_above = np.stack(bands, axis=0)
 
         if rhos_paths:
-            rhos = np.stack([read_band(p)[0] for p in rhos_paths], axis=0)
+            surface_bands = []
+            for path in rhos_paths:
+                data, surface_grid = read_band(path)
+                if not surface_grid.matches(grid):
+                    raise ValueError(f"{path.name}: rhos and Rrs are on a different grid.")
+                surface_bands.append(data)
+            rhos = np.stack(surface_bands, axis=0)
         else:
             rhos = rrs_above * np.float32(np.pi)
+        if not derived:
+            paired = np.isfinite(rrs_above) & np.isfinite(rhos)
+            if not np.allclose(rrs_above[paired] * np.pi, rhos[paired], rtol=1e-3, atol=1e-7):
+                raise ValueError(
+                    "ACOLITE reflectance convention mismatch: rhos must equal pi * Rrs."
+                )
 
-        zenith, zenith_source = _resolve_solar_zenith(
-            directory, solar_zenith_fallback_deg
+        import rasterio
+
+        with rasterio.open(source_paths[0]) as source:
+            tags = source.tags()
+        metadata = {
+            key: tags[f"NC_GLOBAL#{key}"]
+            for key in ("acolite_version", "isodate", "sza")
+            if f"NC_GLOBAL#{key}" in tags
+        }
+        if "sza" in metadata:
+            zenith, zenith_source = float(metadata["sza"]), "acolite_metadata"
+        else:
+            zenith, zenith_source = _resolve_solar_zenith(directory, solar_zenith_fallback_deg)
+        observed_time = (
+            dt.datetime.fromisoformat(metadata["isodate"].replace("Z", "+00:00"))
+            if "isodate" in metadata
+            else _time_from_filename(source_paths[0])
         )
         date = acquisition_date or _date_from_filenames(source_paths)
         if date is None:
@@ -247,6 +304,8 @@ class Scene:
             solar_zenith_source=zenith_source,
             rrs_derived_from_rhos=derived,
             source_dir=directory,
+            acquisition_datetime=acquisition_datetime or observed_time,
+            metadata=metadata,
         )
         for warning in scene.validate():
             logger.warning("scene band check: %s", warning)
@@ -263,22 +322,26 @@ class Scene:
         acquisition_date: dt.date | None = None,
         rhos: np.ndarray | None = None,
         metadata: Mapping[str, Any] | None = None,
+        acquisition_datetime: dt.datetime | None = None,
     ) -> Scene:
         """Build a scene from in-memory arrays.
 
         The entry point for callers whose atmospheric correction happened
         elsewhere — a Prefect flow, a Dask graph, a test fixture.
 
-        ``rhos`` is left absent when not supplied rather than back-computed as
-        ``Rrs·π``. That identity only holds for a Lambertian, glint-free
-        surface, which is precisely what the deglint step exists to repair — so
-        synthesising it would hand the SWIR screen and the glint correction a
-        fabricated raster that looks like a measurement.
+        ``rhos`` is required explicitly for arbitrary external arrays because
+        their reflectance convention is not known. The ACOLITE loader can
+        derive it using ACOLITE's documented ``rhos = pi * Rrs`` convention.
         """
         rrs = np.asarray(rrs_above, dtype=np.float32)
         return cls(
             sensor=sensor if isinstance(sensor, SensorProfile) else get_sensor(sensor),
-            acquisition_date=acquisition_date or dt.date.today(),
+            acquisition_date=acquisition_date
+            or (
+                acquisition_datetime.astimezone(dt.UTC).date()
+                if acquisition_datetime
+                else dt.date.today()
+            ),
             wavelengths_nm=np.asarray(wavelengths_nm, dtype=float),
             rrs_above=rrs,
             rhos=None if rhos is None else np.asarray(rhos, np.float32),
@@ -287,12 +350,20 @@ class Scene:
             solar_zenith_source="caller",
             rrs_derived_from_rhos=False,
             metadata=dict(metadata or {}),
+            acquisition_datetime=acquisition_datetime,
         )
 
 
-def _resolve_solar_zenith(
-    directory: Path, fallback_deg: float | None
-) -> tuple[float, str]:
+def _time_from_filename(path: Path) -> dt.datetime | None:
+    match = re.search(r"(\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})", path.name)
+    return (
+        dt.datetime.strptime(match[1], "%Y_%m_%d_%H_%M_%S").replace(tzinfo=dt.UTC)
+        if match
+        else None
+    )
+
+
+def _resolve_solar_zenith(directory: Path, fallback_deg: float | None) -> tuple[float, str]:
     """Solar zenith from the settings sidecar, then the SZA raster, then fallback.
 
     In that order because each step is a degree less trustworthy than the last:
@@ -300,11 +371,15 @@ def _resolve_solar_zenith(
     of what it used, and a fallback is a guess. The source is returned alongside
     so the run report can say which one applied.
     """
-    for candidate in ("settings.txt", "acolite_run_settings.txt", "acolite_settings.txt"):
-        path = directory / candidate
+    candidates = [
+        directory / name
+        for name in ("settings.txt", "acolite_run_settings.txt", "acolite_settings.txt")
+    ]
+    candidates.extend(sorted(directory.glob("*_l2r_settings.txt")))
+    for path in candidates:
         if not path.exists():
             continue
-        for line in path.read_text().splitlines():
+        for line in reversed(path.read_text().splitlines()):
             lowered = line.lower().strip()
             if lowered.startswith(("sun_zenith", "sza")):
                 try:

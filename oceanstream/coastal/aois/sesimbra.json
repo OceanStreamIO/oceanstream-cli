@@ -1,0 +1,92 @@
+{
+  "name": "sesimbra",
+  "processing_bbox": [
+    -9.3,
+    38.15,
+    -8.8,
+    38.55
+  ],
+  "label": "Sesimbra / Arr\u00e1bida natural kelp reef",
+  "habitat_bbox": [
+    -9.212,
+    38.4,
+    -9.192,
+    38.42
+  ],
+  "fine_bathymetry": {
+    "uri": "https://downloads.emodnet-bathymetry.eu/high_resolution/590_HR_Lidar_Sul.emo.zip",
+    "resolution_m": 14.46875,
+    "survey_year": 2011,
+    "product_year": 2020,
+    "seabed_stability": "stable_rock",
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": 29.0,
+    "attribution": "EMODnet Bathymetry HR-DTM HR_Lidar_Sul (EDMO 590). Not for navigation.",
+    "provenance": {
+      "source": "emodnet_hr_dtm",
+      "identifier": "HR_Lidar_Sul",
+      "edmo_id": 590,
+      "resolution_arcmin_denom": 128,
+      "metadata_url": "https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/SDN_CPRD_590_HR_Lidar_Sul/",
+      "subset_bbox": [
+        -9.26,
+        38.38,
+        -9.14,
+        38.45
+      ],
+      "note": "Discovered via the EMODnet Bathymetry HR-DTM WFS (emodnet:hr_bathymetry_area). The WFS publishes a product release year and no seabed stability, so both are taken from the source programme instead: the tile is 2011 DGT/APA airborne LiDAR over rocky reef. seabed_stability drives whether depth MAE may carry the accuracy claim, so it is recorded from the survey, not guessed from the release."
+    },
+    "uncertainty_m": null
+  },
+  "coarse_bathymetry": {
+    "uri": "https://ows.emodnet-bathymetry.eu/wcs?coverageId=emodnet:mean",
+    "resolution_m": 103.45,
+    "survey_year": null,
+    "product_year": null,
+    "seabed_stability": null,
+    "vertical_datum": "LAT",
+    "max_reliable_depth_m": null,
+    "attribution": "EMODnet Bathymetry. Not for navigation.",
+    "provenance": {
+      "source": "emodnet_wcs_mean",
+      "fetch_bbox": [
+        -9.3,
+        38.15,
+        -8.8,
+        38.55
+      ],
+      "n_deep_water_cells": 121769,
+      "depth_max_m": 1932.5,
+      "note": "Southern edge reaches the shelf break off Cape Espichel, where the floor drops past 1900 m. The AOI alone only reaches ~119 m. Reproduces the prototype grid cell for cell."
+    },
+    "uncertainty_m": null
+  },
+  "deepwater_reference_uri": null,
+  "tide_model": null,
+  "depth_valid_range_m": [
+    0.0,
+    40.0
+  ],
+  "external_ids": {
+    "earthstudio": "a3d3ba9f-d30f-4f14-9df1-3f9f444e60e7"
+  },
+  "metadata": {
+    "region": "Iberian Atlantic, warm-temperate",
+    "screening_bbox": [
+      -9.24,
+      38.39,
+      -9.15,
+      38.43
+    ],
+    "screening_note": "The prototype's clarity_bbox, kept verbatim. It contains the 60 CCMAR diver quadrats and the habitat_bbox, so date rankings taken over it describe the water the golden retrievals were measured in.",
+    "bathymetry_footprint": [
+      -9.2293,
+      36.9873,
+      -8.7693,
+      38.5193
+    ],
+    "geometry_provenance": "Taken from the lee_demo prototype's SiteProfile (kelp_observe/tools/lee_demo/sites.py), which is where the Phase 4.2 reference retrievals were produced. The wider Arr\u00e1bida strip in the KelpObserve project documentation (-9.15, 38.39, -8.90, 38.51) is the field-campaign AOI and excludes every quadrat; it is not this AOI.",
+    "coarse_bathymetry_note": "Bathymetric LiDAR stops at ~29 m here, so the deep-water gates (z > 30 m and z*Kd(490) > 6) need a coarser grid. The prototype used an EMODnet DTM subset; no absolute URI is recorded, so coarse_bathymetry is left unset rather than pointed at a checkout."
+  },
+  "attenuation_regions_uri": null
+}

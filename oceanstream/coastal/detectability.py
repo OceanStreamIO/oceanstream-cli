@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -140,6 +140,7 @@ def substrate_contrast(
 # z_max
 # ---------------------------------------------------------------------------
 
+
 def z_max_from_k(
     k_per_m: np.ndarray | float,
     epsilon_rhos: np.ndarray | float,
@@ -166,9 +167,12 @@ def z_max_from_k(
     contrast = np.asarray(delta_rho_b, dtype=np.float64)
 
     usable = (
-        np.isfinite(k) & (k > 0.0)
-        & np.isfinite(eps) & (eps > 0.0)
-        & np.isfinite(contrast) & (contrast > 0.0)
+        np.isfinite(k)
+        & (k > 0.0)
+        & np.isfinite(eps)
+        & (eps > 0.0)
+        & np.isfinite(contrast)
+        & (contrast > 0.0)
     )
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(usable, t_aw * contrast / eps, np.nan)
@@ -177,9 +181,7 @@ def z_max_from_k(
     return float(z) if z.ndim == 0 else z
 
 
-def detectability_margin(
-    z_max_m: np.ndarray | float, depth_m: np.ndarray
-) -> np.ndarray:
+def detectability_margin(z_max_m: np.ndarray | float, depth_m: np.ndarray) -> np.ndarray:
     """``z_max - depth``, metres. Positive where the seabed is still resolvable.
 
     The signed margin is more useful than a boolean because it says *how far*
@@ -193,9 +195,7 @@ def detectability_margin(
     return out
 
 
-def detectable_mask(
-    z_max_m: np.ndarray | float, depth_m: np.ndarray
-) -> np.ndarray:
+def detectable_mask(z_max_m: np.ndarray | float, depth_m: np.ndarray) -> np.ndarray:
     """True where the seabed is shallower than z_max.
 
     NaN depth and NaN z_max both give False. That is deliberate: this mask
@@ -339,7 +339,7 @@ def band_detectability(
 
 
 def scene_detectability(
-    k_by_band: Mapping[float, float],
+    k_by_band: Mapping[float, Any],
     epsilon_rhos: float | None = None,
     epsilon_source: str = "measured_spatial_scatter",
     solar_zenith_deg: float = 35.0,
@@ -394,11 +394,19 @@ def scene_detectability(
 
     bands = {
         float(wl): band_detectability(
-            float(wl), float(k), epsilon_rhos, None, solar_zenith_deg, cfg
+            float(wl), float(getattr(k, "k_per_m", k)), epsilon_rhos, None, solar_zenith_deg, cfg
         )
         for wl, k in k_by_band.items()
     }
 
+    for wl, value in k_by_band.items():
+        failures = tuple(getattr(value, "trust_failures", ()))
+        if failures:
+            bands[float(wl)] = replace(
+                bands[float(wl)],
+                usable=False,
+                flags=(*bands[float(wl)].flags, *failures),
+            )
     usable = [b for b in bands.values() if b.usable]
     if usable:
         best = max(usable, key=lambda b: b.z_max_m)
@@ -432,6 +440,7 @@ def scene_detectability(
 # ---------------------------------------------------------------------------
 # Seabed PAR
 # ---------------------------------------------------------------------------
+
 
 def downwelling_kd(
     k_two_way: np.ndarray | float,
@@ -503,14 +512,12 @@ def interpolate_kd(
         kd - np.asarray(lee.kd_pure_water(wl, solar_zenith_deg), dtype=float), 0.0
     )
     targets = np.asarray(target_nm, dtype=float)
-    return np.asarray(
-        lee.kd_pure_water(targets, solar_zenith_deg), dtype=float
-    ) + np.interp(targets, wl, residual)
+    return np.asarray(lee.kd_pure_water(targets, solar_zenith_deg), dtype=float) + np.interp(
+        targets, wl, residual
+    )
 
 
-def par_weights(
-    wavelengths_nm: np.ndarray, photon_weighted: bool = True
-) -> np.ndarray:
+def par_weights(wavelengths_nm: np.ndarray, photon_weighted: bool = True) -> np.ndarray:
     """Normalised PAR integration weights over ``wavelengths_nm``.
 
     PAR is defined as a photon flux, and photon energy goes as ``1/lambda``, so
@@ -563,9 +570,7 @@ def seabed_par_fraction(
     cfg = config or DetectabilityConfig()
     lo, hi = cfg.par_range_nm
     targets = np.arange(lo, hi + cfg.par_step_nm / 2.0, cfg.par_step_nm)
-    kd_targets = interpolate_kd(
-        kd_per_m, wavelengths_nm, targets, solar_zenith_deg
-    )
+    kd_targets = interpolate_kd(kd_per_m, wavelengths_nm, targets, solar_zenith_deg)
     weights = par_weights(targets, cfg.par_photon_weighted)
 
     depth = np.asarray(depth_m, dtype=np.float64)
@@ -602,8 +607,6 @@ def euphotic_depth(
     """
     cfg = config or DetectabilityConfig()
     probe = np.arange(0.0, cfg.par_max_depth_m + 0.01, 0.01)
-    profile = seabed_par_fraction(
-        probe, kd_per_m, wavelengths_nm, solar_zenith_deg, cfg
-    )
+    profile = seabed_par_fraction(probe, kd_per_m, wavelengths_nm, solar_zenith_deg, cfg)
     below = np.flatnonzero(profile <= fraction)
     return float(probe[below[0]]) if below.size else float("nan")
