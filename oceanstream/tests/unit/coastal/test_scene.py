@@ -284,3 +284,23 @@ class TestFromAcoliteDir:
         (tmp_path / "S2A_MSI_2026_06_27_L2R_rgb_rhos.tif").touch()
         s = Scene.from_acolite_dir(tmp_path, solar_zenith_fallback_deg=22.4)
         assert s.n_bands == 3
+
+
+class TestAcoliteTime:
+    """ACOLITE writes UTC, but only some sensors carry the offset."""
+
+    def test_offset_form_is_preserved(self) -> None:
+        from oceanstream.coastal.scene import _acolite_time
+
+        assert _acolite_time("2026-09-03T11:40:40.393642+00:00") == dt.datetime(
+            2026, 9, 3, 11, 40, 40, 393642, tzinfo=dt.UTC
+        )
+
+    def test_naive_pleiades_neo_form_is_read_as_utc(self) -> None:
+        # ACOLITE's PNeo output omits the offset; rejecting it made every PNeo
+        # scene unloadable.
+        from oceanstream.coastal.scene import _acolite_time
+
+        assert _acolite_time("2026-09-03T11:33:59.900000") == dt.datetime(
+            2026, 9, 3, 11, 33, 59, 900000, tzinfo=dt.UTC
+        )
