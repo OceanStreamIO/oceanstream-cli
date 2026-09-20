@@ -281,7 +281,7 @@ class Scene:
         else:
             zenith, zenith_source = _resolve_solar_zenith(directory, solar_zenith_fallback_deg)
         observed_time = (
-            dt.datetime.fromisoformat(metadata["isodate"].replace("Z", "+00:00"))
+            _acolite_time(metadata["isodate"])
             if "isodate" in metadata
             else _time_from_filename(source_paths[0])
         )
@@ -352,6 +352,18 @@ class Scene:
             metadata=dict(metadata or {}),
             acquisition_datetime=acquisition_datetime,
         )
+
+
+def _acolite_time(isodate: str) -> dt.datetime:
+    """ACOLITE's acquisition time, as UTC.
+
+    ACOLITE writes UTC either way, but only some sensors carry the offset: its
+    Sentinel-2 output ends in ``+00:00`` while its Pleiades Neo output is naive.
+    Rejecting the naive form made every PNeo scene unloadable, so a missing
+    offset is read as UTC rather than treated as local time.
+    """
+    parsed = dt.datetime.fromisoformat(isodate.replace("Z", "+00:00"))
+    return parsed if parsed.utcoffset() is not None else parsed.replace(tzinfo=dt.UTC)
 
 
 def _time_from_filename(path: Path) -> dt.datetime | None:
