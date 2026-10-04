@@ -398,6 +398,15 @@ def convert_and_save_echodata(
 
     file_name = file_record["file_name"]
 
+    ed_zarr_path = echodata_dir / f"{file_name}.zarr"
+    if cfg.raw.reuse_converted and ed_zarr_path.is_dir():
+        from echopype import open_converted
+
+        category = _detect_pulse_category(open_converted(str(ed_zarr_path), chunks={}))
+        if category != "unknown":
+            logger.info("  Reusing converted EchoData: %s [%s]", ed_zarr_path, category)
+            return category, str(ed_zarr_path), file_name
+
     # Step 1: Convert to EchoData
     logger.info("  Converting %s → EchoData", file_name)
     echodata = open_raw(str(local_raw_path), sonar_model=cfg.raw.sonar_model)
@@ -405,6 +414,9 @@ def convert_and_save_echodata(
     if echodata.beam is None:
         logger.warning("  No beam data in %s — skipping", file_name)
         return "unknown", "", file_name
+
+    if cfg.raw.max_range_m > 0:
+        echodata = _crop_echodata_range(echodata, cfg.raw.max_range_m)
 
     # Step 2: Apply calibration (mutates EchoData beam groups in-place)
     if cfg.raw.calibration_file:
@@ -417,7 +429,6 @@ def convert_and_save_echodata(
     category = _detect_pulse_category(echodata)
 
     # Step 3: Save EchoData to local Zarr (intermediate artifact)
-    ed_zarr_path = echodata_dir / f"{file_name}.zarr"
     logger.info("  Saving EchoData: %s [%s]", ed_zarr_path, category)
     _clean_echodata_encoding(echodata)
     echodata.to_zarr(str(ed_zarr_path), overwrite=True)
@@ -426,6 +437,42 @@ def convert_and_save_echodata(
     _release_memory()
 
     return category, str(ed_zarr_path), file_name
+
+
+def _crop_echodata_range(echodata, max_range_m: float):
+    """Drop range samples beyond *max_range_m* from every beam group.
+
+    ``range_sample`` is shared by all channels while the sample interval is
+    not, so the dimension is cut where the channel with the shortest interval
+    reaches *max_range_m* and the other channels are set to NaN beyond their
+    own sample count for that range.
+    """
+    import numpy as np
+
+    sound_speed = float(echodata["Environment"]["sound_speed_indicative"].values.flat[0])
+    for group in ("Sonar/Beam_group1", "Sonar/Beam_group2"):
+        if group not in echodata.group_paths:
+            continue
+        beam = echodata[group]
+        if "range_sample" not in beam.dims or "sample_interval" not in beam:
+            continue
+        sample_interval = beam["sample_interval"].min("ping_time")
+        n_keep = np.ceil(max_range_m / (sample_interval * sound_speed / 2))
+        n_max = int(n_keep.max())
+        if n_max >= beam.sizes["range_sample"] and bool((n_keep == n_max).all()):
+            continue
+        logger.info(
+            "  Cropping %s to %.0f m: %d → %d range samples",
+            group, max_range_m, beam.sizes["range_sample"], min(n_max, beam.sizes["range_sample"]),
+        )
+        beam = beam.isel(range_sample=slice(0, n_max))
+        within_range = beam["range_sample"] < n_keep
+        for name, var in beam.data_vars.items():
+            if "range_sample" in var.dims:
+                beam[name] = var.where(within_range).transpose(*var.dims).astype(var.dtype)
+                beam[name].attrs = var.attrs
+        echodata[group] = beam
+    return echodata
 
 
 def _detect_pulse_category(echodata) -> str:
@@ -528,6 +575,11 @@ def combine_echodata_day(
     ed_list = []
     for zarr_path in sorted(ed_zarr_paths):
         ed = ep.open_converted(zarr_path, chunks={})
+        # The raw configuration XML embeds transceiver status text that changes
+        # when the transceiver restarts (e.g. after a power drop). It would
+        # make combine_echodata reject files whose filter parameters match.
+        if "config_xml" in ed["Vendor_specific"]:
+            ed["Vendor_specific"] = ed["Vendor_specific"].drop_vars("config_xml")
         ed_list.append(ed)
 
     if len(ed_list) == 1:
@@ -854,6 +906,84 @@ def _interpolate_gps_linear(ds_Sv, gps_df: pd.DataFrame):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _bin_sv_range(ds_Sv, target_bin_m: float):
+    """Average Sv into coarser range bins, channel by channel.
+
+    Each channel is reduced by a whole number of its own range samples (the
+    count closest to *target_bin_m*), averaging Sv in the linear domain and
+    echo_range arithmetically. Heavily oversampled channels (e.g. a 200 kHz
+    short pulse sampled at 9 mm) shrink enough for a full day to be denoised
+    in memory.
+    """
+    import numpy as np
+    import xarray as xr
+
+    binned = []
+    factors = {}
+    for ch in ds_Sv["channel"].values:
+        ds_ch = ds_Sv[["Sv", "echo_range"]].sel(channel=[ch])
+        spacing = float(np.nanmedian(
+            ds_ch["echo_range"].isel(ping_time=slice(0, 50)).diff("range_sample").values
+        ))
+        factor = max(1, round(target_bin_m / spacing))
+        factors[str(ch)] = factor
+        sv_linear = 10 ** (ds_ch["Sv"] / 10)
+        sv_binned = 10 * np.log10(
+            sv_linear.coarsen(range_sample=factor, boundary="trim").mean()
+        )
+        range_binned = ds_ch["echo_range"].coarsen(range_sample=factor, boundary="trim").mean()
+        ds_binned = xr.Dataset({"Sv": sv_binned, "echo_range": range_binned})
+        # A channel with a longer sample interval is NaN-padded along
+        # range_sample; cut the padding off so it does not count as missing data.
+        has_data = (
+            ds_binned["Sv"].isel(channel=0, ping_time=slice(0, 50)).notnull().any("ping_time").values
+        )
+        n_valid = int(np.flatnonzero(has_data).max()) + 1 if has_data.any() else 0
+        ds_binned = ds_binned.isel(range_sample=slice(0, n_valid))
+        ds_binned = ds_binned.assign_coords(range_sample=np.arange(ds_binned.sizes["range_sample"]))
+        binned.append(ds_binned)
+        logger.info(
+            "  Range binning %s: %d samples (%.4f m) per bin → %d bins",
+            ch, factor, spacing * factor, ds_binned.sizes["range_sample"],
+        )
+
+    ds_binned = xr.concat(binned, dim="channel", join="outer")
+    ds_out = ds_Sv.drop_dims("range_sample").merge(ds_binned)
+    ds_out["Sv"].attrs = {
+        **ds_Sv["Sv"].attrs,
+        "range_bin_samples": str(factors),
+        "cell_methods": "range_sample: mean (linear domain)",
+    }
+    ds_out["echo_range"].attrs = dict(ds_Sv["echo_range"].attrs)
+    ds_out["range_sample"].attrs = {"long_name": "Along-range bin number, base 0"}
+    return ds_out
+
+
+def _env_params_for_day(cfg: PipelineConfig, day_key: str) -> dict | None:
+    """Environment parameters for *day_key* from ``cfg.raw.env_params_file``."""
+    if not cfg.raw.env_params_file:
+        return None
+    import json
+
+    with open(cfg.raw.env_params_file) as fh:
+        by_day = json.load(fh)
+    params = by_day.get(day_key, by_day.get("default"))
+    if not params:
+        return None
+    return {k: params[k] for k in ("temperature", "salinity", "pressure", "pH") if k in params}
+
+
+def _reconstruct_combined_echodata(echodata_dir: Path, cfg: PipelineConfig) -> dict[str, dict[str, str]]:
+    """Find the per-day combined EchoData Zarrs written by Stage 3."""
+    day_echodata: dict[str, dict[str, str]] = {}
+    for path in sorted(echodata_dir.glob("*--*--combined.zarr")):
+        day_key, category, _ = path.name.split("--")
+        if not _within_date_range(datetime.fromisoformat(day_key), cfg):
+            continue
+        day_echodata.setdefault(day_key, {})[category] = str(path)
+    return day_echodata
+
+
 def compute_sv_day(
     ed_zarr_path: str,
     day_key: str,
@@ -889,8 +1019,23 @@ def compute_sv_day(
         compute_kwargs["waveform_mode"] = cfg.raw.waveform_mode
         compute_kwargs["encode_mode"] = cfg.raw.encode_mode
 
+    # The combined EchoData is opened lazily; a GPU-enabled echopype would
+    # materialise the whole day at once, so stay on the chunked CPU path.
+    import inspect
+
+    if "use_gpu" in inspect.signature(ep.calibrate.compute_Sv).parameters:
+        compute_kwargs["use_gpu"] = False
+
+    env_params = _env_params_for_day(cfg, day_key)
+    if env_params:
+        compute_kwargs["env_params"] = env_params
+        logger.info("  Environment parameters for %s: %s", day_key, env_params)
+
     logger.info("  compute_Sv (waveform=%s, encode=%s)", cfg.raw.waveform_mode, cfg.raw.encode_mode)
     ds_Sv = ep.calibrate.compute_Sv(ed, **compute_kwargs)
+
+    if cfg.raw.sv_range_bin_m > 0:
+        ds_Sv = _bin_sv_range(ds_Sv, cfg.raw.sv_range_bin_m)
 
     # Add depth variable from echo_range + transducer depth offset
     depth_offset = cfg.raw.depth_offset
@@ -908,6 +1053,11 @@ def compute_sv_day(
     for coord in ds_Sv.coords:
         ds_Sv[coord].encoding.clear()
 
+    if cfg.raw.sv_float32:
+        for var in ("Sv", "echo_range", "depth"):
+            if var in ds_Sv:
+                ds_Sv[var] = ds_Sv[var].astype("float32", keep_attrs=True)
+
     chunk_spec = {"ping_time": cfg.chunks.ping_time, "range_sample": -1}
     ds_Sv = ds_Sv.chunk(chunk_spec)
 
@@ -922,7 +1072,7 @@ def compute_sv_day(
     # Delete the combined EchoData Zarr to free disk space
     import shutil
     ed_path = Path(ed_zarr_path)
-    if ed_path.exists() and ed_path.is_dir():
+    if ed_path.exists() and ed_path.is_dir() and not cfg.raw.keep_intermediate:
         shutil.rmtree(ed_path, ignore_errors=True)
         logger.info("  Cleaned up combined EchoData: %s", ed_zarr_path)
 
@@ -1399,41 +1549,50 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                 else:
                     logger.warning("GPS download returned no data (%.1fs)", time.time() - t0)
 
-            # Stage 1: Discover raw files
-            t0 = time.time()
-            files_list = discover_raw_files(cfg)
-            if not files_list:
-                logger.error("No raw files found — aborting")
-                return
-            total_size_gb = sum(r.get("file_size", 0) for _, r in files_list) / 1024**3
-            logger.info(
-                "STAGE 1 complete: %d raw files discovered (%.1f GB total, %.1fs)",
-                len(files_list), total_size_gb, time.time() - t0,
-            )
+            if resume == 4:
+                # Resume from Stage 4: reuse the combined EchoData left by Stage 3
+                day_echodata = _reconstruct_combined_echodata(echodata_dir, cfg)
+                files_list = []
+                if not day_echodata:
+                    logger.error("No combined EchoData in %s — aborting", echodata_dir)
+                    return
+                logger.info("Stages 1-3 skipped (resume=4): %d days", len(day_echodata))
+            else:
+                # Stage 1: Discover raw files
+                t0 = time.time()
+                files_list = discover_raw_files(cfg)
+                if not files_list:
+                    logger.error("No raw files found — aborting")
+                    return
+                total_size_gb = sum(r.get("file_size", 0) for _, r in files_list) / 1024**3
+                logger.info(
+                    "STAGE 1 complete: %d raw files discovered (%.1f GB total, %.1fs)",
+                    len(files_list), total_size_gb, time.time() - t0,
+                )
 
-            # Stage 2: Download + convert to EchoData Zarr
-            if not _stage_enabled(2):
-                logger.info("Stopping after stage 1 (--stop-after-stage)")
-                return
-            t0 = time.time()
-            file_results = process_raw_files(files_list, cfg, echodata_dir)
-            logger.info(
-                "STAGE 2 complete: %d files converted to EchoData (%.1fs)",
-                len(file_results), time.time() - t0,
-            )
+                # Stage 2: Download + convert to EchoData Zarr
+                if not _stage_enabled(2):
+                    logger.info("Stopping after stage 1 (--stop-after-stage)")
+                    return
+                t0 = time.time()
+                file_results = process_raw_files(files_list, cfg, echodata_dir)
+                logger.info(
+                    "STAGE 2 complete: %d files converted to EchoData (%.1fs)",
+                    len(file_results), time.time() - t0,
+                )
 
-            # Stage 3: Combine EchoData per day+category
-            if not _stage_enabled(3):
-                logger.info("Stopping after stage 2 (--stop-after-stage)")
-                return
-            t0 = time.time()
-            day_echodata = run_echodata_combine(
-                file_results, files_list, cfg, echodata_dir,
-            )
-            logger.info(
-                "STAGE 3 complete: %d days combined (%.1fs)",
-                len(day_echodata), time.time() - t0,
-            )
+                # Stage 3: Combine EchoData per day+category
+                if not _stage_enabled(3):
+                    logger.info("Stopping after stage 2 (--stop-after-stage)")
+                    return
+                t0 = time.time()
+                day_echodata = run_echodata_combine(
+                    file_results, files_list, cfg, echodata_dir,
+                )
+                logger.info(
+                    "STAGE 3 complete: %d days combined (%.1fs)",
+                    len(day_echodata), time.time() - t0,
+                )
 
             # Stage 4: Compute Sv + add_depth + merge GPS
             if not _stage_enabled(4):
@@ -1452,7 +1611,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             # Cleanup any remaining intermediate EchoData Zarrs
             import shutil
             remaining = [f for f in echodata_dir.iterdir() if f.is_dir()]
-            if remaining:
+            if remaining and not cfg.raw.keep_intermediate:
                 for ed_file in remaining:
                     shutil.rmtree(ed_file, ignore_errors=True)
                 logger.info("Cleaned up %d remaining intermediate files", len(remaining))
@@ -1726,7 +1885,7 @@ def parse_args() -> PipelineConfig:
     )
     parser.add_argument(
         "--resume-stage", type=int, default=0,
-        help="Resume from stage N (5=denoise, 6=after denoise, 9=after MVBS/NASC, 11=campaign zarr only). "
+        help="Resume from stage N (4=Sv from combined EchoData, 5=denoise, 6=after denoise, 9=after MVBS/NASC, 11=campaign zarr only). "
              "Reconstructs intermediate data from existing output zarrs.",
     )
     parser.add_argument(
@@ -1790,6 +1949,69 @@ def parse_args() -> PipelineConfig:
     )
 
     # Depth
+    parser.add_argument(
+        "--seabed-mask",
+        action="store_true",
+        help="Enable Stage 6: detect the seabed and mask it (and everything "
+             "below) before MVBS/NASC. Off by default (open-ocean campaigns).",
+    )
+    parser.add_argument(
+        "--sv-float32",
+        action="store_true",
+        help="Store Sv, echo_range and depth as float32 instead of float64.",
+    )
+    parser.add_argument(
+        "--mvbs-echograms-only",
+        action="store_true",
+        help="Render per-day echograms from MVBS only, skipping the "
+             "full-resolution source/denoised/pruned panels.",
+    )
+    parser.add_argument(
+        "--keep-intermediate",
+        action="store_true",
+        help="Keep the combined per-day EchoData after Sv is computed.",
+    )
+    parser.add_argument(
+        "--chunk-ping-time",
+        type=int,
+        default=0,
+        help="Pings per Dask chunk (default: 1000). Lower it when a ping "
+             "holds many range samples and Stage 4 runs out of memory.",
+    )
+    parser.add_argument(
+        "--reuse-converted",
+        action="store_true",
+        help="Reuse per-file EchoData Zarrs already in the intermediate "
+             "directory instead of converting again.",
+    )
+    parser.add_argument(
+        "--env-params-file",
+        default="",
+        help="JSON file of environment parameters for compute_Sv, keyed by day "
+             "(YYYY-MM-DD) with an optional 'default' entry; each entry gives "
+             "temperature, salinity, pressure and pH. Default: values in the raw files.",
+    )
+    parser.add_argument(
+        "--seabed-mask-offset",
+        type=float,
+        default=0.0,
+        help="Start the seabed mask this many metres above the detected seabed "
+             "(default: 0).",
+    )
+    parser.add_argument(
+        "--sv-range-bin-m",
+        type=float,
+        default=0.0,
+        help="Average Sv (linear domain) into range bins of about this size "
+             "(metres) before saving. 0 = keep native sample resolution (default).",
+    )
+    parser.add_argument(
+        "--max-range-m",
+        type=float,
+        default=0.0,
+        help="Crop every channel to this range (metres) at conversion. "
+             "0 = keep the full recorded range (default).",
+    )
     parser.add_argument(
         "--depth-offset",
         type=float,
@@ -1913,6 +2135,7 @@ def parse_args() -> PipelineConfig:
     cfg.skip_nasc = args.skip_nasc
     cfg.skip_mvbs = args.skip_mvbs
     cfg.skip_combined_echograms = args.skip_combined_echograms
+    cfg.mvbs_echograms_only = args.mvbs_echograms_only
     cfg.prune.enabled = not args.skip_pruning
     cfg.prune.drop_threshold = args.prune_threshold
     cfg.prune.crosstalk_enabled = not args.no_crosstalk
@@ -1942,6 +2165,16 @@ def parse_args() -> PipelineConfig:
     cfg.raw.waveform_mode = args.waveform_mode
     cfg.raw.encode_mode = args.encode_mode
     cfg.raw.depth_offset = args.depth_offset
+    cfg.raw.max_range_m = args.max_range_m
+    cfg.raw.sv_float32 = args.sv_float32
+    cfg.raw.keep_intermediate = args.keep_intermediate
+    if args.chunk_ping_time > 0:
+        cfg.chunks.ping_time = args.chunk_ping_time
+    cfg.raw.reuse_converted = args.reuse_converted
+    cfg.raw.env_params_file = args.env_params_file
+    cfg.apply_seabed_mask = args.seabed_mask
+    cfg.seabed_mask_offset = args.seabed_mask_offset
+    cfg.raw.sv_range_bin_m = args.sv_range_bin_m
     if args.raw_cache_dir:
         cfg.raw.local_raw_dir = Path(args.raw_cache_dir)
     cfg.keep_raw = args.keep_raw

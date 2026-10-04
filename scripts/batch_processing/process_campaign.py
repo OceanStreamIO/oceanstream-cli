@@ -1063,6 +1063,7 @@ def mask_seabed_day(
     day_key: str,
     category: str,
     cruise_id: str,
+    mask_offset: float = 0.0,
 ) -> str:
     """Detect and mask seabed for a day Zarr. Returns masked zarr path."""
     import dask
@@ -1076,7 +1077,7 @@ def mask_seabed_day(
     with dask.config.set(scheduler="synchronous"):
         try:
             seabed_result = detect_seabed(ds, method="composite")
-            ds_masked = mask_seabed(ds, seabed_result)
+            ds_masked = mask_seabed(ds, seabed_result, offset=mask_offset)
         except Exception as e:
             logger.warning("Seabed detection failed for %s/%s: %s — skipping", day_key, category, e)
             ds_masked = ds
@@ -1135,6 +1136,7 @@ def run_seabed_masking(
                 day_key=day_key,
                 category=category,
                 cruise_id=cfg.cruise_id,
+                mask_offset=cfg.seabed_mask_offset,
             )
             masked_zarrs[day_key][category] = masked_path
 
@@ -1655,6 +1657,7 @@ def generate_echograms_day(
     colormaps: list | None = None,
     source_container: str | None = None,
     pruned_zarr: str | None = None,
+    mvbs_only: bool = False,
 ) -> list[str]:
     """Generate echogram PNGs for a day and upload to blob storage.
 
@@ -1712,33 +1715,39 @@ def generate_echograms_day(
 
     # Source Sv echograms — the pre-denoise reference panel. This is calibrated
     # Sv, not raw power, so it is labelled "source Sv (pre-denoise)".
-    try:
-        logger.info("  Loading source zarr into memory: %s/%s", read_container, source_zarr)
-        ds = _load_zarr_to_memory(source_zarr, read_container)
-        for cmap_name, cmap in cmap_variants:
-            files = plot_and_upload_echograms(
-                ds,
-                cruise_id=cruise_id,
-                file_base_name=_fname(f"{day_key}--{category}", cmap_name),
-                save_to_blobstorage=True,
-                upload_path=f"{day_key}/raw",
-                container_name=output_container,
-                create_interactive_pages=False,
-                cmap=cmap,
-                plot_var="Sv",
-                title_template=(
-                    f"{day_key} ({category}, source Sv (pre-denoise), cmap: {cmap_name})"
-                    " | {channel_label}"
-                ),
-                qc_windows=qc_windows,
-            )
-            all_files.extend(files)
-            logger.info("  Source echograms [%s]: %d files", cmap_name, len(files))
-        ds.close()
-        del ds
-        gc.collect()
-    except Exception as e:
-        logger.warning("Source echogram failed for %s/%s: %s", day_key, category, e)
+    if mvbs_only:
+        # Full-resolution day panels are loaded whole; skip them on hosts that
+        # cannot hold a day of Sv plus the rendered mesh in memory.
+        denoised_zarr = None
+        pruned_zarr = None
+    else:
+        try:
+            logger.info("  Loading source zarr into memory: %s/%s", read_container, source_zarr)
+            ds = _load_zarr_to_memory(source_zarr, read_container)
+            for cmap_name, cmap in cmap_variants:
+                files = plot_and_upload_echograms(
+                    ds,
+                    cruise_id=cruise_id,
+                    file_base_name=_fname(f"{day_key}--{category}", cmap_name),
+                    save_to_blobstorage=True,
+                    upload_path=f"{day_key}/raw",
+                    container_name=output_container,
+                    create_interactive_pages=False,
+                    cmap=cmap,
+                    plot_var="Sv",
+                    title_template=(
+                        f"{day_key} ({category}, source Sv (pre-denoise), cmap: {cmap_name})"
+                        " | {channel_label}"
+                    ),
+                    qc_windows=qc_windows,
+                )
+                all_files.extend(files)
+                logger.info("  Source echograms [%s]: %d files", cmap_name, len(files))
+            ds.close()
+            del ds
+            gc.collect()
+        except Exception as e:
+            logger.warning("Source echogram failed for %s/%s: %s", day_key, category, e)
 
     # Denoised Sv echograms + denoised-pruned (reuse same dataset)
     if denoised_zarr:
@@ -2300,6 +2309,7 @@ def run_echogram_generation(
                     colormaps=cmap_variants,
                     source_container=source_container,
                     pruned_zarr=pruned_zarr,
+                    mvbs_only=getattr(cfg, "mvbs_echograms_only", False),
                 )
                 futures[fut] = (day_key, category)
 
@@ -2686,7 +2696,13 @@ def build_campaign_zarr(
                     first = False
                 else:
                     store = get_azure_zarr_store(campaign_zarr, container=output_container, mode="a")
-                    ds.to_zarr(store, append_dim="ping_time", safe_chunks=False)
+                    # An appended day rarely starts on a chunk boundary of the
+                    # store. Written in parallel, the Dask chunks that share a
+                    # store chunk overwrite each other, so write them in turn.
+                    import dask
+
+                    with dask.config.set(scheduler="synchronous"):
+                        ds.to_zarr(store, append_dim="ping_time", safe_chunks=False)
 
                 ds.close()
                 logger.info("  Appended %s/%s to campaign Zarr", day_key, category)

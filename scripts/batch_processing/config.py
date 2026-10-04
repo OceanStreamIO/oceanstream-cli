@@ -263,6 +263,32 @@ class RawConversionConfig:
     # Depth
     depth_offset: float = 1.9  # Saildrone transducer depth below waterline (metres)
 
+    # Crop every channel to this range (metres) at conversion. 0 = keep the full
+    # recorded range. Use it when the recording range reaches far past the seabed.
+    max_range_m: float = 0.0
+
+    # Average Sv (linear domain) into range bins of about this size (metres)
+    # before saving. Each channel is binned by a whole number of its own
+    # samples. 0 = keep the native sample resolution.
+    sv_range_bin_m: float = 0.0
+
+    # Reuse per-file EchoData Zarrs already present in the intermediate
+    # directory instead of converting again (resume an interrupted stage 2).
+    reuse_converted: bool = False
+
+    # Keep the combined per-day EchoData after Sv is computed (default: delete).
+    keep_intermediate: bool = False
+
+    # Store Sv, echo_range and depth as float32 (default float64). Halves the
+    # memory the in-memory denoise stage needs for a day.
+    sv_float32: bool = False
+
+    # JSON file with environment parameters for compute_Sv, keyed by day
+    # ("YYYY-MM-DD") with an optional "default" entry. Each entry holds
+    # temperature (°C), salinity (PSU), pressure (dbar) and pH; sound speed
+    # and absorption are derived from them. Empty = use the values in the raw files.
+    env_params_file: str = ""
+
     # Concurrency knobs
     download_workers: int = 4   # parallel download threads
     convert_workers: int = 1    # parallel conversion workers (memory-bound, keep low)
@@ -328,6 +354,7 @@ class PipelineConfig:
     # ── Processing toggles ───────────────────────────────────────
     surface_exclusion_depth: float = 1.9  # metres — exclude bins above this depth (Saildrone transducer depth)
     apply_seabed_mask: bool = False  # disabled for tropical pacific (no seabed)
+    seabed_mask_offset: float = 0.0  # metres above the detected seabed where masking starts
     skip_denoising: bool = False
     skip_echograms: bool = False
     skip_pmtiles: bool = False
@@ -338,6 +365,7 @@ class PipelineConfig:
     # and adds a pulse-mode indicator bar). Independent of ``skip_echograms``:
     # when the per-category loop still runs, only the combined stage is skipped.
     skip_combined_echograms: bool = False
+    mvbs_echograms_only: bool = False  # per-day echograms from MVBS only (no full-resolution panels)
     save_to_netcdf: bool = False
     save_nasc_to_netcdf: bool = False
     save_mvbs_to_netcdf: bool = False

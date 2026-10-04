@@ -87,6 +87,7 @@ class Ad2cpAvgPing:
     velocity: np.ndarray  # int16, shape (n_cells, n_beams), mm/s
     amplitude: np.ndarray  # uint8, shape (n_cells, n_beams), counts
     correlation: np.ndarray  # uint8, shape (n_cells, n_beams), %
+    coord_sys: str = "beam"  # "ENU", "XYZ" or "beam"
 
 
 def _checksum(data: bytes) -> int:
@@ -264,6 +265,10 @@ def _parse_avg_data_record(data: bytes, n_cells: int, n_beams: int) -> Ad2cpAvgP
     pitch = struct.unpack_from("<h", data, 26)[0] * 0.01
     roll = struct.unpack_from("<h", data, 28)[0] * 0.01
 
+    # Bits 10–11 of the beams/coordinate-system/cells word
+    coord_code = (struct.unpack_from("<H", data, 54)[0] >> 10) & 0x3
+    coord_sys = {0: "ENU", 1: "XYZ", 2: "beam"}.get(coord_code, "unknown")
+
     payload = data[offset_of_data:]
     vel_bytes = n_cells * n_beams * 2
     amp_bytes = n_cells * n_beams
@@ -287,6 +292,7 @@ def _parse_avg_data_record(data: bytes, n_cells: int, n_beams: int) -> Ad2cpAvgP
         velocity=velocity,
         amplitude=amplitude,
         correlation=correlation,
+        coord_sys=coord_sys,
     )
 
 
@@ -435,7 +441,7 @@ def read_ad2cp_velocity(path: Path | str) -> "xr.Dataset":
             "n_beams": n_beams,
             "cell_size_m": cell_size,
             "blanking_m": blanking,
-            "coord_sys": "beam",
+            "coord_sys": avg_pings[0].coord_sys,
         },
     )
 
