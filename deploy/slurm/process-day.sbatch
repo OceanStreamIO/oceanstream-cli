@@ -57,21 +57,40 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 echo "raw: $(ls "${RAW_DIR}"/*.raw 2>/dev/null | wc -l) files, $(du -sh "${RAW_DIR}" 2>/dev/null | cut -f1)"
 
+# Each job writes into its own storage root on scratch, then moves the finished
+# day into the shared products tree. The pipeline keeps intermediates under
+# its storage root and, after stage 4, deletes everything it finds there, so
+# concurrent jobs (array tasks) sharing one root destroy each other's work.
+# Stores record their sources relative to the container, so the move is safe.
+WORK_ROOT="${TMPDIR}/products"
+CONTAINER="@OUTPUT_CONTAINER@"
+
 cd "${CODE}"
 echo "--- pipeline start $(date -u +%FT%TZ) ---"
 python -u scripts/batch_processing/process_from_raw.py \
     --cruise-id "${CRUISE}" \
     --start-date "${DAY}" --end-date "${DAY}" \
-    --output-container "@OUTPUT_CONTAINER@" \
+    --output-container "${CONTAINER}" \
     --raw-source local --raw-dir "${RAW_DIR}" \
-    --storage-backend local --local-save "${OUT_ROOT}" \
+    --storage-backend local --local-save "${WORK_ROOT}" \
     --output-dir "${TMPDIR}/batch_output" \
     --raw-cache-dir "${TMPDIR}/raw_cache" \
     --parallel-workers @PARALLEL_WORKERS@ --n-workers @DASK_WORKERS@ --memory-limit @DASK_MEMORY@ \
+    --stop-after-stage 9 \
     @PIPELINE_ARGS@
 rc=$?
 echo "--- pipeline end $(date -u +%FT%TZ) rc=${rc} ---"
 
-du -sh "${OUT_ROOT}/@OUTPUT_CONTAINER@/${DAY}" 2>/dev/null || echo "(no products)"
+if [ "${rc}" -eq 0 ]; then
+    if [ -d "${WORK_ROOT}/${CONTAINER}/${DAY}" ]; then
+        mkdir -p "${OUT_ROOT}/${CONTAINER}"
+        rm -rf "${OUT_ROOT:?}/${CONTAINER}/${DAY}"
+        mv "${WORK_ROOT}/${CONTAINER}/${DAY}" "${OUT_ROOT}/${CONTAINER}/${DAY}"
+        du -sh "${OUT_ROOT}/${CONTAINER}/${DAY}"
+    else
+        echo "pipeline succeeded but wrote no products for ${DAY}"
+        rc=3
+    fi
+fi
 echo "exit=${rc}"
 exit "${rc}"

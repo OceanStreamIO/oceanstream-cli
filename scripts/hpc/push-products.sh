@@ -38,30 +38,44 @@ done
 require_hpc_key
 DEST="${DEST:-$OCEANSTREAM_S3_PRODUCTS_PREFIX/$CONTAINER}"
 
-rc=0
+# One queued transfer and one check for all days: --include filters keep other
+# days out of both, and `sync` only deletes destination files the filters match.
+SRC_ROOT="$HPC_PRODUCTS_DIR/$CONTAINER"
+DST_ROOT="$(s3_remote "$DEST")"
+INCLUDES=""; PRESENT=""; rc=0
 for d in $(printf '%s' "$DAYS" | tr ',' ' '); do
     case "$d" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) fail "Bad day: $d" ;; esac
-    SRC="$HPC_PRODUCTS_DIR/$CONTAINER/$d"
-    DST="$(s3_remote "$DEST/$d")"
-    hpc_ssh_xfer "test -d '$SRC'" 2>/dev/null || { warn "$d: nothing at $SRC"; rc=1; continue; }
-    info "$d: $(hpc_ssh_xfer "du -sh '$SRC' | cut -f1" 2>/dev/null)"
-
-    if [ "$VERIFY_ONLY" = "0" ]; then
-        OUT="$(hpc_xfer_rclone "push-$d" "$OP" "$SRC" "$DST" --transfers=32 --checkers=64 --fast-list \
-            --retries=3 --low-level-retries=10 --stats=60s --stats-one-line)" || { warn "$d: submit failed"; rc=1; continue; }
-        printf '%s' "$OUT" | grep -q '^exit=0$' || { printf '%s\n' "$OUT" >&2; warn "$d: push failed"; rc=1; continue; }
-        ok "$d: pushed"
-    fi
-
-    OUT="$(hpc_xfer_rclone "check-$d" check "$SRC" "$DST" --one-way --size-only --fast-list)" || true
-    if printf '%s' "$OUT" | grep -q '^exit=0$'; then
-        ok "$d: S3 matches scratch"
-        if [ "$CLEANUP" = "1" ]; then
-            case "$SRC" in */products/?*/????-??-??) hpc_ssh_xfer "rm -rf '$SRC'" && ok "$d: scratch freed" ;;
-                           *) fail "Refusing to remove unexpected path: $SRC" ;; esac
-        fi
+    if hpc_ssh_xfer "test -d '$SRC_ROOT/$d'" 2>/dev/null; then
+        INCLUDES="$INCLUDES --include '/${d}/**'"; PRESENT="$PRESENT $d"
     else
-        printf '%s\n' "$OUT" | tail -8 >&2; warn "$d: differences found"; rc=1
+        warn "$d: nothing at $SRC_ROOT/$d"; rc=1
     fi
 done
+[ -n "$PRESENT" ] || fail "No products to push"
+N="$(printf '%s' "$PRESENT" | wc -w | tr -d ' ')"
+info "$N day(s), $(hpc_ssh_xfer "cd '$SRC_ROOT' && du -shc $PRESENT | tail -1 | cut -f1" 2>/dev/null) total"
+
+if [ "$VERIFY_ONLY" = "0" ]; then
+    # shellcheck disable=SC2086
+    OUT="$(hpc_xfer_rclone "push-${CONTAINER}" "$OP" "$SRC_ROOT" "$DST_ROOT" $INCLUDES \
+        --transfers=32 --checkers=64 --fast-list --retries=3 --low-level-retries=10 \
+        --stats=60s --stats-one-line)" || fail "Could not submit the push"
+    printf '%s' "$OUT" | grep -q '^exit=0$' || { printf '%s\n' "$OUT" | tail -15 >&2; fail "push failed"; }
+    ok "pushed $N day(s)"
+fi
+
+# shellcheck disable=SC2086
+OUT="$(hpc_xfer_rclone "check-${CONTAINER}" check "$SRC_ROOT" "$DST_ROOT" $INCLUDES \
+    --one-way --size-only --fast-list)" || true
+if printf '%s' "$OUT" | grep -q '^exit=0$'; then
+    ok "S3 matches scratch for $N day(s)"
+    if [ "$CLEANUP" = "1" ]; then
+        for d in $PRESENT; do
+            case "$SRC_ROOT/$d" in */products/?*/????-??-??) ;; *) fail "Refusing to remove unexpected path: $SRC_ROOT/$d" ;; esac
+            hpc_ssh_xfer "rm -rf '$SRC_ROOT/$d'" && ok "$d: scratch freed"
+        done
+    fi
+else
+    printf '%s\n' "$OUT" | tail -12 >&2; warn "differences found"; rc=1
+fi
 exit "$rc"

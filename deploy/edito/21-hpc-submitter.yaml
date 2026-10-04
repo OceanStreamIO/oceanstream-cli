@@ -5,8 +5,8 @@
 #
 # No values in this file: site settings come from the ConfigMap
 # `oceanstream-hpc-site`, the SSH key from the Secret `oceanstream-hpc-ssh`
-# (both created by bootstrap-hpc-secrets.sh) and S3 credentials from the
-# existing `oceanstream-s3` Secret.
+# (both created by bootstrap-hpc-secrets.sh), S3 credentials from the existing
+# `oceanstream-s3` Secret and the web app's ingest key from `oceanstream-app`.
 #
 #   kubectl -n <ns> apply -f deploy/edito/21-hpc-submitter.yaml
 # =============================================================================
@@ -37,7 +37,7 @@ spec:
           emptyDir: {sizeLimit: 2Gi}
       containers:
         - name: submitter
-          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:latest
+          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:0.2.4
           imagePullPolicy: Always
           command: ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
           env:
@@ -48,10 +48,12 @@ spec:
             - {name: HPC_SSH_KEY, value: /etc/ssh-hpc/id_ed25519}
             - {name: HPC_KNOWN_HOSTS, value: /etc/ssh-hpc/known_hosts}
             - {name: TMPDIR, value: /tmp}
+            # Web app import (process-batch-hpc): the ingest key the app itself checks.
+            - name: OCEANSTREAM_INGEST_API_KEY
+              valueFrom: {secretKeyRef: {name: oceanstream-app, key: OCEANSTREAM_INGEST_API_KEY, optional: true}}
           envFrom:
-            - configMapRef: {name: oceanstream-hpc-site}
+            - configMapRef: {name: oceanstream-hpc-site}   # includes OCEANSTREAM_WEB_URL
             - secretRef: {name: oceanstream-s3}
-            - secretRef: {name: oceanstream-hpc-ingest, optional: true}
           volumeMounts:
             - {name: hpc-ssh, mountPath: /etc/ssh-hpc, readOnly: true}
             - {name: ssh-home, mountPath: /home/hpc/.ssh}

@@ -105,6 +105,30 @@ and channel as properties). Its geometry is the day's track. The Item is written
 `collection.json` is rebuilt from the Items, and consumers list a cruise's data
 by reading it. No filename parsing is needed.
 
+## Publishing the catalogue
+
+Serving the STAC documents to a browser (e.g. a STAC Browser instance) needs, on the bucket:
+
+- `s3:GetObject` for the products prefix, so Items, Collection and assets are readable;
+- `s3:ListBucket` limited to that prefix with a condition, so Zarr stores can be listed while the
+  rest of the bucket stays private;
+- a CORS rule allowing `GET`/`HEAD` from the browser's origin;
+- `Content-Type: application/json` on the documents, which the emitter sets when the store
+  supports it;
+- absolute `self` links, from `publish_stac.py --public-base <public https url of the root>`.
+
+Anonymous readers must open stores with an explicit Zarr format:
+
+```python
+fs = s3fs.S3FileSystem(anon=True, client_kwargs={"endpoint_url": "https://..."})
+ds = xr.open_zarr(fs.get_mapper(f"{bucket}/{key}"), zarr_format=3, consolidated=True)
+```
+
+Without `zarr_format=3`, xarray probes for Zarr v2 files (`.zmetadata`, `.zgroup`, `.zattrs`).
+Those do not exist, and an anonymous caller gets `403` rather than `404` for a missing key when
+listing is prefix-scoped, which breaks the fallback. Denoised and pruned stores hold masks, so
+rebuilding Sv from them needs `oceanstream.echodata.products` (`open_product_uri`).
+
 ## Prefect
 
 `scripts/hpc/flows.py` defines `process-day-hpc` (sync, stage, submit, push,

@@ -11,6 +11,8 @@ APP = Path(__file__).resolve().parents[2]
 DEPLOYMENTS = [
     ("scripts/hpc/flows.py:process_day_hpc", "process-day-hpc",
      "Process one echosounder day on the Slurm cluster and publish it (STAC, tiles)."),
+    ("scripts/hpc/flows.py:process_batch_hpc", "process-batch-hpc",
+     "Process many days as one Slurm job array, then publish (STAC, tiles) and import into the web app."),
     ("scripts/hpc/flows.py:publish_campaign", "publish-campaign",
      "Rebuild a campaign's STAC Collection and echodata track tiles."),
 ]

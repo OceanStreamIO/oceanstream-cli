@@ -77,7 +77,10 @@ def _track(ds, max_points: int) -> Optional[list[list[float]]]:
         if lat_name in ds.variables and lon_name in ds.variables:
             lat = np.asarray(ds[lat_name].values, dtype=float).ravel()
             lon = np.asarray(ds[lon_name].values, dtype=float).ravel()
+            # Drop null-island fixes: a (0, 0) position is a failed GPS fix,
+            # not a location, and it stretches the bbox across the globe.
             ok = np.isfinite(lat) & np.isfinite(lon)
+            ok &= ~((np.abs(lat) < 1e-3) & (np.abs(lon) < 1e-3))
             lat, lon = lat[ok], lon[ok]
             if lat.size < 2:
                 return None
@@ -126,6 +129,7 @@ def build_day_item(
     track: Optional[list[list[float]]] = None
     track_rank = -1  # prefer positions from nasc > pruned > denoised > sv
     rank = {"nasc": 4, "pruned": 3, "denoised": 2, None: 1}
+    software: dict[str, str] = {}
 
     for e in sorted(entries, key=lambda d: d["name"]):
         name = e["name"].rstrip("/").rsplit("/", 1)[-1]
@@ -151,6 +155,11 @@ def build_day_item(
                     lo, hi = np.nanmin(pt), np.nanmax(pt)
                     t_min = lo if t_min is None or lo < t_min else t_min
                     t_max = hi if t_max is None or hi > t_max else t_max
+                if product is None:  # the Sv store records what computed it
+                    name = ds.attrs.get("processing_software_name")
+                    version = ds.attrs.get("processing_software_version")
+                    if name and version:
+                        software[str(name)] = str(version)
                 if "frequency_nominal" in ds.variables:
                     frequencies.update(float(f) for f in np.ravel(ds["frequency_nominal"].values) if np.isfinite(f))
                 r = rank.get(product, 0)
@@ -226,12 +235,17 @@ def build_day_item(
         "oceanstream:georeferenced": geometry is not None,
         "created": _iso(datetime.now(timezone.utc)),
     }
+    if software:
+        # Processing extension: only declared when these fields are present,
+        # since the schema rejects an extension with none of its fields.
+        props["processing:software"] = software
+        props["processing:level"] = "L2"
     props.update(properties or {})
 
     item: dict[str, Any] = {
         "type": "Feature",
         "stac_version": STAC_VERSION,
-        "stac_extensions": [PROCESSING_EXT],
+        "stac_extensions": [PROCESSING_EXT] if "processing:software" in props else [],
         "id": f"{cruise_id}_{day}",
         "collection": collection_id or cruise_id,
         "geometry": geometry,
@@ -297,5 +311,11 @@ def build_collection(
 
 
 def write_json(fs, path: str, doc: dict) -> None:
-    with fs.open(path, "w") as f:
-        f.write(json.dumps(doc, indent=2, default=str))
+    """Write a STAC document, served as application/json where the store supports it."""
+    body = json.dumps(doc, indent=2, default=str)
+    try:
+        with fs.open(path, "w", s3_additional_kwargs={"ContentType": "application/json"}) as f:
+            f.write(body)
+    except TypeError:  # filesystems that take no per-call kwargs (local, azure)
+        with fs.open(path, "w") as f:
+            f.write(body)
