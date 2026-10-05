@@ -604,6 +604,41 @@ def detect_seabed_ariza(
     )
 
 
+def _leading_edge(sv: np.ndarray, cand: np.ndarray, thr: np.ndarray) -> np.ndarray:
+    """Per ping, the sample where the seabed echo starts, or -1 with no candidate.
+
+    Starts at the ping's strongest candidate — the seabed echo itself rather
+    than its tail — and steps up while Sv stays above the ping's threshold.
+    A NaN sample ends the step, as a sample below the threshold does.
+    """
+    n_samples = sv.shape[1]
+    has = cand.any(axis=1)
+    peak = np.argmax(np.where(cand, sv, -np.inf), axis=1)
+    cols = np.arange(n_samples)[np.newaxis, :]
+    below = ~(sv > thr[:, np.newaxis]) & (cols < peak[:, np.newaxis])
+    last_below = n_samples - 1 - np.argmax(below[:, ::-1], axis=1)
+    edge = np.where(below.any(axis=1), last_below + 1, 0)
+    return np.where(has, edge, -1)
+
+
+def _running_median_line(idx: np.ndarray, window: int) -> np.ndarray:
+    """Smooth a per-ping sample index (NaN = none) with a centred running median.
+
+    Gaps longer than the window are interpolated from either side. With no
+    index anywhere the line stays all NaN: there is no seabed.
+    """
+    import pandas as pd
+
+    rolling = pd.Series(idx).rolling(window, center=True, min_periods=1)
+    smooth = rolling.median().to_numpy(copy=True)
+    missing = np.isnan(smooth)
+    if missing.any() and not missing.all():
+        smooth[missing] = np.interp(
+            np.flatnonzero(missing), np.flatnonzero(~missing), smooth[~missing]
+        )
+    return np.floor(smooth)
+
+
 def detect_seabed_composite(
     ds: xr.Dataset,
     channel: Optional[str] = None,
@@ -622,6 +657,7 @@ def detect_seabed_composite(
     savgol_window: int = 31,
     savgol_polyorder: int = 1,
     max_index_jump: int = 5,
+    pick: Literal["deepest", "edge"] = "deepest",
 ) -> SeabedDetectionResult:
     """Detect seabed using a robust 11-step composite algorithm.
 
@@ -663,10 +699,22 @@ def detect_seabed_composite(
         savgol_window: Savitzky-Golay smoothing window (will be clamped to N).
         savgol_polyorder: Polynomial order for Savitzky-Golay.
         max_index_jump: Maximum allowed single-ping jump in smoothed indices.
+        pick: Which part of the seabed echo the line follows.
+            ``"deepest"`` (the legacy behaviour) takes the deepest candidate,
+            which lies in the echo's tail: metres below the seabed, and moving
+            with the tail's length from ping to ping. ``"edge"`` takes the
+            leading edge — from each ping's strongest candidate it steps up
+            while Sv stays above the threshold — so the line is the seabed
+            surface, and smooths it with a running median of
+            ``savgol_window`` pings, which drops a short excursion where a
+            moving average would spread it into a ramp.
 
     Returns:
         SeabedDetectionResult with seabed depth line and diagnostics.
     """
+    if pick not in ("deepest", "edge"):
+        raise ValueError(f"Unknown pick '{pick}'. Choose 'deepest' or 'edge'.")
+
     # ── 1. Extract 2D data for the requested channel ────────────────────
     Sv_2d, range_1d, ch_label = _get_sv_2d(ds, channel)
     n_pings, n_samples = Sv_2d.shape
@@ -736,52 +784,66 @@ def detect_seabed_composite(
     # Broadcast back: only keep candidates in pings passing continuity
     cand[~continuity_ok] = False
 
-    # ── 9. Pick deepest candidate per ping ──────────────────────────────
-    vdim_indices = np.arange(n_samples)
-    idx_primary = np.full(n_pings, -1, dtype=np.int64)
-    for p in range(n_pings):
-        where = np.where(cand[p])[0]
-        if len(where):
-            idx_primary[p] = where[-1]  # deepest
-
-    # ── 10. Fallback: first Sv > thr2 in gate, or bottom ───────────────
     fallback_mask = (Sv_filt > thr_2d) & gate
-    idx_fallback = np.full(n_pings, n_samples - 1, dtype=np.int64)
-    for p in range(n_pings):
-        where = np.where(fallback_mask[p])[0]
-        if len(where):
-            idx_fallback[p] = where[-1]
-
-    has_primary = idx_primary >= 0
-    idx = np.where(has_primary, idx_primary, idx_fallback)
-
-    # ── 11. Savitzky-Golay smoothing with jump removal ──────────────────
-    N = len(idx)
+    N = n_pings
     win = max(3, min(savgol_window, N if N % 2 else N - 1))
-    if N >= 3 and win >= 3:
-        idx_float = idx.astype(float)
-        idx_sm = savgol_filter(idx_float, win, polyorder=savgol_polyorder, mode="interp")
 
-        # Remove large jumps
-        jumps = np.abs(np.diff(idx_sm, prepend=idx_sm[0])) > max_index_jump
-        idx_sm[jumps] = np.nan
-
-        # Interpolate NaNs
-        nan_mask = np.isnan(idx_sm)
-        valid_mask = ~nan_mask
-        if nan_mask.any() and valid_mask.any():
-            idx_sm[nan_mask] = np.interp(
-                np.flatnonzero(nan_mask),
-                np.flatnonzero(valid_mask),
-                idx_sm[valid_mask],
-            )
-
-        idx_clean = np.clip(idx_sm.astype(int), 0, n_samples - 1)
+    if pick == "edge":
+        # ── 9–11. Leading edge, falling back to the candidates before ───
+        # morphology, then a running median. A ping with no candidate at
+        # all takes its neighbours' line, not the bottom of the range.
+        idx_primary = _leading_edge(Sv_filt, cand, thr_per_ping)
+        has_primary = idx_primary >= 0
+        idx_fallback = _leading_edge(Sv_filt, fallback_mask, thr_per_ping)
+        idx = np.where(has_primary, idx_primary, idx_fallback).astype(float)
+        idx[idx < 0] = np.nan
+        line = _running_median_line(idx, win)
+        no_seabed = np.isnan(line)
+        idx_clean = np.clip(np.nan_to_num(line, nan=n_samples - 1), 0, n_samples - 1).astype(np.int64)
     else:
-        idx_clean = np.clip(idx, 0, n_samples - 1)
+        no_seabed = np.zeros(n_pings, dtype=bool)
+        # ── 9. Pick deepest candidate per ping ──────────────────────────
+        idx_primary = np.full(n_pings, -1, dtype=np.int64)
+        for p in range(n_pings):
+            where = np.where(cand[p])[0]
+            if len(where):
+                idx_primary[p] = where[-1]  # deepest
+
+        # ── 10. Fallback: first Sv > thr2 in gate, or bottom ───────────
+        idx_fallback = np.full(n_pings, n_samples - 1, dtype=np.int64)
+        for p in range(n_pings):
+            where = np.where(fallback_mask[p])[0]
+            if len(where):
+                idx_fallback[p] = where[-1]
+
+        has_primary = idx_primary >= 0
+        idx = np.where(has_primary, idx_primary, idx_fallback)
+
+        # ── 11. Savitzky-Golay smoothing with jump removal ──────────────
+        if N >= 3 and win >= 3:
+            idx_float = idx.astype(float)
+            idx_sm = savgol_filter(idx_float, win, polyorder=savgol_polyorder, mode="interp")
+
+            # Remove large jumps
+            jumps = np.abs(np.diff(idx_sm, prepend=idx_sm[0])) > max_index_jump
+            idx_sm[jumps] = np.nan
+
+            # Interpolate NaNs
+            nan_mask = np.isnan(idx_sm)
+            valid_mask = ~nan_mask
+            if nan_mask.any() and valid_mask.any():
+                idx_sm[nan_mask] = np.interp(
+                    np.flatnonzero(nan_mask),
+                    np.flatnonzero(valid_mask),
+                    idx_sm[valid_mask],
+                )
+
+            idx_clean = np.clip(idx_sm.astype(int), 0, n_samples - 1)
+        else:
+            idx_clean = np.clip(idx, 0, n_samples - 1)
 
     # Convert to depth
-    seabed_depth = range_1d[idx_clean]
+    seabed_depth = np.where(no_seabed, np.nan, range_1d[idx_clean])
 
     # Build DataArrays
     ping_times = ds.ping_time.values if "ping_time" in ds.coords else np.arange(n_pings)
@@ -818,6 +880,7 @@ def detect_seabed_composite(
             "use_adaptive_thresholding": use_adaptive_thresholding,
             "continuity_window": continuity_window,
             "savgol_window": savgol_window,
+            "pick": pick,
         },
     )
 

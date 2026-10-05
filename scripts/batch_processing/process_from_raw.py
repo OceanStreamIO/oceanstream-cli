@@ -1421,6 +1421,8 @@ def _serialisable_config(cfg: PipelineConfig) -> dict:
         "chunks": cfg.chunks.as_dict(),
         "surface_exclusion_depth": cfg.surface_exclusion_depth,
         "apply_seabed_mask": cfg.apply_seabed_mask,
+        "seabed_mask_offset": cfg.seabed_mask_offset,
+        "seabed_line": cfg.seabed_line,
         "parallel_workers": cfg.parallel_workers,
     }
 
@@ -1999,6 +2001,16 @@ def parse_args() -> PipelineConfig:
              "(default: 0).",
     )
     parser.add_argument(
+        "--seabed-line",
+        choices=["deepest", "edge"],
+        default="deepest",
+        help="Which part of the seabed echo the detected seabed is: 'deepest' "
+             "(default) is the deepest strong sample, in the echo's tail several "
+             "metres below the seabed; 'edge' is the leading edge, the seabed "
+             "surface itself. Set --seabed-mask-offset to match: a few metres "
+             "for 'deepest', about half a metre for 'edge'.",
+    )
+    parser.add_argument(
         "--sv-range-bin-m",
         type=float,
         default=0.0,
@@ -2174,6 +2186,7 @@ def parse_args() -> PipelineConfig:
     cfg.raw.env_params_file = args.env_params_file
     cfg.apply_seabed_mask = args.seabed_mask
     cfg.seabed_mask_offset = args.seabed_mask_offset
+    cfg.seabed_line = args.seabed_line
     cfg.raw.sv_range_bin_m = args.sv_range_bin_m
     if args.raw_cache_dir:
         cfg.raw.local_raw_dir = Path(args.raw_cache_dir)

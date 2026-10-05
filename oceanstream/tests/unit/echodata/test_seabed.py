@@ -263,6 +263,87 @@ class TestDetectSeabedDispatch:
         assert result.method == "ariza"
 
 
+def create_fjord_dataset(
+    n_pings: int = 300,
+    seabed_m: float = 73.0,
+    dropout: slice = slice(0, 0),
+) -> xr.Dataset:
+    """A shallow site: a seabed echo with a sharp leading edge at *seabed_m* and
+    a tail whose length changes from ping to ping, as a buoy's does.
+
+    Pings in *dropout* have no seabed echo at all.
+    """
+    import pandas as pd
+
+    rng_m = np.arange(0, 100, 0.1)
+    gen = np.random.default_rng(0)
+    sv = gen.normal(-75, 2, (n_pings, rng_m.size))
+    top = int(np.searchsorted(rng_m, seabed_m))
+    for p in range(n_pings):
+        if dropout.start <= p < dropout.stop:
+            continue
+        tail = int(gen.uniform(30, 90))  # 3–9 m above −40 dB
+        sv[p, top : top + tail] = np.linspace(-15, -38, tail)
+        sv[p, top + tail :] = -55
+    return xr.Dataset(
+        {
+            "Sv": (["ping_time", "range_sample"], sv),
+            "echo_range": (["ping_time", "range_sample"], np.tile(rng_m, (n_pings, 1))),
+        },
+        coords={
+            "ping_time": pd.date_range("2026-04-13", periods=n_pings, freq="1s").values,
+            "range_sample": np.arange(rng_m.size),
+        },
+    )
+
+
+class TestDetectSeabedComposite:
+    """The composite detector's two picks: deepest candidate and leading edge."""
+
+    def test_edge_is_the_seabed_surface(self):
+        ds = create_fjord_dataset()
+        line = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
+        assert np.all(np.abs(line - 73.0) <= 0.2)
+
+    def test_deepest_sits_in_the_tail(self):
+        ds = create_fjord_dataset()
+        line = detect_seabed(ds, method="composite").seabed_depth.values
+        # The legacy pick follows the tail, metres below the surface.
+        assert np.median(line) > 76.0
+
+    def test_edge_holds_through_a_short_dropout(self):
+        ds = create_fjord_dataset(dropout=slice(100, 110))
+        result = detect_seabed(ds, method="composite", pick="edge")
+        assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+        assert result.pings_detected < 300
+
+    def test_edge_ignores_weak_scatter_on_the_bottom(self):
+        ds = create_fjord_dataset()
+        # A fish layer resting on the seabed, weaker than the −40 dB floor.
+        ds["Sv"][:, 690:730] = -48.0
+        line = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
+        assert np.all(np.abs(line - 73.0) <= 0.2)
+
+    def test_edge_mask_starts_at_the_offset(self):
+        ds = create_fjord_dataset()
+        result = detect_seabed(ds, method="composite", pick="edge")
+        masked = mask_seabed(ds, result, offset=0.5)["Sv"].values
+        rng_m = ds["echo_range"].values[0]
+        assert np.isnan(masked[:, rng_m >= 72.7]).all()
+        assert np.isfinite(masked[:, rng_m < 72.3]).all()
+
+    def test_no_seabed_masks_nothing(self):
+        ds = create_fjord_dataset(dropout=slice(0, 300))
+        result = detect_seabed(ds, method="composite", pick="edge")
+        assert result.pings_detected == 0
+        assert np.isnan(result.seabed_depth.values).all()
+        assert np.isfinite(mask_seabed(ds, result)["Sv"].values).all()
+
+    def test_unknown_pick(self):
+        with pytest.raises(ValueError, match="Unknown pick"):
+            detect_seabed(create_fjord_dataset(n_pings=10), method="composite", pick="middle")
+
+
 class TestMultiChannelDetection:
     """Tests for multi-channel dataset handling."""
     

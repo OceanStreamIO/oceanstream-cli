@@ -112,6 +112,7 @@ def build_parameters_text(manifest: dict, run_root: Path) -> str:
         _kv("QC overlay file", _flag_value(cli_args, "--qc-file") or "(none)"),
     ]
 
+    seabed = cfg.get("apply_seabed_mask")
     lines.append(_rule("Pipeline"))
     lines += [
         _kv("Resume stage", manifest.get("resume_stage")),
@@ -123,6 +124,8 @@ def build_parameters_text(manifest: dict, run_root: Path) -> str:
         _kv("Chunks", ", ".join(f"{k}={v}" for k, v in (cfg.get("chunks") or {}).items())),
         _kv("Surface exclusion", f"{cfg.get('surface_exclusion_depth')} m"),
         _kv("Seabed mask", cfg.get("apply_seabed_mask")),
+        _kv("Seabed line", cfg.get("seabed_line", "deepest") if seabed else "—"),
+        _kv("Seabed mask offset", f"{cfg.get('seabed_mask_offset', 0.0)} m" if seabed else "—"),
         _kv("Sv sanity clip", f"{_flag_value(cli_args, '--sv-clip-max-db')} dB"),
         _kv("Denoise diagnostics", "--emit-denoise-diagnostics" in cli_args),
     ]

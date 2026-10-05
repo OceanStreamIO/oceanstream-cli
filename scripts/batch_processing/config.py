@@ -355,6 +355,7 @@ class PipelineConfig:
     surface_exclusion_depth: float = 1.9  # metres — exclude bins above this depth (Saildrone transducer depth)
     apply_seabed_mask: bool = False  # disabled for tropical pacific (no seabed)
     seabed_mask_offset: float = 0.0  # metres above the detected seabed where masking starts
+    seabed_line: str = "deepest"  # composite pick: deepest candidate (legacy) or leading "edge"
     skip_denoising: bool = False
     skip_echograms: bool = False
     skip_pmtiles: bool = False
