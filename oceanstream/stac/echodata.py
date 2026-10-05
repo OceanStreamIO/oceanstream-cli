@@ -314,7 +314,8 @@ def write_json(fs, path: str, doc: dict) -> None:
     """Write a STAC document, served as application/json where the store supports it."""
     body = json.dumps(doc, indent=2, default=str)
     try:
-        with fs.open(path, "w", s3_additional_kwargs={"ContentType": "application/json"}) as f:
+        # A direct keyword: s3fs ignores s3_additional_kwargs passed to open().
+        with fs.open(path, "w", ContentType="application/json") as f:
             f.write(body)
     except TypeError:  # filesystems that take no per-call kwargs (local, azure)
         with fs.open(path, "w") as f:
