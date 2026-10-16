@@ -526,3 +526,59 @@ class TestNASCXarray2026:
 
         # NASC values must be non-negative (acoustic energy integral)
         assert float(nasc["NASC"].min()) >= 0
+
+
+class _FakeEchoData:
+    """Group access as EchoData does it: reads return copies, writes replace the group."""
+
+    def __init__(self, beam):
+        self._groups = {"Sonar/Beam_group1": beam}
+
+    @property
+    def group_paths(self):
+        return tuple(self._groups)
+
+    def __getitem__(self, key):
+        return self._groups[key].copy(deep=True)
+
+    def __setitem__(self, key, value):
+        self._groups[key] = value
+
+
+class TestFillTransmitType:
+    """Channels that ping in turn must all survive echopype's first-ping CW check."""
+
+    @staticmethod
+    def _beam(rows):
+        import numpy as np
+        import xarray as xr
+
+        return xr.Dataset(
+            {"transmit_type": (("channel", "ping_time"), np.array(rows, dtype="<U3"))},
+            coords={"channel": ["ch18", "ch38", "ch200"], "ping_time": [0, 1, 2]},
+        )
+
+    def test_fills_each_channel_from_its_own_pings(self):
+        from oceanstream.echodata.compute.sv import fill_transmit_type
+
+        ed = _FakeEchoData(self._beam([["CW", "nan", "nan"],
+                                       ["nan", "CW", "nan"],
+                                       ["nan", "nan", "LFM"]]))
+        assert fill_transmit_type(ed) == ["Sonar/Beam_group1"]
+        filled = ed["Sonar/Beam_group1"]["transmit_type"].values.tolist()
+        assert filled == [["CW"] * 3, ["CW"] * 3, ["LFM"] * 3]
+
+    def test_complete_data_is_left_alone(self):
+        from oceanstream.echodata.compute.sv import fill_transmit_type
+
+        ed = _FakeEchoData(self._beam([["CW"] * 3] * 3))
+        assert fill_transmit_type(ed) == []
+
+    def test_changing_transmit_type_is_an_error(self):
+        from oceanstream.echodata.compute.sv import fill_transmit_type
+
+        ed = _FakeEchoData(self._beam([["CW", "LFM", "nan"],
+                                       ["CW", "CW", "CW"],
+                                       ["CW", "CW", "CW"]]))
+        with pytest.raises(ValueError, match="changes transmit type"):
+            fill_transmit_type(ed)

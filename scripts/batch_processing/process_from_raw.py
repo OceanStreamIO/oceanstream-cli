@@ -1016,8 +1016,12 @@ def compute_sv_day(
     # Compute Sv
     compute_kwargs = {}
     if cfg.raw.sonar_model == "EK80":
+        from oceanstream.echodata.compute.sv import fill_transmit_type
+
         compute_kwargs["waveform_mode"] = cfg.raw.waveform_mode
         compute_kwargs["encode_mode"] = cfg.raw.encode_mode
+        # Channels that ping in turn would otherwise be dropped (see fill_transmit_type).
+        fill_transmit_type(ed)
 
     # The combined EchoData is opened lazily; a GPU-enabled echopype would
     # materialise the whole day at once, so stay on the chunked CPU path.

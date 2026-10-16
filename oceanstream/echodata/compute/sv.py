@@ -16,6 +16,61 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MISSING_TRANSMIT_TYPES = {"", "nan", "none"}
+
+
+def fill_transmit_type(echodata: "EchoData") -> list[str]:
+    """Give every ping of a channel that channel's own transmit type.
+
+    An EK80 that pings its channels in turn leaves each channel empty at the other
+    channels' pings, and echopype records the transmit type there as "nan". echopype's
+    ``CalibrateEK80._get_chan_dict`` then reads the transmit type of the first ping only,
+    so every channel that did not transmit in that ping is dropped from Sv. Filling the
+    gaps with each channel's own value restores what that code assumes: one transmit
+    type per channel.
+
+    Returns the beam groups that were changed.
+
+    Raises:
+        ValueError: if a channel's transmit type changes between pings.
+    """
+    import numpy as np
+
+    changed = []
+    for group in [g for g in echodata.group_paths if g.startswith("Sonar/Beam_group")]:
+        beam = echodata[group]
+        if beam is None or "transmit_type" not in beam:
+            continue
+        original = beam["transmit_type"]
+        if "channel" not in original.dims or "ping_time" not in original.dims:
+            continue
+        tt = original.transpose("channel", ...).compute()
+        values = np.asarray(tt.values, dtype=object).reshape(tt.sizes["channel"], -1)
+        missing = np.array(
+            [[v is None or str(v).strip().lower() in _MISSING_TRANSMIT_TYPES for v in row]
+             for row in values],
+            dtype=bool,
+        )
+        if not missing.any():
+            continue
+        filled = values.copy()
+        for i, channel in enumerate(tt["channel"].values):
+            kinds = {str(v) for v in values[i][~missing[i]]}
+            if len(kinds) > 1:
+                raise ValueError(
+                    f"{group}: channel {channel} changes transmit type between pings "
+                    f"({sorted(kinds)}). Split the data by transmit type before computing Sv."
+                )
+            if kinds:
+                filled[i][missing[i]] = kinds.pop()
+        beam["transmit_type"] = tt.copy(
+            data=filled.reshape(tt.shape).astype(str)
+        ).transpose(*original.dims)
+        echodata[group] = beam
+        changed.append(group)
+        logger.info("Filled transmit_type gaps in %s (channels ping in turn)", group)
+    return changed
+
 
 def compute_sv(
     echodata_path: Path,
@@ -89,7 +144,8 @@ def compute_sv(
     if echodata.sonar_model == "EK80":
         compute_kwargs["waveform_mode"] = waveform_mode
         compute_kwargs["encode_mode"] = encode_mode
-    
+        fill_transmit_type(echodata)
+
     # Compute Sv
     logger.info("Computing Sv")
     ds_Sv = ep.calibrate.compute_Sv(echodata, **compute_kwargs)
@@ -164,7 +220,8 @@ def compute_sv_from_echodata(
     if echodata.sonar_model == "EK80":
         compute_kwargs["waveform_mode"] = waveform_mode
         compute_kwargs["encode_mode"] = encode_mode
-    
+        fill_transmit_type(echodata)
+
     ds_Sv = ep.calibrate.compute_Sv(echodata, **compute_kwargs)
     
     if add_depth:
