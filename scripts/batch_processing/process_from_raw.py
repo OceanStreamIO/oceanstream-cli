@@ -906,6 +906,34 @@ def _interpolate_gps_linear(ds_Sv, gps_df: pd.DataFrame):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: dict,
+                           cfg: PipelineConfig):
+    """Sv for channels that ping in turn, one channel at a time.
+
+    Each channel is calibrated on its own pings and recorded range only, then binned, and
+    the channels are joined back on the union of their pings. Calibrating the shared,
+    NaN-padded grid instead costs about 12 times the work and memory on RR2205.
+    """
+    import echopype as ep
+    import xarray as xr
+
+    from oceanstream.echodata.compute.sv import fill_transmit_type, select_channel
+
+    parts = []
+    for channel, pings in by_channel.items():
+        ed_ch = ep.open_converted(ed_zarr_path, chunks={})
+        n_samples = select_channel(ed_ch, channel, pings)
+        fill_transmit_type(ed_ch)
+        ed_ch = ed_ch.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
+        logger.info("  %s: %d pings, %d range samples", channel, int(pings.sum()), n_samples)
+        sv_ch = ep.calibrate.compute_Sv(ed_ch, **compute_kwargs)
+        if cfg.raw.sv_range_bin_m > 0:
+            sv_ch = _bin_sv_range(sv_ch, cfg.raw.sv_range_bin_m)
+        parts.append(sv_ch)
+    return xr.concat(parts, dim="channel", join="outer", data_vars="minimal",
+                     coords="minimal", compat="override", combine_attrs="override")
+
+
 def _bin_sv_range(ds_Sv, target_bin_m: float):
     """Average Sv into coarser range bins, channel by channel.
 
@@ -1015,11 +1043,13 @@ def compute_sv_day(
 
     # Compute Sv
     compute_kwargs = {}
+    by_channel = None
     if cfg.raw.sonar_model == "EK80":
-        from oceanstream.echodata.compute.sv import fill_transmit_type
+        from oceanstream.echodata.compute.sv import channel_pings, fill_transmit_type
 
         compute_kwargs["waveform_mode"] = cfg.raw.waveform_mode
         compute_kwargs["encode_mode"] = cfg.raw.encode_mode
+        by_channel = channel_pings(ed)
         # Channels that ping in turn would otherwise be dropped (see fill_transmit_type).
         fill_transmit_type(ed)
 
@@ -1036,10 +1066,12 @@ def compute_sv_day(
         logger.info("  Environment parameters for %s: %s", day_key, env_params)
 
     logger.info("  compute_Sv (waveform=%s, encode=%s)", cfg.raw.waveform_mode, cfg.raw.encode_mode)
-    ds_Sv = ep.calibrate.compute_Sv(ed, **compute_kwargs)
-
-    if cfg.raw.sv_range_bin_m > 0:
-        ds_Sv = _bin_sv_range(ds_Sv, cfg.raw.sv_range_bin_m)
+    if by_channel:
+        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg)
+    else:
+        ds_Sv = ep.calibrate.compute_Sv(ed, **compute_kwargs)
+        if cfg.raw.sv_range_bin_m > 0:
+            ds_Sv = _bin_sv_range(ds_Sv, cfg.raw.sv_range_bin_m)
 
     # Add depth variable from echo_range + transducer depth offset
     depth_offset = cfg.raw.depth_offset

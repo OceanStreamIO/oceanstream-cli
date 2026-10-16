@@ -582,3 +582,46 @@ class TestFillTransmitType:
                                        ["CW", "CW", "CW"]]))
         with pytest.raises(ValueError, match="changes transmit type"):
             fill_transmit_type(ed)
+
+
+class TestChannelSelection:
+    """Interleaved channels are calibrated on their own pings and range only."""
+
+    @staticmethod
+    def _beam():
+        import numpy as np
+        import xarray as xr
+
+        tt = np.array([["CW", "nan", "CW", "nan"], ["nan", "CW", "nan", "CW"]], dtype="<U3")
+        data = np.full((2, 4, 6), np.nan)
+        data[0, [0, 2], :6] = 1.0   # first channel: pings 0 and 2, six samples
+        data[1, [1, 3], :3] = 2.0   # second channel: pings 1 and 3, three samples
+        return xr.Dataset(
+            {"transmit_type": (("channel", "ping_time"), tt),
+             "backscatter_r": (("channel", "ping_time", "range_sample"), data)},
+            coords={"channel": ["a", "b"], "ping_time": [0, 1, 2, 3], "range_sample": range(6)},
+        )
+
+    def test_channel_pings(self):
+        from oceanstream.echodata.compute.sv import channel_pings
+
+        pings = channel_pings(_FakeEchoData(self._beam()))
+        assert pings["a"].tolist() == [True, False, True, False]
+        assert pings["b"].tolist() == [False, True, False, True]
+
+    def test_every_channel_pinging_needs_no_split(self):
+        from oceanstream.echodata.compute.sv import channel_pings
+
+        beam = self._beam()
+        beam["transmit_type"][:] = "CW"
+        assert channel_pings(_FakeEchoData(beam)) is None
+
+    def test_select_channel_keeps_its_pings_and_range(self):
+        from oceanstream.echodata.compute.sv import channel_pings, select_channel
+
+        ed = _FakeEchoData(self._beam())
+        pings = channel_pings(ed)
+        assert select_channel(ed, "b", pings["b"]) == 3
+        beam = ed["Sonar/Beam_group1"]
+        assert dict(beam.sizes) == {"channel": 1, "ping_time": 2, "range_sample": 3}
+        assert beam["ping_time"].values.tolist() == [1, 3]

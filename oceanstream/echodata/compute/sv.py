@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    import numpy as np
     import xarray as xr
     from echopype.echodata import EchoData
 
@@ -70,6 +71,52 @@ def fill_transmit_type(echodata: "EchoData") -> list[str]:
         changed.append(group)
         logger.info("Filled transmit_type gaps in %s (channels ping in turn)", group)
     return changed
+
+
+def channel_pings(
+    echodata: "EchoData", group: str = "Sonar/Beam_group1"
+) -> dict[str, "np.ndarray"] | None:
+    """The pings each channel transmitted in, or None when every channel pinged every time.
+
+    Read from ``transmit_type`` before :func:`fill_transmit_type` runs: a channel's
+    missing pings are the ones another channel transmitted in.
+    """
+    import numpy as np
+
+    beam = echodata[group]
+    if beam is None or "transmit_type" not in beam:
+        return None
+    tt = beam["transmit_type"].transpose("channel", "ping_time", ...).compute()
+    values = np.asarray(tt.values, dtype=object).reshape(tt.sizes["channel"], tt.sizes["ping_time"], -1)
+    pinged = np.array(
+        [[any(v is not None and str(v).strip().lower() not in _MISSING_TRANSMIT_TYPES
+              for v in cell) for cell in row] for row in values],
+        dtype=bool,
+    )
+    if pinged.all():
+        return None
+    return {str(ch): pinged[i] for i, ch in enumerate(tt["channel"].values)}
+
+
+def select_channel(
+    echodata: "EchoData", channel: str, pings: "np.ndarray", group: str = "Sonar/Beam_group1"
+) -> int:
+    """Restrict a beam group to one channel, its own pings and its own recorded range.
+
+    echopype stores channels that ping in turn on one grid, padded with NaN to the longest
+    range and to every channel's pings; for RR2205 that is 12 times the real data. Sv
+    computed on the selection is identical where the channel has data.
+
+    Returns the number of range samples kept.
+    """
+    import numpy as np
+
+    beam = echodata[group].sel(channel=[channel]).isel(ping_time=np.flatnonzero(pings))
+    first = beam["backscatter_r"].isel(ping_time=0)
+    valid = first.notnull().any([d for d in first.dims if d != "range_sample"]).values
+    n_samples = int(np.flatnonzero(valid).max()) + 1 if valid.any() else beam.sizes["range_sample"]
+    echodata[group] = beam.isel(range_sample=slice(0, n_samples))
+    return n_samples
 
 
 def compute_sv(
