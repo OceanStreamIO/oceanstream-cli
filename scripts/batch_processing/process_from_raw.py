@@ -930,8 +930,17 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
         if cfg.raw.sv_range_bin_m > 0:
             sv_ch = _bin_sv_range(sv_ch, cfg.raw.sv_range_bin_m)
         parts.append(sv_ch)
-    return xr.concat(parts, dim="channel", join="outer", data_vars="minimal",
-                     coords="minimal", compat="override", combine_attrs="override")
+    ds_Sv = xr.concat(parts, dim="channel", join="outer", data_vars="minimal",
+                      coords="minimal", compat="override", combine_attrs="override")
+    if cfg.raw.sv_range_bin_m > 0:
+        # Each part records only its own channel's bin factor.
+        import ast
+
+        factors = {}
+        for part in parts:
+            factors.update(ast.literal_eval(part["Sv"].attrs.get("range_bin_samples", "{}")))
+        ds_Sv["Sv"].attrs["range_bin_samples"] = str(factors)
+    return ds_Sv
 
 
 def _bin_sv_range(ds_Sv, target_bin_m: float):
