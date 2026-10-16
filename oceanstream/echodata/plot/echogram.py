@@ -344,6 +344,35 @@ def plot_sv_channel(
 plot_echogram = plot_sv_channel
 
 
+def break_at_gaps(
+    da: "xr.DataArray", xdim: str = "ping_time", factor: float = 5.0
+) -> "xr.DataArray":
+    """Insert empty pings at the edges of every long gap in *xdim*.
+
+    pcolormesh draws each ping up to the midpoint of its neighbour, so a ping before
+    a gap of hours is stretched across half of it, and one ping's profile shows up
+    as horizontal bands. Gaps longer than *factor* times the median ping interval get
+    an empty ping one interval after the last ping and one before the next.
+    """
+    import xarray as xr
+
+    if xdim not in da.dims or da.sizes[xdim] < 3:  # noqa: PLR2004
+        return da
+    times = da[xdim].values
+    steps = np.diff(times)
+    typical = np.median(steps)
+    gaps = np.flatnonzero(steps > factor * typical)
+    if gaps.size == 0:
+        return da
+    after = xr.full_like(da.isel({xdim: gaps}), np.nan).assign_coords(
+        {xdim: times[gaps] + typical}
+    )
+    before = xr.full_like(da.isel({xdim: gaps + 1}), np.nan).assign_coords(
+        {xdim: times[gaps + 1] - typical}
+    )
+    return xr.concat([da, after, before], dim=xdim).sortby(xdim)
+
+
 def prepare_channel_da(
     ds: Union["xr.Dataset", "xr.DataArray"],
     channel: Optional[int],
@@ -431,7 +460,12 @@ def prepare_channel_da(
         da_clean = da.dropna(dim=ydim, how="all")
         top = 0.0
         bot = float(da_clean.sizes[ydim])
-    
+
+    # Plot the channel's own pings only (channels that ping in turn leave the others
+    # empty), and leave recording gaps blank instead of stretching pings across them.
+    if "ping_time" in da_clean.dims:
+        da_clean = break_at_gaps(da_clean.dropna(dim="ping_time", how="all"))
+
     plotting_metadata = dict(
         ch_label=ch_label,
         safe_label=safe_label,

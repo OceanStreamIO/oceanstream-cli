@@ -796,3 +796,56 @@ class TestInterleavedChannels:
         off = build_full_mask(sample_sv_with_channel, stages=stages, return_stage_masks=False,
                               compact_pings=False)
         assert bool((auto == off).all())
+
+
+class TestInterleavedPruning:
+    """Pruning counts empty cells only within each channel's recorded range."""
+
+    def test_short_range_channel_keeps_its_pings(self):
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        ds = _interleaved_sv(n_pings=60, n_range=100)
+        # Channel b recorded only 15 % of the shared range: 85 % NaN on the full grid.
+        ds["Sv"][1, :, 15:] = np.nan
+        ds["echo_range"][1, :, 15:] = np.nan
+        pruned = drop_noisy_pings(ds, drop_threshold=0.8)
+        assert pruned.sizes["ping_time"] == 60
+
+    def test_dead_ping_is_still_dropped(self):
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        ds = _interleaved_sv(n_pings=60, n_range=100)
+        ds["Sv"][1, 7, :] = np.nan  # a channel-b ping whose every recorded cell was removed
+        pruned = drop_noisy_pings(ds, drop_threshold=0.8)
+        assert pruned.sizes["ping_time"] == 59
+        assert np.datetime64(ds["ping_time"].values[7]) not in pruned["ping_time"].values
+
+
+class TestBreakAtGaps:
+    """Echograms leave recording gaps blank instead of stretching pings across them."""
+
+    @staticmethod
+    def _da(times):
+        return xr.DataArray(
+            np.ones((len(times), 4)), dims=("ping_time", "depth"),
+            coords={"ping_time": times, "depth": np.arange(4.0)},
+        )
+
+    def test_long_gap_gets_empty_pings_at_both_edges(self):
+        from oceanstream.echodata.plot.echogram import break_at_gaps
+
+        times = np.concatenate([
+            pd.date_range("2022-07-02T20:00", periods=20, freq="8s").values,
+            pd.date_range("2022-07-02T23:50", periods=20, freq="8s").values,
+        ])
+        out = break_at_gaps(self._da(times))
+        assert out.sizes["ping_time"] == 42
+        empty = out["ping_time"].values[out.isnull().all("depth").values]
+        expected = np.array([times[19] + np.timedelta64(8, "s"), times[20] - np.timedelta64(8, "s")])
+        np.testing.assert_array_equal(empty, expected.astype("datetime64[ns]"))
+
+    def test_regular_sampling_is_unchanged(self):
+        from oceanstream.echodata.plot.echogram import break_at_gaps
+
+        da = self._da(pd.date_range("2022-07-02", periods=30, freq="8s").values)
+        assert break_at_gaps(da).identical(da)

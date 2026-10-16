@@ -666,9 +666,18 @@ def drop_noisy_pings(
     range_dim = range_dim[0]
     
     # Compute fraction NaN per ping_time
-    n_nan = ds[var_name].isnull().sum(dim=range_dim)
-    total = ds[var_name].sizes[range_dim]
-    frac_nan = n_nan / total
+    if "echo_range" in ds and channels_ping_in_turn(ds[var_name], range_dim):
+        # Count only the cells each channel recorded: on the shared grid a short-range
+        # channel is mostly NaN by construction, and a channel is empty at the other
+        # channels' pings, so those pings are left to the channels that transmitted.
+        recorded = ds["echo_range"].notnull()
+        n_recorded = recorded.sum(dim=range_dim)
+        n_nan = (ds[var_name].isnull() & recorded).sum(dim=range_dim)
+        frac_nan = (n_nan / n_recorded).where(n_recorded > 0)
+    else:
+        n_nan = ds[var_name].isnull().sum(dim=range_dim)
+        total = ds[var_name].sizes[range_dim]
+        frac_nan = n_nan / total
     
     # Reduce across channels. For multi-frequency data, "min" is correct: drop
     # only pings where ALL channels agree the ping is dead. Using "max" would

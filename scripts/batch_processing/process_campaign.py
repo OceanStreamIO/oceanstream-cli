@@ -1246,38 +1246,59 @@ def prune_day(
                 mean_linear = linear.mean(dim=reduce_dims, skipna=True)
             else:
                 mean_linear = linear
-            # Reduce channels: min across channels (least permissive — only flag
-            # pings that are elevated in ALL channels; single-freq interference
-            # is legit for a specific transducer).
-            if "channel" in mean_linear.dims:
-                mean_linear = mean_linear.min(dim="channel", skipna=True)
-            # Back to dB
-            mean_db = 10 * np.log10(mean_linear.compute().values)
+            from oceanstream.echodata.denoise.denoise import channels_ping_in_turn
 
-            finite = np.isfinite(mean_db)
-            if finite.sum() > 100:  # need enough pings for a stable median
-                median_db = float(np.median(mean_db[finite]))
-                elevated = np.zeros_like(mean_db, dtype=bool)
-                elevated[finite] = mean_db[finite] > (median_db + crosstalk_threshold_db)
+            if "channel" in mean_linear.dims and channels_ping_in_turn(ds_pruned["Sv"]):
+                # Channels that ping in turn: each ping holds one channel, and deep-band
+                # levels differ by frequency, so each channel is compared with its own median.
+                per_channel = 10 * np.log10(
+                    mean_linear.transpose("channel", "ping_time").compute().values
+                )
+                elevated = np.zeros(per_channel.shape[1], dtype=bool)
+                for row in per_channel:
+                    finite = np.isfinite(row)
+                    if finite.sum() > 100:
+                        elevated |= finite & (row > np.median(row[finite]) + crosstalk_threshold_db)
                 n_flagged = int(elevated.sum())
+                logger.info(
+                    "  Cross-talk detection [%d-%dm ref band, per channel]: flagging %d pings",
+                    int(crosstalk_ref_depth_min), int(crosstalk_ref_depth_max), n_flagged,
+                )
                 if n_flagged > 0:
-                    logger.info(
-                        "  Cross-talk detection [%d-%dm ref band]: median=%.1f dB, "
-                        "flagging %d pings > %.1f dB elevated",
-                        int(crosstalk_ref_depth_min), int(crosstalk_ref_depth_max),
-                        median_db, n_flagged, crosstalk_threshold_db,
-                    )
                     ds_pruned = ds_pruned.isel(ping_time=~elevated)
+            else:
+                # Reduce channels: min across channels (least permissive — only flag
+                # pings that are elevated in ALL channels; single-freq interference
+                # is legit for a specific transducer).
+                if "channel" in mean_linear.dims:
+                    mean_linear = mean_linear.min(dim="channel", skipna=True)
+                # Back to dB
+                mean_db = 10 * np.log10(mean_linear.compute().values)
+
+                finite = np.isfinite(mean_db)
+                if finite.sum() > 100:  # need enough pings for a stable median
+                    median_db = float(np.median(mean_db[finite]))
+                    elevated = np.zeros_like(mean_db, dtype=bool)
+                    elevated[finite] = mean_db[finite] > (median_db + crosstalk_threshold_db)
+                    n_flagged = int(elevated.sum())
+                    if n_flagged > 0:
+                        logger.info(
+                            "  Cross-talk detection [%d-%dm ref band]: median=%.1f dB, "
+                            "flagging %d pings > %.1f dB elevated",
+                            int(crosstalk_ref_depth_min), int(crosstalk_ref_depth_max),
+                            median_db, n_flagged, crosstalk_threshold_db,
+                        )
+                        ds_pruned = ds_pruned.isel(ping_time=~elevated)
+                    else:
+                        logger.info(
+                            "  Cross-talk detection: no pings flagged "
+                            "(all within %.1f dB of median=%.1f dB)",
+                            crosstalk_threshold_db, median_db,
+                        )
                 else:
                     logger.info(
-                        "  Cross-talk detection: no pings flagged "
-                        "(all within %.1f dB of median=%.1f dB)",
-                        crosstalk_threshold_db, median_db,
+                        "  Cross-talk detection skipped: too few finite reference-band pings"
                     )
-            else:
-                logger.info(
-                    "  Cross-talk detection skipped: too few finite reference-band pings"
-                )
         except Exception as e:
             logger.warning("  Cross-talk detection failed for %s/%s: %s — skipping", day_key, category, e)
 
