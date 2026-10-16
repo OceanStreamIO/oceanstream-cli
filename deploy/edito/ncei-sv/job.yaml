@@ -1,0 +1,62 @@
+# Sv for selected days of an NCEI EK80 cruise on an EDITO GPU node.
+#
+#   kubectl create configmap ncei-sv-scripts --from-file=deploy/edito/ncei-sv/run.sh \
+#       --from-file=deploy/edito/ncei-sv/ncei_fetch.py --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply --dry-run=server -f deploy/edito/ncei-sv/job.yaml && kubectl apply -f deploy/edito/ncei-sv/job.yaml
+#
+# CPU only, on a large-memory GPU node without a GPU request (no GPU quota used). Sized
+# from 2022-07-02 (7.6 GB raw): peak 51.4 GiB in stage 4 at 100-ping chunks. Memory
+# request equals the limit, so the Job is OOM-killed before it can push a shared GPU node
+# (Denoise Lab, basemap build) into eviction.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rr2205-sv
+  labels: {app: ncei-sv}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {app: ncei-sv}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      imagePullSecrets: [{name: acr-pull-secret}]
+      nodeSelector:
+        magnum.openstack.org/nodegroup: gpu-worker-cuda12
+      tolerations:
+        - {key: node.cloudferro.com/type, operator: Equal, value: gpu, effect: NoSchedule}
+      containers:
+        - name: sv
+          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          command: [bash, /scripts/run.sh]
+          envFrom:
+            - secretRef: {name: oceanstream-s3}
+          env:
+            - {name: CRUISE, value: RR2205}
+            - {name: SHIP, value: Roger_Revelle}
+            - {name: DAYS, value: "2022-07-02,2022-06-21,2022-06-30,2022-07-07,2022-07-12"}
+            - {name: INSTALL_CUPY, value: "0"}
+            - {name: REQUIRE_GPU, value: "0"}
+            - {name: BRANCH, value: feat/denoise-presets}
+            - {name: S3_PREFIX, value: r2r/RR2205}
+            - {name: NAV_URL, value: "https://www.ncei.noaa.gov/data/oceans/archive/arc0214/0280096/5.6/data/0-data/RR2205_613417_r2rnav/data/RR2205_1min.geoCSV"}
+            - {name: NAV_MD5, value: 97abf802a9502b620fd36d3f1ea967e8}
+            - {name: SV_RANGE_BIN_M, value: "0.18"}
+            - {name: CHUNK_PING_TIME, value: "50"}
+            - {name: DASK_WORKERS, value: "2"}
+            - {name: DASK_MEMORY, value: 24GB}
+            - {name: HOME, value: /work}
+          resources:
+            requests: {cpu: "8", memory: 72Gi, ephemeral-storage: 40Gi}
+            limits: {cpu: "14", memory: 72Gi, ephemeral-storage: 120Gi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: scripts
+          configMap: {name: ncei-sv-scripts, defaultMode: 0755}
+        - name: work
+          emptyDir: {sizeLimit: 110Gi}
