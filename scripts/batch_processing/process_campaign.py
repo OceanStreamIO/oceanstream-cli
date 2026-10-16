@@ -686,6 +686,22 @@ def denoise_day(
     # graph, overwhelming the scheduler and producing huge log output.
     with dask.config.set(scheduler="synchronous"):
 
+        if denoise_config.use_frequency_specific and denoise_config.frequency_params:
+            from oceanstream.echodata.presets import uncovered_frequencies
+
+            # A channel without parameters would be left out of every mask filter with
+            # only a warning, so stop before loading the day rather than publish it.
+            missing = uncovered_frequencies(
+                denoise_config.frequency_params, ds["frequency_nominal"].values.ravel()
+            )
+            if missing:
+                raise ValueError(
+                    f"{day_key}/{category}: the denoise preset has no parameters for "
+                    f"{', '.join(f'{f / 1000:g}' for f in missing)} kHz. Add a section per "
+                    "channel frequency, or pick a preset that covers them "
+                    "(`oceanstream process echodata presets match`)."
+                )
+
         logger.info("  Loading dataset into memory (%s/%s)", day_key, category)
         ds = ds.load()
 

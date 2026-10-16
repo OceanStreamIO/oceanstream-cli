@@ -2132,6 +2132,10 @@ if typer:
         
         typer.echo(f"[echodata] ✓ Generated {len(all_echograms)} echograms")
     
+    from oceanstream.echodata.presets.cli import presets_app
+
+    echodata_app.add_typer(presets_app, name="presets")
+
     # Register echodata app
     process_app.add_typer(echodata_app, name="echodata")
 

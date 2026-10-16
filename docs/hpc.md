@@ -74,11 +74,13 @@ python scripts/hpc/mirror_raw_to_s3.py --cruise-id C --gps-container gpsdata --b
 ./scripts/hpc/stage-raw.sh --cruise C --day D
 ./scripts/hpc/stage-raw.sh --cruise C --gps
 ./scripts/hpc/submit-day.sh --cruise C --day D --cpus 16 \
-    --denoise-config deploy/slurm/presets/<preset>.toml --preset-key <preset> \
+    --preset <preset> \
     -- <process_from_raw.py flags> --gps-dir "$HPC_STAGE/gps/C"
 ./scripts/hpc/push-products.sh --container C --day D
 python scripts/hpc/publish_stac.py --root s3://B/hpc/products/C --cruise-id C --days D
 ```
+
+`--preset` takes a key from the denoise preset library; see [denoise-presets.md](denoise-presets.md) for choosing and tuning one.
 
 `submit-day.sh --render-only` prints the job script, and `--test-only` asks
 Slurm for an estimated start time without submitting.

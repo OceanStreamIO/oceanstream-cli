@@ -6,12 +6,13 @@
 # $HPC_PRODUCTS_DIR/<output-container>/<day>/ for push-products.sh.
 #
 # Pipeline flags after `--` are passed through to process_from_raw.py.
-# --denoise-config takes a LOCAL path; the file is copied to the cluster.
+# --preset names a file in oceanstream/echodata/presets/library/; --denoise-config
+# takes any LOCAL path. Either way the file is copied to the cluster.
 #
 # Usage:
 #   ./scripts/hpc/submit-day.sh --cruise SD_X --day 2023-10-10 \
 #       [--cpus 16] [--constraint highmem] [--qos debug] [--time 02:00:00] \
-#       [--denoise-config presets/x.toml --preset-key x] [--render-only] [--detach] \
+#       [--preset x | --denoise-config x.toml --preset-key x] [--render-only] [--detach] \
 #       [-- --skip-pmtiles ...]
 #
 #   Several days as one Slurm job array (one day per task, at most K at once):
@@ -24,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CRUISE=""; DAY=""; CPUS=16; WALLTIME="03:00:00"; QOS="$HPC_QOS"
 CONSTRAINT="$HPC_CONSTRAINT"; PARTITION="$HPC_PARTITION"
-OUTPUT_CONTAINER=""; DENOISE_CONFIG=""; PRESET_KEY=""
+OUTPUT_CONTAINER=""; DENOISE_CONFIG=""; PRESET_KEY=""; PRESET=""
 PARALLEL_WORKERS=1; DASK_WORKERS=1; DASK_MEMORY=""
 RENDER_ONLY=0; DETACH=0; TEST_ONLY=0; DAYS=""; ARRAY_LIMIT=4
 PIPELINE_ARGS=()
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
         --output-container) OUTPUT_CONTAINER="${2:?}"; shift ;;
         --denoise-config)   DENOISE_CONFIG="${2:?}"; shift ;;
         --preset-key)       PRESET_KEY="${2:?}"; shift ;;
+        --preset)           PRESET="${2:?}"; shift ;;
         --parallel-workers) PARALLEL_WORKERS="${2:?}"; shift ;;
         --dask-workers)     DASK_WORKERS="${2:?}"; shift ;;
         --dask-memory)      DASK_MEMORY="${2:?}"; shift ;;
@@ -50,7 +52,7 @@ while [ $# -gt 0 ]; do
         --test-only)        TEST_ONLY=1 ;;
         --detach)           DETACH=1 ;;
         --)                 shift; PIPELINE_ARGS=("$@"); break ;;
-        -h|--help)          sed -n '2,17p' "$0" >&2; exit 0 ;;
+        -h|--help)          sed -n '2,19p' "$0" >&2; exit 0 ;;
         *)                  fail "Unknown argument: $1" ;;
     esac
     shift
@@ -78,6 +80,12 @@ MEM_BUDGET_GB=$(( CPUS * PER_CORE ))
 # Leave a quarter of the budget for the parent process and page cache.
 DASK_MEMORY="${DASK_MEMORY:-$(( MEM_BUDGET_GB * 3 / 4 / DASK_WORKERS ))GB}"
 
+if [ -n "$PRESET" ]; then
+    [ -z "$DENOISE_CONFIG" ] || fail "Use --preset or --denoise-config, not both"
+    DENOISE_CONFIG="$PROJECT_DIR/oceanstream/echodata/presets/library/${PRESET}.toml"
+    [ -f "$DENOISE_CONFIG" ] || fail "No preset '$PRESET' in oceanstream/echodata/presets/library/"
+    PRESET_KEY="${PRESET_KEY:-$PRESET}"
+fi
 if [ -n "$DENOISE_CONFIG" ]; then
     [ -f "$DENOISE_CONFIG" ] || fail "No such file: $DENOISE_CONFIG"
     REMOTE_CFG="$HPC_ROOT/presets/$(basename "$DENOISE_CONFIG")"

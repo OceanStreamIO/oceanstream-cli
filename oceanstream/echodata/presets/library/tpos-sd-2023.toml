@@ -1,0 +1,44 @@
+# Saildrone TPOS 2023: the preset behind the published SD_TPOS2023_v03 products.
+
+[preset]
+key = "tpos-sd-2023"
+name = "TPOS 2023, Saildrone"
+status = "production"
+summary = "Saildrone EK80 at 38 and 200 kHz over the deep central tropical Pacific."
+description = """
+The parameters of the SD_TPOS2023_v03 reference runs, unchanged. They equal ryan-inspired at 38 and 200 kHz. The run's file also set sound_absorption, depth_stat and depth_quantile; the batch pipeline never reads those, so they are left out here without changing a result.
+
+Conditions: Saildrone Explorer USVs with a hull-mounted Simrad EK80 WBT Mini, transducer depth about 1.9 m, CW short and long pulses, water about 4500 m deep, oligotrophic, a weak deep scattering layer at 300-600 m by day and 50-200 m at night. The 38 kHz attenuation reference band (400-500 m) sits in that layer.
+"""
+derived_from = "ryan-inspired"
+
+[preset.applies_to]
+platforms = ["usv"]
+regimes = ["open-ocean"]
+water_depth_m = [4000.0, 5000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT Mini"]
+region = "Central tropical Pacific"
+
+[[preset.validations]]
+cruise = "SD_TPOS2023_v03"
+days = ["2023-05-30/2023-11-05"]
+outcome = "adopted"
+notes = "All 141 days with raw data, processed on MareNostrum 5 in September 2026 and published as the reference products."
+reference = "s3://oceanstream-bucket/hpc/products/SD_TPOS2023_v03/collection.json"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }

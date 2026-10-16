@@ -1,0 +1,65 @@
+# Draft for hull-mounted five-frequency EK80 on research vessels in deep water. Untested.
+
+[preset]
+key = "research-vessel-open-ocean"
+name = "Research vessel, open ocean, 18-200 kHz"
+status = "draft"
+summary = "Starting point for hull-mounted EK80 at 18, 38, 70, 120 and 200 kHz on deep-water research cruises."
+description = """
+Not checked on survey data. 38, 120 and 200 kHz are ryan-inspired. ryan-inspired has no 18 or 70 kHz, so those two come from the pipeline's built-in FREQUENCY_PRESETS (oceanstream/echodata/config.py), which descend from the earlier Saildrone processing code. Without explicit sections the pipeline would leave those channels un-denoised, not fall back.
+
+Open questions to settle on the first test days:
+- The 18 and 70 kHz values do not follow the ryan-inspired logic: 15 attenuation side pings against 60-100, a 3 dB background SNR threshold against 5-6 dB.
+- Ship noise. Research vessels sit on station for hours with thrusters, winch and a CTD package in or near the beam, which the Saildrone and buoy presets never saw. Transit days and station days may need different presets.
+- Reference bands. The 38 kHz attenuation band (400-500 m) assumes a deep scattering layer there; check it on day and night pings.
+- Range. Ships record far deeper than a Saildrone (RR2205 has 95,238 range samples per ping), so the background estimate covers more noise-dominated range.
+"""
+derived_from = "ryan-inspired"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "RR2205"
+days = []
+outcome = "pending"
+notes = "First test survey: R/V Roger Revelle, US GO-SHIP P02, Honolulu to San Diego, 13 June to 16 July 2022. EK80 at 18, 38, 70, 120 and 200 kHz, CW 1.024 ms, complex samples; raw at NCEI. Test days not chosen yet."
+reference = "s3://noaa-wcsd-pds/data/raw/Roger_Revelle/RR2205/EK80/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 25, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 35, ping_window = 60, SNR_threshold = "3.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 20, thr_dB = 7.0, maxts = -35.0 }
+background  = { range_window = 25, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 10.0, maxts = -35.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }

@@ -34,6 +34,7 @@ COPY oceanstream/__init__.py oceanstream/__init__.py
 COPY oceanstream/stac/ oceanstream/stac/
 COPY scripts/hpc/ scripts/hpc/
 COPY deploy/slurm/ deploy/slurm/
+COPY oceanstream/echodata/presets/library/ oceanstream/echodata/presets/library/
 COPY requirements-hpc.txt pyproject.toml ./
 RUN rm -f scripts/hpc/site.env && tippecanoe --version
 

@@ -1,0 +1,47 @@
+# Ryan-inspired open-ocean baseline. The other presets are derived from it.
+
+[preset]
+key = "ryan-inspired"
+name = "Ryan-inspired open-ocean baseline"
+status = "reference"
+summary = "Open-ocean starting point after Ryan et al. (2015), at 38, 120, 200 and 333 kHz."
+description = """
+Adapted from Ryan, Downie, Kloser and Keith (2015), "Reducing bias due to noise and attenuation in open-ocean echo integration data", ICES Journal of Marine Science 72(8): 2482-2493, doi:10.1093/icesjms/fsv121. The same values are the Denoise Lab's built-in preset of the same key.
+
+It is not the paper's method. The masks are OR-combined rather than applied as a sequential cascade, transient noise uses the Fielding detector, and background noise follows De Robertis and Higginbottom (2007). Several 38 kHz thresholds are higher than the paper's: impulse 12 dB (paper 10), attenuation 10 dB (paper 8), transient 15 dB from 200 m (paper 12 dB from 250 m).
+
+The attenuation reference bands assume a deep scattering layer at 400-500 m at 38 kHz. The band must contain scatterers, so move it for any survey whose layers sit elsewhere. The 120 and 333 kHz values are scaled for higher absorption and have not been checked on survey data.
+"""
+derived_from = ""
+
+[preset.applies_to]
+regimes = ["open-ocean"]
+pulse_mode = "CW"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 10.0, maxts = -35.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }
+
+[echodata.denoise.frequency_params.333000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1], threshold_db = 7.0 }
+attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 40, threshold = 5.0 }
+transient   = { exclude_above = 50.0, depth_bin = 5.0, n_pings = 20, thr_dB = 8.0, maxts = -35.0 }
+background  = { range_window = 10, ping_window = 30, SNR_threshold = "6.0dB", background_noise_max = "-105.0dB" }

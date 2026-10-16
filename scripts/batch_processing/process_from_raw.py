@@ -1866,6 +1866,11 @@ def parse_args() -> PipelineConfig:
         help="TOML file with per-frequency denoise parameters (loads EchodataConfig.from_toml)",
     )
     parser.add_argument(
+        "--preset",
+        help="Denoise preset from the library (`oceanstream process echodata presets list`). "
+             "Sets --denoise-config to the library file and --preset-key to the key.",
+    )
+    parser.add_argument(
         "--keep-raw", action="store_true",
         help="Keep downloaded raw files for re-use (default: delete after conversion)",
     )
@@ -2108,6 +2113,17 @@ def parse_args() -> PipelineConfig:
     )
 
     args = parser.parse_args()
+
+    if args.preset:
+        if args.denoise_config:
+            parser.error("--preset and --denoise-config are mutually exclusive")
+        from oceanstream.echodata.presets import PresetError, preset_path
+
+        try:
+            args.denoise_config = str(preset_path(args.preset))
+        except PresetError as e:
+            parser.error(str(e))
+        args.preset_key = args.preset_key or args.preset
 
     # Build config
     if args.local_test:

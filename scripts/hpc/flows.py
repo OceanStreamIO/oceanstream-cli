@@ -33,7 +33,7 @@ from prefect import flow, get_run_logger, task
 
 APP = Path(os.environ.get("OCEANSTREAM_SOURCE_PATH", Path(__file__).resolve().parents[2]))
 SCRIPTS = APP / "scripts" / "hpc"
-PRESETS = APP / "deploy" / "slurm" / "presets"
+PRESETS = APP / "oceanstream" / "echodata" / "presets" / "library"
 
 # Queue wait dominates and is priority-driven; the work itself is ~30 min/day.
 SYNC_TIMEOUT_S = 30 * 60

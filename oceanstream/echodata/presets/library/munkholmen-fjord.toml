@@ -1,0 +1,47 @@
+# Munkholmen buoy, Trondheim Fjord: the preset behind the published MUNKHOLMEN_2026 products.
+
+[preset]
+key = "munkholmen-fjord"
+name = "Munkholmen fjord buoy"
+status = "production"
+summary = "Stationary buoy EK80 at 38 and 200 kHz over a 76 m deep fjord."
+description = """
+The ryan-inspired sequence with every reference layer moved inside the 0-70 m water column. The open-ocean values put the attenuation band at 400-500 m and the transient start at 200-250 m, below the seabed here.
+
+Conditions: a stationary surface buoy with a Simrad EK80 WBT Mini and an ES38-18|200-18CR transducer, CW (1.024 ms at 38 kHz, 0.256 ms at 200 kHz), seabed at about 76 m range. The 200 kHz noise floor steps between about -102 and -92 dB re 1 W over minutes, so its noise ceiling is -85 dB to let the estimate follow it.
+
+The file it came from omits maxts; the runs used the filter default of -35 dB, written out here.
+"""
+derived_from = "ryan-inspired"
+
+[preset.applies_to]
+platforms = ["buoy"]
+regimes = ["fjord"]
+water_depth_m = [60.0, 90.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT Mini"]
+region = "Trondheim Fjord, Norway"
+seasons = ["spring"]
+
+[[preset.validations]]
+cruise = "MUNKHOLMEN_2026"
+days = ["2026-04-10/2026-04-14"]
+outcome = "adopted"
+notes = "The published products. A trial with impulse 8 dB and transient 6 dB at both frequencies (Denoise Lab preset munkholmen-fjord-sensitive) only thinned the 200 kHz full-depth stripes after 11:00 on 13 April and changed nothing else, so these thresholds stayed. Mask filters remove well under 1 % of cells; background removal does almost all the work, 84-91 % of the 200 kHz water column."
+reference = "s3://oceanstream-bucket/munkholmen/products/collection.json"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 60.0, num_side_pings = 50, threshold = 10.0 }
+transient   = { exclude_above = 20.0, depth_bin = 5.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 20.0, lower_limit_sl = 50.0, num_side_pings = 50, threshold = 10.0 }
+transient   = { exclude_above = 20.0, depth_bin = 5.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-85.0dB" }

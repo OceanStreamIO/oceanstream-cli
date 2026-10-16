@@ -1,0 +1,46 @@
+# Lower-threshold variant for the oligotrophic tropical Pacific. Not used for published products.
+
+[preset]
+key = "tropical-pacific-v3"
+name = "Tropical Pacific, low thresholds (v3)"
+status = "experimental"
+summary = "TPOS-style survey with lower thresholds, to keep weak scattering in oligotrophic water."
+description = """
+Third iteration of a TPOS 2023 tuning; the full record is scripts/batch_processing/tropical_pacific_denoise_v3.toml. Against ryan-inspired it lowers the thresholds (38 kHz impulse 10 dB, attenuation 8 dB, transient 8 dB from 250 m; 200 kHz transient 7 dB from 80 m), widens the 38 kHz attenuation band to 400-600 m and drops the background SNR threshold to 3 dB, to keep weak scattering in low-backscatter water.
+
+Lesson from v2, which failed: the attenuation filter compares each ping's median in the reference band against its neighbours, so the band must contain scatterers. v2 moved the 38 kHz band to 900-1300 m, below the scattering layer, where Sv is the receiver's electronic noise floor and does not change when bubbles cover the transducer. The filter then flagged nothing (0.2 % of cells in v1, 0.0 % in v2 on 2023-10-09). Ryan et al. place the band deep where a deep layer exists; in oligotrophic water it must include the scattering layer.
+
+The 08:00 UTC "attenuation event" on 2023-10-09 that motivated part of the tuning was a missing raw file, not an acoustic event.
+"""
+derived_from = "ryan-inspired"
+
+[preset.applies_to]
+platforms = ["usv"]
+regimes = ["open-ocean"]
+water_depth_m = [4000.0, 5000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT Mini"]
+region = "Central tropical Pacific"
+
+[[preset.validations]]
+cruise = "SD_TPOS2023_v03"
+days = ["2023-10-09"]
+outcome = "pending"
+notes = "Compared with v1 and v2 on this day only. The reference runs used tpos-sd-2023, so it has not been checked across the cruise."
+reference = "scripts/batch_processing/tropical_pacific_denoise_v3.toml"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 600.0, num_side_pings = 100, threshold = 8.0 }
+transient   = { exclude_above = 250.0, depth_bin = 20.0, n_pings = 30, thr_dB = 8.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 80.0, depth_bin = 10.0, n_pings = 20, thr_dB = 7.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "3.0dB", background_noise_max = "-110.0dB" }
