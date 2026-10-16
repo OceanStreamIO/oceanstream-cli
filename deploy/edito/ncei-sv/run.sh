@@ -16,12 +16,18 @@
 # GPU (keeping them), CPU only, then GPU again. The last two do identical work,
 # so their times compare like for like, and their outputs must agree.
 #
+# MODE=denoise skips the downloads and runs the pipeline from stage 5 on the stored
+# Sv with $PRESET into the container denoised-$PRESET, through echograms, then writes
+# per-segment statistics (split_stats.py) for each day.
+#
 # Logs, per-run metrics and the GPU/CPU comparison go to
 # s3://$OCEANSTREAM_S3_BUCKET/$S3_PREFIX/sv-runs/<run id>/.
 # =============================================================================
 set -uo pipefail
 
-: "${CRUISE:?}" "${SHIP:?}" "${DAYS:?}" "${NAV_URL:?}"
+MODE="${MODE:-sv}"
+: "${CRUISE:?}" "${DAYS:?}"
+if [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"; else : "${PRESET:?}"; fi
 : "${OCEANSTREAM_S3_BUCKET:?}" "${AWS_ENDPOINT_URL:?}"
 BRANCH="${BRANCH:-main}"
 PREFIX="${S3_PREFIX:-r2r/$CRUISE}"
@@ -129,10 +135,12 @@ printf '{"run_id": "%s", "branch": "%s", "commit": "%s", "days": "%s"}\n' \
     "$RUN_ID" "$BRANCH" "$COMMIT" "$DAYS" > "$LOGS/run.json"
 
 # -- navigation ------------------------------------------------------------------------
-log "navigation"
-fetch nav --url "$NAV_URL" --md5 "${NAV_MD5:-}" --dest "$W/gps/$CRUISE" | tee "$LOGS/nav.json" \
-    || { log "navigation failed"; exit 4; }
-fetch put "$W/gps/$CRUISE" --bucket "$OCEANSTREAM_S3_BUCKET" --key "$PREFIX/nav" || exit 4
+if [ "$MODE" = sv ]; then
+    log "navigation"
+    fetch nav --url "$NAV_URL" --md5 "${NAV_MD5:-}" --dest "$W/gps/$CRUISE" | tee "$LOGS/nav.json" \
+        || { log "navigation failed"; exit 4; }
+    fetch put "$W/gps/$CRUISE" --bucket "$OCEANSTREAM_S3_BUCKET" --key "$PREFIX/nav" || exit 4
+fi
 
 # -- Sv -------------------------------------------------------------------------------
 # run_sv DAY CONTAINER TAG [extra pipeline args]; appends a line to metrics.jsonl.
@@ -160,7 +168,44 @@ run_sv() {
     return "$rc"
 }
 
+# run_denoise DAY: stages 5-9 from the stored Sv; appends to metrics.jsonl.
+DENOISED="denoised-${PRESET:-}"
+run_denoise() {
+    local day="$1" t0 t1 rc
+    t0="$(date +%s)"
+    python -u "$PIPELINE" --cruise-id "$CRUISE" --start-date "$day" --end-date "$day" \
+        --expected-categories short_pulse --force \
+        --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
+        --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
+        --resume-stage 5 --sv-source-container "${SV_CONTAINER:-sv}" --output-container "$DENOISED" \
+        --preset "$PRESET" --emit-denoise-diagnostics --stop-after-stage 9 \
+        --skip-nasc --skip-pmtiles --skip-combined-echograms --skip-campaign-echograms \
+        --n-workers "${DASK_WORKERS:-2}" --memory-limit "${DASK_MEMORY:-20GB}" \
+        ${PIPELINE_ARGS:-} > "$LOGS/$day-denoise.log" 2>&1
+    rc=$?
+    t1="$(date +%s)"
+    printf '{"day": "%s", "run": "denoise", "preset": "%s", "exit": %d, "seconds": %d, "usage": %s}\n' \
+        "$day" "$PRESET" "$rc" "$((t1 - t0))" "$(summarise "$t0" "$t1")" | tee -a "$LOGS/metrics.jsonl"
+    tail -5 "$LOGS/$day-denoise.log"
+    return "$rc"
+}
+
 FAILED=0
+if [ "$MODE" = denoise ]; then
+    for day in ${DAYS//,/ }; do
+        log "== $day: denoise with $PRESET"
+        if run_denoise "$day"; then
+            python -u "$SCRIPTS/split_stats.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
+                --denoised-container "$DENOISED" --out "$LOGS/$day-segments.json" || FAILED=1
+        else
+            FAILED=1
+        fi
+        upload_logs
+    done
+    log "done, failed=$FAILED"
+    exit "$FAILED"
+fi
+
 for day in ${DAYS//,/ }; do
     log "== $day: download"
     if ! fetch raw --ship "$SHIP" --cruise "$CRUISE" --day "$day" --dest "$W/raw/$day" \

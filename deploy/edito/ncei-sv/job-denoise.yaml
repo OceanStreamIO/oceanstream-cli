@@ -1,0 +1,61 @@
+# Sv for selected days of an NCEI EK80 cruise on an EDITO GPU node.
+#
+#   kubectl create configmap ncei-sv-scripts --from-file=deploy/edito/ncei-sv/run.sh \
+#       --from-file=deploy/edito/ncei-sv/ncei_fetch.py \
+#       --from-file=deploy/edito/ncei-sv/split_stats.py --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply --dry-run=server -f deploy/edito/ncei-sv/job-denoise.yaml && kubectl apply -f deploy/edito/ncei-sv/job-denoise.yaml
+#
+# Denoise the stored Sv of the test days with one preset (stages 5-9), and split the
+# per-filter statistics by station, transit and transition. CPU only, on a large-memory
+# GPU node without a GPU request. Memory
+# request equals the limit, so the Job is OOM-killed before it can push a shared GPU node
+# (Denoise Lab, basemap build) into eviction.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rr2205-denoise
+  labels: {app: ncei-sv}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {app: ncei-sv}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      imagePullSecrets: [{name: acr-pull-secret}]
+      nodeSelector:
+        magnum.openstack.org/nodegroup: gpu-worker-cuda12
+      tolerations:
+        - {key: node.cloudferro.com/type, operator: Equal, value: gpu, effect: NoSchedule}
+      containers:
+        - name: sv
+          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          command: [bash, /scripts/run.sh]
+          envFrom:
+            - secretRef: {name: oceanstream-s3}
+          env:
+            - {name: CRUISE, value: RR2205}
+            - {name: MODE, value: denoise}
+            - {name: PRESET, value: research-vessel-open-ocean}
+            - {name: DAYS, value: "2022-07-02,2022-06-21,2022-06-30,2022-07-07,2022-07-12"}
+            - {name: INSTALL_CUPY, value: "0"}
+            - {name: REQUIRE_GPU, value: "0"}
+            - {name: BRANCH, value: feat/denoise-presets}
+            - {name: S3_PREFIX, value: r2r/RR2205}
+            - {name: DASK_WORKERS, value: "2"}
+            - {name: DASK_MEMORY, value: 24GB}
+            - {name: HOME, value: /work}
+          resources:
+            requests: {cpu: "8", memory: 56Gi, ephemeral-storage: 10Gi}
+            limits: {cpu: "14", memory: 56Gi, ephemeral-storage: 30Gi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: scripts
+          configMap: {name: ncei-sv-scripts, defaultMode: 0755}
+        - name: work
+          emptyDir: {sizeLimit: 25Gi}
