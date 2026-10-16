@@ -751,10 +751,18 @@ def denoise_day(
                 bgn_freq_params = None
             bgn_global = denoise_config.to_background_params()
 
+            from oceanstream.echodata.denoise.denoise import (
+                channels_ping_in_turn,
+                compact_channel,
+                expand_channel,
+            )
+
             diag_by_channel = {e["channel"]: e for e in diag_channels}
             before = ds_denoised["Sv"]
             corrected = np.empty(before.shape, dtype=before.dtype)
             channel_axis = before.dims.index("channel")
+            # Channels that ping in turn: ping_window must count the channel's own pings.
+            compact = channels_ping_in_turn(before)
             levels = []
             for index, label in enumerate(ds_denoised["channel"].values):
                 # A slice, not a label list: views, not per-channel copies.
@@ -768,13 +776,23 @@ def denoise_day(
                     opts = bgn_global
                 snr = products.parse_db(opts.get("SNR_threshold", "3.0dB"))
 
-                level = products.estimate_background_level(
-                    ch_ds,
-                    ping_num=opts.get("ping_window", 50),
-                    range_sample_num=opts.get("range_window", 20),
-                    background_noise_max=products.parse_db(opts.get("background_noise_max")),
-                )
-                out = products.background_corrected(ch_ds["Sv"], level, ch_ds, snr)
+                work = ch_ds
+                if compact:
+                    work, ping_idx, n_range = compact_channel(ch_ds)
+                if work.sizes["ping_time"] == 0:
+                    level = xr.full_like(ch_ds["Sv"].isel(range_sample=0, drop=True), np.nan)
+                    out = xr.full_like(ch_ds["Sv"], np.nan)
+                else:
+                    level = products.estimate_background_level(
+                        work,
+                        ping_num=opts.get("ping_window", 50),
+                        range_sample_num=opts.get("range_window", 20),
+                        background_noise_max=products.parse_db(opts.get("background_noise_max")),
+                    )
+                    out = products.background_corrected(work["Sv"], level, work, snr)
+                    if compact:
+                        out = expand_channel(out, ch_ds["Sv"], ping_idx, n_range, np.nan)
+                        level = level.reindex(ping_time=ch_ds["ping_time"])
                 out = out.transpose(*before.dims).values
                 if emit_diagnostics:
                     import denoise_diagnostics as _diag

@@ -78,6 +78,64 @@ def _params_for_channel(
     return dict(entry) if isinstance(entry, Mapping) else entry
 
 
+def channels_ping_in_turn(sv: "xr.DataArray", range_dim: str = "range_sample") -> bool:
+    """True when the channels transmit in turn rather than together.
+
+    A multiplexed echosounder leaves each channel empty at the pings of the other
+    channels. Every ping-window parameter then counts empty pings (a 50-ping window
+    holds 10 real pings with five channels), and a ping-lag comparison meets an empty
+    neighbour. Detected as fewer than half of the pings that hold any data holding data
+    from two or more channels.
+    """
+    if "channel" not in sv.dims or sv.sizes["channel"] < 2:  # noqa: PLR2004
+        return False
+    channels_with_data = sv.notnull().any(range_dim).sum("channel").values
+    used = channels_with_data > 0
+    if not used.any():
+        return False
+    return bool((channels_with_data[used] >= 2).mean() < 0.5)  # noqa: PLR2004
+
+
+def compact_channel(
+    ch_ds: "xr.Dataset", var_name: str = "Sv", range_dim: str = "range_sample"
+) -> tuple["xr.Dataset", np.ndarray, int]:
+    """One channel restricted to the pings it transmitted in and the range it recorded.
+
+    Returns the compacted dataset, the indices of the kept pings and the number of range
+    samples kept, for :func:`expand_channel`.
+    """
+    finite = ch_ds[var_name].notnull()
+    ping_has = finite.any([d for d in finite.dims if d != "ping_time"]).values
+    range_has = finite.any([d for d in finite.dims if d != range_dim]).values
+    ping_idx = np.flatnonzero(ping_has)
+    n_range = int(np.flatnonzero(range_has).max()) + 1 if range_has.any() else 0
+    compact = ch_ds.isel({"ping_time": ping_idx, range_dim: slice(0, n_range)})
+    return compact, ping_idx, n_range
+
+
+def expand_channel(
+    values: "xr.DataArray",
+    reference: "xr.DataArray",
+    ping_idx: np.ndarray,
+    n_range: int,
+    fill_value,
+    range_dim: str = "range_sample",
+) -> "xr.DataArray":
+    """Put a compacted channel's result back on *reference*'s pings and range."""
+    import xarray as xr
+
+    out = xr.DataArray(
+        np.full(reference.shape, fill_value, dtype=np.asarray(values).dtype),
+        dims=reference.dims,
+        coords=reference.coords,
+    )
+    index = {"ping_time": ping_idx}
+    if range_dim in reference.dims:
+        index[range_dim] = slice(0, n_range)
+    out[index] = values.transpose(*reference.dims).values
+    return out
+
+
 def apply_denoising(
     sv_dataset: Union[Path, "xr.Dataset"],
     methods: list[str] = None,
@@ -191,6 +249,7 @@ def build_full_mask(
     mask_unfeasible: bool = False,
     pulse_length: str | None = None,
     return_status: bool = False,
+    compact_pings: bool | None = None,
 ) -> Union["xr.DataArray", tuple["xr.DataArray", dict]]:
     """Build combined noise mask using per-channel processing.
 
@@ -228,6 +287,10 @@ def build_full_mask(
             dispatch.
         return_status: If True, also return a per-stage/per-channel execution
             status dict (``"ran"``, ``"skipped_no_params"``, ``"failed: ..."``).
+        compact_pings: Run each filter on the channel's own pings and recorded range
+            only, then expand the masks back. ``None`` (default) does this when the
+            channels ping in turn (:func:`channels_ping_in_turn`), so data whose
+            channels ping together is processed exactly as before.
 
     Returns:
         Combined mask DataArray. Extra elements are appended in the order
@@ -291,24 +354,40 @@ def build_full_mask(
     stage_status: dict[str, dict[str, str]] = {name: {} for name in stages}
     ch_masks: list[xr.DataArray] = []
 
+    range_dim = next((d for d in ds[var_name].dims if d not in ("channel", "ping_time")), None)
+    if compact_pings is None:
+        compact_pings = range_dim is not None and channels_ping_in_turn(ds[var_name], range_dim)
+    if compact_pings:
+        logger.info("Channels ping in turn: each channel is filtered on its own pings and range")
+
     for ch in range(n_ch):
         ch_ds = ds.isel(channel=ch)
         reference = ds[var_name].isel(channel=ch)
         ch_label = str(ds["channel"].values[ch])
         stage_or = None
 
+        work_ds, work_ref = ch_ds, reference
+        if compact_pings:
+            work_ds, ping_idx, n_range = compact_channel(ch_ds, var_name, range_dim)
+            work_ref = work_ds[var_name]
+            if work_ds.sizes["ping_time"] == 0:
+                for stage_name in stages:
+                    stage_status[stage_name][ch_label] = "no_data"
+
         for stage_name, spec in stages.items():
             fn = spec["fn"]
             param_sets = spec["param_sets"]
+            if stage_status[stage_name].get(ch_label) == "no_data":
+                continue
 
             # Resolve parameters for this channel
-            pars = _params_for_channel(param_sets, ch_ds, pulse_length)
+            pars = _params_for_channel(param_sets, work_ds, pulse_length)
             if pars is None:
                 stage_status[stage_name][ch_label] = "skipped_no_params"
                 continue
 
             try:
-                result = fn(ch_ds, pars)
+                result = fn(work_ds, pars)
             except Exception as e:
                 logger.warning(
                     f"Error computing {stage_name} mask for channel {ch}: {e}"
@@ -330,8 +409,12 @@ def build_full_mask(
                 continue
 
             # Align coordinates
-            stage_mask = stage_mask.broadcast_like(reference)
+            stage_mask = stage_mask.broadcast_like(work_ref)
             stage_mask = stage_mask.reset_coords(drop=True)
+            if compact_pings:
+                stage_mask = expand_channel(
+                    stage_mask.astype(bool), reference, ping_idx, n_range, False, range_dim
+                ).reset_coords(drop=True)
             for cname in reference.coords:
                 if cname in stage_mask.dims or cname == "channel":
                     continue

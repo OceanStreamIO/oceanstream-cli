@@ -723,3 +723,76 @@ class TestBuildFullMaskFrequencySpecific:
 
         assert mask is not None
         assert "background" in stage_masks
+
+
+def _interleaved_sv(n_pings=60, n_range=100, spike_ping=30):
+    """Two channels that ping in turn; channel a carries a one-ping spike.
+
+    Channel b records half the range, as a higher-frequency channel would.
+    """
+    rng = np.random.default_rng(0)
+    sv = np.full((2, n_pings, n_range), np.nan)
+    sv[0, 0::2, :] = -70 + rng.normal(0, 0.5, (n_pings // 2, n_range))
+    sv[1, 1::2, : n_range // 2] = -65 + rng.normal(0, 0.5, (n_pings // 2, n_range // 2))
+    sv[0, spike_ping, :] += 30
+    echo_range = np.where(np.isnan(sv), np.nan, np.arange(n_range) * 0.5)
+    return xr.Dataset(
+        {
+            "Sv": (["channel", "ping_time", "range_sample"], sv),
+            "echo_range": (["channel", "ping_time", "range_sample"], echo_range),
+        },
+        coords={
+            "channel": ["a", "b"],
+            "ping_time": pd.date_range("2022-06-27", periods=n_pings, freq="8s"),
+            "range_sample": np.arange(n_range),
+        },
+    )
+
+
+class TestInterleavedChannels:
+    """Filters must see each channel's own pings when the channels ping in turn."""
+
+    def test_detection(self, sample_sv_with_channel):
+        from oceanstream.echodata.denoise.denoise import channels_ping_in_turn
+
+        assert channels_ping_in_turn(_interleaved_sv()["Sv"])
+        assert not channels_ping_in_turn(sample_sv_with_channel["Sv"], range_dim="depth")
+
+    def test_compact_and_expand_round_trip(self):
+        from oceanstream.echodata.denoise.denoise import compact_channel, expand_channel
+
+        ds = _interleaved_sv()
+        ch = ds.isel(channel=1)
+        compact, ping_idx, n_range = compact_channel(ch)
+        assert dict(compact["Sv"].sizes) == {"ping_time": 30, "range_sample": 50}
+        assert ping_idx.tolist() == list(range(1, 60, 2))
+        back = expand_channel(compact["Sv"], ch["Sv"], ping_idx, n_range, np.nan)
+        np.testing.assert_array_equal(back.values, ch["Sv"].values)
+
+    @pytest.mark.parametrize(("compact_pings", "caught"), [(None, True), (False, False)])
+    def test_impulse_spike_needs_the_channel_own_neighbours(self, compact_pings, caught):
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        ds = _interleaved_sv(spike_ping=30)
+        stages = {"impulse": {"fn": impulse_noise_mask,
+                              "param_sets": {"vertical_bin_size": "1m", "ping_lags": [1],
+                                             "threshold_db": 10.0}}}
+        _, cubes = build_full_mask(ds, stages=stages, compact_pings=compact_pings)
+        spike = cubes["impulse"].isel(channel=0, ping_time=30)
+        assert bool(spike.mean() > 0.9) is caught
+        # Masks come back on the shared grid, never flagging cells without data.
+        assert cubes["impulse"].sizes == ds["Sv"].sizes
+        assert not bool((cubes["impulse"] & ds["Sv"].isnull()).any())
+
+    def test_channels_pinging_together_are_not_compacted(self, sample_sv_with_channel):
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        stages = {"impulse": {"fn": impulse_noise_mask,
+                              "param_sets": {"vertical_bin_size": "1m", "ping_lags": [1],
+                                             "threshold_db": 10.0}}}
+        auto = build_full_mask(sample_sv_with_channel, stages=stages, return_stage_masks=False)
+        off = build_full_mask(sample_sv_with_channel, stages=stages, return_stage_masks=False,
+                              compact_pings=False)
+        assert bool((auto == off).all())
