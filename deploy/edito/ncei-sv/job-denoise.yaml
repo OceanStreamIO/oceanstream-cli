@@ -7,7 +7,8 @@
 #
 # Denoise the stored Sv of the test days with one preset (stages 5-9), and split the
 # per-filter statistics by station, transit and transition. CPU only, on a large-memory
-# GPU node without a GPU request. Memory
+# GPU node without a GPU request. Peak 14.6 GiB per day on RR2205. For another preset,
+# change PRESET and the Job name; outputs go to denoised-<preset>/. Memory
 # request equals the limit, so the Job is OOM-killed before it can push a shared GPU node
 # (Denoise Lab, basemap build) into eviction.
 apiVersion: batch/v1
@@ -49,8 +50,8 @@ spec:
             - {name: DASK_MEMORY, value: 24GB}
             - {name: HOME, value: /work}
           resources:
-            requests: {cpu: "8", memory: 56Gi, ephemeral-storage: 10Gi}
-            limits: {cpu: "14", memory: 56Gi, ephemeral-storage: 30Gi}
+            requests: {cpu: "6", memory: 32Gi, ephemeral-storage: 10Gi}
+            limits: {cpu: "12", memory: 32Gi, ephemeral-storage: 30Gi}
           volumeMounts:
             - {name: scripts, mountPath: /scripts}
             - {name: work, mountPath: /work}
