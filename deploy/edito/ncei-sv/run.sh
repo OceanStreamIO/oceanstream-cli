@@ -28,6 +28,7 @@ set -uo pipefail
 MODE="${MODE:-sv}"
 : "${CRUISE:?}" "${DAYS:?}"
 if [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"; else : "${PRESET:?}"; fi
+# MODE=stats reruns only split_stats.py for each preset in $PRESET (comma-separated).
 : "${OCEANSTREAM_S3_BUCKET:?}" "${AWS_ENDPOINT_URL:?}"
 BRANCH="${BRANCH:-main}"
 PREFIX="${S3_PREFIX:-r2r/$CRUISE}"
@@ -191,6 +192,19 @@ run_denoise() {
 }
 
 FAILED=0
+if [ "$MODE" = stats ]; then
+    for preset in ${PRESET//,/ }; do
+        for day in ${DAYS//,/ }; do
+            log "== $day: stats for $preset"
+            python -u "$SCRIPTS/split_stats.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
+                --denoised-container "denoised-$preset" \
+                --out "$LOGS/$preset--$day-segments.json" || FAILED=1
+        done
+    done
+    upload_logs
+    log "done, failed=$FAILED"
+    exit "$FAILED"
+fi
 if [ "$MODE" = denoise ]; then
     for day in ${DAYS//,/ }; do
         log "== $day: denoise with $PRESET"

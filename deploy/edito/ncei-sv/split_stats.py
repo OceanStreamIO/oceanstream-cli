@@ -6,6 +6,11 @@ the survey's segment table, and writes, per channel and segment kind: pings, cel
 data, the share of those cells each step removed, and the median background noise level.
 The comparison shows whether station and transit need different presets.
 
+Per channel it also measures what is left where there should be nothing: in the deepest
+30 % of the recorded range, the share of cells that survive denoising (speckle) and the
+share of pings keeping more than 20 % of those cells (streak pings), before and after
+pruning.
+
 Credentials, endpoint and region come from the environment, as for ncei_fetch.py.
 """
 
@@ -18,6 +23,42 @@ import os
 import sys
 
 BITS = {"impulse": 1, "attenuation": 2, "transient": 4, "background": 8, "clip": 16}
+
+#: The deepest share of each channel's recorded range, noise-dominated in deep water.
+DEEP_FRACTION = 0.3
+#: A ping keeping more than this share of its deep band is counted as a streak.
+STREAK_KEPT = 0.2
+
+
+def _quality(sv, i, finite, flags, keep_ping) -> dict:
+    """Speckle and streak pings in the channel's deepest DEEP_FRACTION of range."""
+    import numpy as np
+
+    pinged = finite.any(axis=1)
+    if not pinged.any():
+        return {}
+    ranges = sv["echo_range"].isel(channel=i, ping_time=int(np.argmax(pinged))).values
+    recorded = np.isfinite(ranges)
+    deep = recorded & (ranges >= (1 - DEEP_FRACTION) * np.nanmax(ranges))
+    cells = finite[:, deep]
+    kept = cells & (flags[:, deep] == 0)
+    per_ping = kept.sum(axis=1) / np.maximum(cells.sum(axis=1), 1)
+    streak = pinged & (per_ping > STREAK_KEPT)
+    out = {
+        "deep_band_m": [round(float(np.nanmin(ranges[deep])), 1),
+                        round(float(np.nanmax(ranges[deep])), 1)],
+        "deep_kept_pct": round(100 * float(kept.sum()) / max(int(cells.sum()), 1), 3),
+        "streak_pings_pct": round(100 * float(streak.sum()) / int(pinged.sum()), 2),
+    }
+    if keep_ping is not None:
+        survivors = pinged & keep_ping
+        out["pings_kept_after_pruning_pct"] = round(
+            100 * float(survivors.sum()) / int(pinged.sum()), 2
+        )
+        out["streak_pings_after_pruning_pct"] = round(
+            100 * float((streak & keep_ping).sum()) / max(int(survivors.sum()), 1), 2
+        )
+    return out
 
 
 def main() -> int:
@@ -50,6 +91,11 @@ def main() -> int:
 
     sv = store(args.sv_container, f"{args.day}--*.zarr")
     flags_ds = store(args.denoised_container, "*--denoised.zarr")
+    pruned = fs.glob(f"{root}/{args.denoised_container}/{args.day}/*--pruned.zarr")
+    keep_ping = (
+        xr.open_zarr(fs.get_mapper(pruned[0]), consolidated=None)["keep_ping"].values.astype(bool)
+        if len(pruned) == 1 else None
+    )
     with fs.open(f"{root}/{args.segments}", "rb") as fh:
         segments = pd.read_parquet(fh)
 
@@ -80,6 +126,7 @@ def main() -> int:
                 "background_level_db_median": (round(float(np.nanmedian(level)), 2)
                                                if np.isfinite(level).any() else None),
             }
+        entry["quality"] = _quality(sv, i, finite, flags, keep_ping)
         report["channels"].append(entry)
 
     with open(args.out, "w") as fh:

@@ -1,0 +1,63 @@
+# research-vessel-open-ocean-scaled with background noise estimated ping by ping.
+
+[preset]
+key = "research-vessel-open-ocean-perping"
+name = "Research vessel, open ocean, per-ping background"
+status = "draft"
+summary = "Time-scaled windows and sessions, with the background noise level estimated for each ping."
+description = """
+On RR2205 the deep vertical streaks are whole pings whose noise floor sits a few dB above their neighbours'. A noise level estimated over a block of pings cannot follow that, so the excess survives background removal; only pruning's cross-talk check dropped those pings. Here each ping gets its own noise level (ping_window = 1).
+
+One ping has fewer samples per noise block, and the level is the minimum over the blocks, which a noisy block mean pulls low. The range block is therefore longer, so each estimate still averages about 150 samples: 150 bins (about 27 m at 0.18 m) at 18, 38 and 70 kHz, 100 at 120 kHz and 75 at 200 kHz. Everything else is research-vessel-open-ocean-scaled.
+"""
+derived_from = "research-vessel-open-ocean-scaled"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "RR2205"
+days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
+outcome = "pending"
+notes = "Compared with research-vessel-open-ocean, -scaled and -sensitive on the five test days, from the same stored Sv."
+reference = "s3://oceanstream-bucket/r2r/RR2205/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+reference_ping_interval_s = 2.8
+session_gap_minutes = 10.0
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 25, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 150, ping_window = 1, SNR_threshold = "3.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 150, ping_window = 1, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 20, thr_dB = 7.0, maxts = -35.0 }
+background  = { range_window = 150, ping_window = 1, SNR_threshold = "3.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 10.0, maxts = -35.0 }
+background  = { range_window = 100, ping_window = 1, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 75, ping_window = 1, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }

@@ -205,8 +205,9 @@ class TestMatch:
                                 regime="open-ocean", water_depth_m=(3000, 5500))
         family = {m.preset.key for m in matches if not m.missing_khz}
         assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-scaled",
-                          "research-vessel-open-ocean-sensitive"}
-        assert {m.preset.key for m in matches[:3]} == family
+                          "research-vessel-open-ocean-sensitive",
+                          "research-vessel-open-ocean-perping"}
+        assert {m.preset.key for m in matches[:4]} == family
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",
