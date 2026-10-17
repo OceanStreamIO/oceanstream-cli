@@ -96,6 +96,58 @@ def channels_ping_in_turn(sv: "xr.DataArray", range_dim: str = "range_sample") -
     return bool((channels_with_data[used] >= 2).mean() < 0.5)  # noqa: PLR2004
 
 
+#: Ping-count window parameters per filter, with the fewest pings each may be scaled
+#: down to. Ping lags are not here: they compare neighbouring pings by definition.
+PING_WINDOWS: dict[str, dict[str, int]] = {
+    "attenuation": {"num_side_pings": 5},
+    "transient": {"n_pings": 5},
+    "background": {"ping_window": 10},
+}
+
+
+def split_sessions(ping_times: np.ndarray, gap_minutes: float | None) -> list[np.ndarray]:
+    """Index arrays of the recording sessions in *ping_times*.
+
+    A session ends where consecutive pings are more than *gap_minutes* apart, so no
+    filter window reaches across a recording gap. Without a gap, one session.
+    """
+    times = np.asarray(ping_times, dtype="datetime64[ns]")
+    if times.size == 0:
+        return []
+    index = np.arange(times.size)
+    if not gap_minutes:
+        return [index]
+    gap = np.timedelta64(int(gap_minutes * 60e9), "ns")
+    return np.split(index, np.flatnonzero(np.diff(times) > gap) + 1)
+
+
+def ping_interval_s(ping_times: np.ndarray, sessions: list[np.ndarray] | None = None) -> float | None:
+    """Median interval between consecutive pings in seconds, within sessions."""
+    times = np.asarray(ping_times, dtype="datetime64[ns]")
+    parts = sessions if sessions is not None else [np.arange(times.size)]
+    steps = [np.diff(times[idx]) for idx in parts if idx.size > 1]
+    if not steps:
+        return None
+    return float(np.median(np.concatenate(steps)) / np.timedelta64(1, "s"))
+
+
+def scale_ping_windows(method: str, params: Mapping[str, Any], ratio: float | None) -> dict:
+    """*params* with *method*'s ping-count windows multiplied by *ratio*.
+
+    *ratio* is the reference ping interval divided by the channel's own, so a window
+    spans the same time it was tuned for. Scaling down stops at the floor in
+    :data:`PING_WINDOWS`, or at the original value when that is smaller.
+    """
+    out = dict(params)
+    if ratio is None or method not in PING_WINDOWS:
+        return out
+    for name, floor in PING_WINDOWS[method].items():
+        value = out.get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[name] = max(min(floor, int(value)), int(round(value * ratio)))
+    return out
+
+
 def compact_channel(
     ch_ds: "xr.Dataset", var_name: str = "Sv", range_dim: str = "range_sample"
 ) -> tuple["xr.Dataset", np.ndarray, int]:
@@ -359,6 +411,10 @@ def build_full_mask(
         compact_pings = range_dim is not None and channels_ping_in_turn(ds[var_name], range_dim)
     if compact_pings:
         logger.info("Channels ping in turn: each channel is filtered on its own pings and range")
+    reference_interval = getattr(config, "reference_ping_interval_s", None)
+    session_gap = getattr(config, "session_gap_minutes", None)
+    window_ratios: dict[str, float] = {}
+    session_skips: dict[str, dict[str, int]] = {name: {} for name in stages}
 
     for ch in range(n_ch):
         ch_ds = ds.isel(channel=ch)
@@ -374,6 +430,20 @@ def build_full_mask(
                 for stage_name in stages:
                     stage_status[stage_name][ch_label] = "no_data"
 
+        sessions = split_sessions(work_ds["ping_time"].values, session_gap) if session_gap else None
+        ratio = None
+        if reference_interval:
+            interval = ping_interval_s(work_ds["ping_time"].values, sessions)
+            if interval:
+                ratio = float(reference_interval) / interval
+                window_ratios[ch_label] = round(ratio, 4)
+        if sessions is not None or ratio is not None:
+            logger.info(
+                "  %s: %s sessions, ping-count windows scaled x%s",
+                ch_label, len(sessions) if sessions is not None else 1,
+                f"{ratio:.3f}" if ratio is not None else "1",
+            )
+
         for stage_name, spec in stages.items():
             fn = spec["fn"]
             param_sets = spec["param_sets"]
@@ -386,31 +456,23 @@ def build_full_mask(
                 stage_status[stage_name][ch_label] = "skipped_no_params"
                 continue
 
-            try:
-                result = fn(work_ds, pars)
-            except Exception as e:
-                logger.warning(
-                    f"Error computing {stage_name} mask for channel {ch}: {e}"
-                )
-                stage_status[stage_name][ch_label] = f"failed: {e}"
-                continue
-
-            # All denoise functions now return (mask, unfeasible) tuples
-            if isinstance(result, (tuple, list)):
-                if mask_unfeasible and len(result) >= 2:
-                    stage_mask = result[0] | result[1]
-                else:
-                    stage_mask = result[0]
-            else:
-                stage_mask = result
-
+            pars = scale_ping_windows(stage_name, pars, ratio)
+            stage_mask, error, skipped = _run_stage_by_session(
+                fn, work_ds, work_ref, pars, sessions, mask_unfeasible
+            )
             if stage_mask is None:
-                stage_status[stage_name][ch_label] = "returned_none"
+                if error is None:
+                    stage_status[stage_name][ch_label] = "returned_none"
+                else:
+                    logger.warning(f"Error computing {stage_name} mask for channel {ch}: {error}")
+                    stage_status[stage_name][ch_label] = f"failed: {error}"
                 continue
-
-            # Align coordinates
-            stage_mask = stage_mask.broadcast_like(work_ref)
-            stage_mask = stage_mask.reset_coords(drop=True)
+            if skipped:
+                session_skips[stage_name][ch_label] = skipped
+                logger.warning(
+                    "%s on %s: %d of %d sessions too short or failed (%s); left unflagged",
+                    stage_name, ch_label, skipped, len(sessions), error,
+                )
             if compact_pings:
                 stage_mask = expand_channel(
                     stage_mask.astype(bool), reference, ping_idx, n_range, False, range_dim
@@ -474,11 +536,64 @@ def build_full_mask(
         cube = cube.reindex(channel=all_channels, fill_value=False)
         cube = cube.broadcast_like(ds[var_name]).fillna(False).astype(bool)
         cube.attrs["channel_status"] = json.dumps(stage_status.get(name, {}))
+        if window_ratios:
+            cube.attrs["window_ratio"] = json.dumps(window_ratios)
+        if session_skips.get(name):
+            cube.attrs["session_skips"] = json.dumps(session_skips[name])
         stage_cubes[name] = cube
 
     return _pack_mask_result(
         full_mask, stage_cubes, stage_status, return_stage_masks, return_status
     )
+
+
+def _run_stage_by_session(fn, work_ds, work_ref, pars, sessions, mask_unfeasible):
+    """Run one filter on a channel, session by session, and join the masks.
+
+    Without sessions the filter runs once on the whole channel, as before. Returns the
+    mask aligned to *work_ref* (None when no session produced one), the last error and
+    the number of sessions that failed, typically because they are shorter than a window.
+    """
+    import xarray as xr
+
+    def one(part_ds, part_ref):
+        result = fn(part_ds, pars)
+        # All denoise functions now return (mask, unfeasible) tuples
+        if isinstance(result, (tuple, list)):
+            mask = result[0] | result[1] if mask_unfeasible and len(result) >= 2 else result[0]
+        else:
+            mask = result
+        if mask is None:
+            return None
+        return mask.broadcast_like(part_ref).reset_coords(drop=True)
+
+    if sessions is None:
+        try:
+            return one(work_ds, work_ref), None, 0
+        except Exception as e:  # noqa: BLE001 - reported as the stage status
+            return None, e, 0
+
+    pieces, failed, error = [], 0, None
+    for idx in sessions:
+        part_ref = work_ref.isel(ping_time=idx)
+        try:
+            mask = one(work_ds.isel(ping_time=idx), part_ref)
+        except Exception as e:  # noqa: BLE001 - counted, the session stays unflagged
+            mask, error = None, e
+        if mask is None:
+            failed += 1
+            pieces.append(np.zeros(part_ref.shape, dtype=bool))
+        else:
+            pieces.append(np.asarray(mask.transpose(*part_ref.dims).values, dtype=bool))
+    if failed == len(sessions):
+        return None, error, failed
+    axis = work_ref.dims.index("ping_time")
+    joined = xr.DataArray(
+        np.concatenate(pieces, axis=axis),
+        dims=work_ref.dims,
+        coords={d: work_ref[d] for d in work_ref.dims if d in work_ref.coords},
+    )
+    return joined, error, failed
 
 
 def _pack_mask_result(
@@ -670,10 +785,19 @@ def drop_noisy_pings(
         # Count only the cells each channel recorded: on the shared grid a short-range
         # channel is mostly NaN by construction, and a channel is empty at the other
         # channels' pings, so those pings are left to the channels that transmitted.
+        # Only cells where the channel usually keeps signal count: after background
+        # removal a high-frequency channel is empty beyond its effective range in every
+        # ping, and those cells would otherwise make every ping look dead. Without a
+        # cross-channel minimum to fall back on, a ping is dropped only when it is empty
+        # where its channel normally has data.
         recorded = ds["echo_range"].notnull()
-        n_recorded = recorded.sum(dim=range_dim)
-        n_nan = (ds[var_name].isnull() & recorded).sum(dim=range_dim)
-        frac_nan = (n_nan / n_recorded).where(n_recorded > 0)
+        n_pinged = recorded.any(range_dim).sum("ping_time")
+        typical = ds[var_name].notnull().sum("ping_time") / n_pinged.where(n_pinged > 0)
+        usual = typical >= 0.5  # noqa: PLR2004
+        signal = recorded & usual.where(usual.any(range_dim), True)
+        n_signal = signal.sum(dim=range_dim)
+        n_nan = (ds[var_name].isnull() & signal).sum(dim=range_dim)
+        frac_nan = (n_nan / n_signal).where(n_signal > 0)
     else:
         n_nan = ds[var_name].isnull().sum(dim=range_dim)
         total = ds[var_name].sizes[range_dim]

@@ -2332,6 +2332,8 @@ def parse_args() -> PipelineConfig:
             attenuation_upper_limit=echo_cfg.denoise.attenuation_upper_limit,
             attenuation_lower_limit=echo_cfg.denoise.attenuation_lower_limit,
             attenuation_side_pings=echo_cfg.denoise.attenuation_side_pings,
+            reference_ping_interval_s=echo_cfg.denoise.reference_ping_interval_s,
+            session_gap_minutes=echo_cfg.denoise.session_gap_minutes,
         )
 
     return cfg

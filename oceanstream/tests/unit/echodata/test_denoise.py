@@ -849,3 +849,81 @@ class TestBreakAtGaps:
 
         da = self._da(pd.date_range("2022-07-02", periods=30, freq="8s").values)
         assert break_at_gaps(da).identical(da)
+
+
+class TestSessionsAndWindowScaling:
+    """Windows follow each channel's ping interval and never span a recording gap."""
+
+    def test_split_sessions(self):
+        from oceanstream.echodata.denoise.denoise import split_sessions
+
+        times = np.concatenate([
+            pd.date_range("2022-07-02T03:00", periods=10, freq="39s").values,
+            pd.date_range("2022-07-02T06:00", periods=5, freq="39s").values,
+        ])
+        sessions = split_sessions(times, gap_minutes=10)
+        assert [s.tolist() for s in sessions] == [list(range(10)), list(range(10, 15))]
+        assert len(split_sessions(times, gap_minutes=None)) == 1
+        assert split_sessions(np.array([], dtype="datetime64[ns]"), 10) == []
+
+    def test_ping_interval_ignores_the_gaps(self):
+        from oceanstream.echodata.denoise.denoise import ping_interval_s, split_sessions
+
+        times = np.concatenate([
+            pd.date_range("2022-07-02T03:00", periods=10, freq="39s").values,
+            pd.date_range("2022-07-02T06:00", periods=10, freq="39s").values,
+        ])
+        assert ping_interval_s(times, split_sessions(times, 10)) == pytest.approx(39.0)
+
+    @pytest.mark.parametrize(
+        ("method", "params", "ratio", "expected"),
+        [
+            # TPOS-tuned windows (2.8 s pings) on RR2205 channels (39 s pings)
+            ("attenuation", {"num_side_pings": 100, "threshold": 10.0}, 2.8 / 39,
+             {"num_side_pings": 7, "threshold": 10.0}),
+            ("transient", {"n_pings": 50}, 2.8 / 39, {"n_pings": 5}),
+            ("background", {"ping_window": 50}, 2.8 / 39, {"ping_window": 10}),
+            # Floors never raise a window that was already smaller
+            ("attenuation", {"num_side_pings": 3}, 0.1, {"num_side_pings": 3}),
+            # Faster pinging scales up; lags and other filters are untouched
+            ("transient", {"n_pings": 20}, 2.0, {"n_pings": 40}),
+            ("impulse", {"ping_lags": [1, 2]}, 0.1, {"ping_lags": [1, 2]}),
+            ("transient", {"n_pings": 50}, None, {"n_pings": 50}),
+        ],
+    )
+    def test_scale_ping_windows(self, method, params, ratio, expected):
+        from oceanstream.echodata.denoise.denoise import scale_ping_windows
+
+        assert scale_ping_windows(method, params, ratio) == expected
+
+    def test_filters_run_per_session(self):
+        """A spike at a session's first ping is caught against that session only."""
+        from oceanstream.echodata.config import DenoiseConfig
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        ds = _interleaved_sv(n_pings=60, n_range=100, spike_ping=30)
+        times = ds["ping_time"].values.copy()
+        times[30:] += np.timedelta64(3, "h")  # a recording gap before the spike
+        ds = ds.assign_coords(ping_time=times)
+        stages = {"impulse": {"fn": impulse_noise_mask,
+                              "param_sets": {"vertical_bin_size": "1m", "ping_lags": [1],
+                                             "threshold_db": 10.0}}}
+        cfg = DenoiseConfig(session_gap_minutes=10)
+        _, cubes = build_full_mask(ds, stages=stages, config=cfg)
+        assert cubes["impulse"].sizes == ds["Sv"].sizes
+        # The spike opens its session, so it has no earlier neighbour and stays unflagged.
+        assert not bool(cubes["impulse"].isel(channel=0, ping_time=30).any())
+        _, unsplit = build_full_mask(ds, stages=stages)
+        assert bool(unsplit["impulse"].isel(channel=0, ping_time=30).mean() > 0.9)
+
+
+class TestInterleavedPruningSignalRange:
+    def test_channel_empty_beyond_its_signal_keeps_its_pings(self):
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        ds = _interleaved_sv(n_pings=60, n_range=100)
+        # After background removal channel a keeps signal in its top 20 samples only.
+        ds["Sv"][0, :, 20:] = np.nan
+        pruned = drop_noisy_pings(ds, drop_threshold=0.8)
+        assert pruned.sizes["ping_time"] == 60

@@ -132,6 +132,10 @@ class DenoiseParams:
     attenuation_upper_limit: float = 400.0           # metres, top of reference band
     attenuation_lower_limit: float = 500.0           # metres, bottom of reference band
     attenuation_side_pings: int = 100
+    # Ping interval (s) the ping-count windows were tuned at; scales them per channel.
+    reference_ping_interval_s: Optional[float] = None
+    # Pings further apart than this (minutes) start a new recording session.
+    session_gap_minutes: Optional[float] = None
 
     # ── Post-denoise sanity clip ────────────────────────────────────────
     # Anything > sv_clip_max_db in the water column is not biology — it's
@@ -174,6 +178,8 @@ class DenoiseParams:
             attenuation_upper_limit=self.attenuation_upper_limit,
             attenuation_lower_limit=self.attenuation_lower_limit,
             attenuation_side_pings=self.attenuation_side_pings,
+            reference_ping_interval_s=self.reference_ping_interval_s,
+            session_gap_minutes=self.session_gap_minutes,
         )
 
 

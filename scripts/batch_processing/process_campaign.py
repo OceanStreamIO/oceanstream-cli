@@ -755,7 +755,13 @@ def denoise_day(
                 channels_ping_in_turn,
                 compact_channel,
                 expand_channel,
+                ping_interval_s,
+                scale_ping_windows,
+                split_sessions,
             )
+
+            session_gap = getattr(denoise_config, "session_gap_minutes", None)
+            reference_interval = getattr(denoise_config, "reference_ping_interval_s", None)
 
             diag_by_channel = {e["channel"]: e for e in diag_channels}
             before = ds_denoised["Sv"]
@@ -783,13 +789,33 @@ def denoise_day(
                     level = xr.full_like(ch_ds["Sv"].isel(range_sample=0, drop=True), np.nan)
                     out = xr.full_like(ch_ds["Sv"], np.nan)
                 else:
-                    level = products.estimate_background_level(
-                        work,
-                        ping_num=opts.get("ping_window", 50),
-                        range_sample_num=opts.get("range_window", 20),
-                        background_noise_max=products.parse_db(opts.get("background_noise_max")),
-                    )
-                    out = products.background_corrected(work["Sv"], level, work, snr)
+                    times = work["ping_time"].values
+                    sessions = split_sessions(times, session_gap) if session_gap else None
+                    if reference_interval:
+                        interval = ping_interval_s(times, sessions)
+                        if interval:
+                            opts = scale_ping_windows(
+                                "background", opts, float(reference_interval) / interval
+                            )
+                    levels_by_session, outs_by_session = [], []
+                    # One session uses the data as is: isel with an index array would copy it.
+                    for idx in sessions if sessions and len(sessions) > 1 else [None]:
+                        part = work if idx is None else work.isel(ping_time=idx)
+                        part_level = products.estimate_background_level(
+                            part,
+                            ping_num=opts.get("ping_window", 50),
+                            range_sample_num=opts.get("range_window", 20),
+                            background_noise_max=products.parse_db(opts.get("background_noise_max")),
+                        )
+                        levels_by_session.append(part_level)
+                        outs_by_session.append(
+                            products.background_corrected(part["Sv"], part_level, part, snr)
+                        )
+                    if len(levels_by_session) == 1:
+                        level, out = levels_by_session[0], outs_by_session[0]
+                    else:
+                        level = xr.concat(levels_by_session, dim="ping_time")
+                        out = xr.concat(outs_by_session, dim="ping_time")
                     if compact:
                         out = expand_channel(out, ch_ds["Sv"], ping_idx, n_range, np.nan)
                         level = level.reindex(ping_time=ch_ds["ping_time"])

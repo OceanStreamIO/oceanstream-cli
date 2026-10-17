@@ -292,6 +292,14 @@ class DenoiseConfig:
     attenuation_upper_limit: float = 180.0  # m
     attenuation_lower_limit: float = 280.0  # m
     attenuation_side_pings: int = 15
+
+    # Ping interval (s) the ping-count windows were tuned at. When set, the windows
+    # (attenuation num_side_pings, transient n_pings, background ping_window) are
+    # scaled to each channel's own ping interval, so they span the same time.
+    reference_ping_interval_s: Optional[float] = None
+    # Filter each recording session separately: pings further apart than this
+    # (minutes) start a new session, so no window spans a recording gap.
+    session_gap_minutes: Optional[float] = None
     
     def get_params_for_frequency(
         self,
@@ -627,6 +635,8 @@ class EchodataConfig:
             attenuation_side_pings=denoise_data.get(
                 "attenuation", {}
             ).get("num_side_pings", default_denoise.attenuation_side_pings),
+            reference_ping_interval_s=denoise_data.get("reference_ping_interval_s"),
+            session_gap_minutes=denoise_data.get("session_gap_minutes"),
         )
         
         # Parse MVBS config
