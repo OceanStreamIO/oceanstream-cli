@@ -82,6 +82,12 @@ class Preset:
     source: Path | None = None
     #: What the loader dropped or would warn about; empty for a clean file.
     notes: tuple[str, ...] = field(default=())
+    #: Ping interval (s) the ping-count windows were tuned at; the pipeline scales them
+    #: to each channel's own interval. None: windows are used as written.
+    reference_ping_interval_s: float | None = None
+    #: Pings further apart than this (minutes) start a new recording session, and each
+    #: session is filtered on its own. None: one session per day.
+    session_gap_minutes: float | None = None
 
     @property
     def frequencies(self) -> tuple[int, ...]:
@@ -98,11 +104,15 @@ class Preset:
     @property
     def params_sha256(self) -> str:
         """Hash of the methods and parameters only, so comments and metadata do not move it."""
-        canonical = json.dumps(
-            {"methods": list(self.methods),
-             "params": {str(f): self.params[f] for f in self.frequencies}},
-            sort_keys=True, separators=(",", ":"),
-        )
+        content: dict[str, Any] = {
+            "methods": list(self.methods),
+            "params": {str(f): self.params[f] for f in self.frequencies},
+        }
+        # Only when set, so presets without them keep the hash they always had.
+        for name in ("reference_ping_interval_s", "session_gap_minutes"):
+            if getattr(self, name) is not None:
+                content[name] = getattr(self, name)
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     def frequency_params(self) -> dict[int, dict[str, dict[str, Any]]]:
@@ -121,6 +131,8 @@ class Preset:
             methods=list(self.methods),
             use_frequency_specific=True,
             frequency_params=self.frequency_params(),
+            reference_ping_interval_s=self.reference_ping_interval_s,
+            session_gap_minutes=self.session_gap_minutes,
         )
 
     def uncovered(self, channel_frequencies: Iterable[float]) -> list[int]:
@@ -250,7 +262,7 @@ def parse_preset(text: str, *, source: Path | None = None, key: str = "") -> Pre
         raise PresetError(f"{label}: {e}") from e
 
 
-def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:
+def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  # noqa: PLR0912
     denoise = data.get("echodata", {}).get("denoise", {})
     raw_params = denoise.get("frequency_params")
     if not raw_params:
@@ -271,6 +283,16 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:
     unknown = [m for m in methods if m not in GROUPS]
     if unknown:
         raise PresetError(f"unknown denoise method(s) {unknown}.")
+    _expect_keys(denoise, {"methods", "use_frequency_specific", "frequency_params",
+                           "reference_ping_interval_s", "session_gap_minutes"},
+                 "[echodata.denoise]")
+    timing = {}
+    for name in ("reference_ping_interval_s", "session_gap_minutes"):
+        value = denoise.get(name)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise PresetError(f"[echodata.denoise].{name} must be a positive number.")
+            timing[name] = float(value)
 
     meta = data.get("preset")
     stem = source.stem if source else ""
@@ -278,7 +300,7 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:
         return Preset(key=key or stem, name=key or stem, status="external", summary="",
                       description="", derived_from="", applies_to=AppliesTo(),
                       validations=(), methods=methods, params=params, source=source,
-                      notes=tuple(notes))
+                      notes=tuple(notes), **timing)
 
     _expect_keys(meta, {"key", "name", "status", "summary", "description", "derived_from",
                         "applies_to", "validations"}, "[preset]")
@@ -307,6 +329,7 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:
         params=params,
         source=source,
         notes=tuple(notes),
+        **timing,
     )
 
 
@@ -369,6 +392,9 @@ def diff(base: Preset, other: Preset) -> list[str]:
                                  f"{new.get(name, 'unset')}")
     if base.methods != other.methods:
         lines.append(f"methods: {list(base.methods)} -> {list(other.methods)}")
+    for name in ("reference_ping_interval_s", "session_gap_minutes"):
+        if getattr(base, name) != getattr(other, name):
+            lines.append(f"{name}: {getattr(base, name)} -> {getattr(other, name)}")
     return lines
 
 

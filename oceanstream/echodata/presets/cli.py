@@ -76,10 +76,14 @@ def show_command(  # noqa: PLR0912 - one branch per optional section
         ("Region", a.region),
         ("Seasons", ", ".join(a.seasons)),
         ("Derived from", preset.derived_from),
+        ("Windows tuned at", f"{preset.reference_ping_interval_s:g} s ping interval"
+         if preset.reference_ping_interval_s else ""),
+        ("Sessions split at", f"{preset.session_gap_minutes:g} min gaps"
+         if preset.session_gap_minutes else ""),
         ("Params SHA-256", preset.params_sha256),
     ):
         if value:
-            typer.echo(f"{label + ':':16s}{value}")
+            typer.echo(f"{label + ':':19s}{value}")
     if preset.description:
         typer.echo("")
         typer.echo(preset.description)

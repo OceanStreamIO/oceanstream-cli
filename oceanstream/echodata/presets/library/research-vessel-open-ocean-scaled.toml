@@ -1,0 +1,64 @@
+# The draft with its ping-count windows scaled to each channel's ping interval and
+# recording sessions filtered separately. Parameters otherwise as research-vessel-open-ocean.
+
+[preset]
+key = "research-vessel-open-ocean-scaled"
+name = "Research vessel, open ocean, time-scaled windows"
+status = "draft"
+summary = "research-vessel-open-ocean with windows scaled to the ping interval and per-session filtering."
+description = """
+The ping-count windows of research-vessel-open-ocean come from presets adopted on Saildrone data pinging every 2.8 s (SD_TPOS2023_v03 short pulse; 2.5 s long pulse). RR2205 pings each channel every 39 s, so as written a 100-ping attenuation window spans 65 minutes instead of 4.7. With reference_ping_interval_s = 2.8 the pipeline scales num_side_pings, n_pings and the background ping_window by the reference interval over each channel's own, never below 5 pings (10 for background). Ping lags are not scaled.
+
+session_gap_minutes = 10 filters each recording session on its own. RR2205 records in 4-6 sessions a day separated by hours, and without the split 45-71 % of pings had windows reaching across a gap.
+"""
+derived_from = "research-vessel-open-ocean"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "RR2205"
+days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
+outcome = "pending"
+notes = "Compared with research-vessel-open-ocean on the five test days, from the same stored Sv."
+reference = "s3://oceanstream-bucket/r2r/RR2205/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+reference_ping_interval_s = 2.8
+session_gap_minutes = 10.0
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 25, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 35, ping_window = 60, SNR_threshold = "3.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 20, thr_dB = 7.0, maxts = -35.0 }
+background  = { range_window = 25, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 10.0, maxts = -35.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }

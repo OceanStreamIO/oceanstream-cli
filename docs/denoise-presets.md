@@ -10,7 +10,9 @@ The library lives in `oceanstream/echodata/presets/library/`, one TOML file per 
 | `tpos-sd-2023` | production | 38, 200 | Saildrone USV, deep central tropical Pacific; the published SD_TPOS2023_v03 products |
 | `tropical-pacific-v3` | experimental | 38, 200 | The same survey with lower thresholds; checked on one day only |
 | `munkholmen-fjord` | production | 38, 200 | Stationary buoy in a 76 m fjord; the published MUNKHOLMEN_2026 products |
-| `research-vessel-open-ocean` | draft | 18, 38, 70, 120, 200 | Hull-mounted EK80 on deep-water research cruises; not yet checked on data |
+| `research-vessel-open-ocean` | draft | 18, 38, 70, 120, 200 | Hull-mounted EK80 on deep-water research cruises; first run on RR2205 |
+| `research-vessel-open-ocean-scaled` | draft | 18, 38, 70, 120, 200 | The same, with windows scaled to the ping interval and per-session filtering |
+| `research-vessel-open-ocean-sensitive` | draft | 18, 38, 70, 120, 200 | The scaled variant with lower impulse and transient thresholds |
 
 `oceanstream process echodata presets list` prints the current list.
 
@@ -67,6 +69,8 @@ reference = "where the results are"
 [echodata.denoise]
 methods = ["impulse", "attenuation", "transient", "background"]
 use_frequency_specific = true
+reference_ping_interval_s = 2.8     # optional: ping interval the ping-count windows were tuned at
+session_gap_minutes = 10.0          # optional: filter each recording session on its own
 
 [echodata.denoise.frequency_params.38000]
 impulse     = { vertical_bin_size = "2m", ping_lags = [1, 2], threshold_db = 12.0 }
@@ -82,7 +86,14 @@ Four rules come from how the pipeline reads a config, and the loader enforces th
 - **Four background parameters matter in the batch pipeline.** Background removal follows echopype's arithmetic and reads `range_window`, `ping_window`, `SNR_threshold` and `background_noise_max`, taking absorption from the Sv data. `sound_absorption`, `depth_stat`, `depth_quantile` and the `guard_*` parameters only reach the standalone background mask, which the batch pipeline does not call. The loader accepts them but notes each one, so nobody tunes a parameter with no effect.
 - **Retired keys are dropped.** `transient.percentile` belongs to a transient detector the pipeline does not use; it and a few other leftovers are dropped on load, with a note.
 
-`Preset.params_sha256` hashes the methods and parameters only, so editing a description does not change it.
+Two optional settings deal with how a survey pings:
+
+- **`reference_ping_interval_s`**: window parameters count pings (`num_side_pings`, transient `n_pings`, background `ping_window`), so the same number covers very different times on different platforms. When this is set, the pipeline multiplies those windows by the reference interval over each channel's own median ping interval, never below 5 pings (10 for the background block, or the written value when that is smaller). Ping lags are not scaled; they compare neighbouring pings by definition.
+- **`session_gap_minutes`**: pings further apart than this start a new recording session, and each session is filtered on its own, so no window reaches across a gap of hours. A session shorter than a window is left unflagged by that filter, with a warning.
+
+Both apply only when set, so presets without them run exactly as before.
+
+`Preset.params_sha256` hashes the methods and parameters (and the two settings above, when set) only, so editing a description does not change it.
 
 ## Tuning a preset for a new survey
 
@@ -103,6 +114,8 @@ A preset adopted on one survey is the starting point for others like it. For a n
 - **In shallow water every reference layer must move above the seabed.** The open-ocean values put the attenuation band at 400-500 m and the transient start at 200-250 m.
 - **Background removal does most of the work.** At Munkholmen the three mask filters removed well under 1 % of cells; background removal removed 84-91 % of the 200 kHz water column.
 - **A noise floor that steps needs headroom.** The Munkholmen 200 kHz floor moves between about -102 and -92 dB re 1 W within minutes, so its noise ceiling sits at -85 dB.
+- **Windows count pings, and ping rates differ by an order of magnitude.** TPOS Saildrones pinged every 2.8 s, while RR2205's EK80 pinged each of its five channels in turn, every 39 s per channel. A 100-ping window tuned on TPOS spans 4.7 minutes there and 65 minutes on RR2205. Record the ping interval a preset was tuned at.
+- **Channels that ping in turn need their own pings.** On RR2205 each channel has data in one ping of five; the pipeline compacts each channel onto its own pings and recorded range before filtering, background estimation and pruning, and echograms plot each channel's own pings.
 - **Check what looks like an event before tuning for it.** A pale band that motivated part of the TPOS tuning was a missing raw file, not attenuation.
 
 ## The Denoise Lab

@@ -61,6 +61,9 @@ class TestLibrary:
             assert denoise.to_frequency_keyed_params(method) == {
                 f: groups[method] for f, groups in expected.items()
             }
+        assert denoise.reference_ping_interval_s == preset.reference_ping_interval_s
+        assert denoise.session_gap_minutes == preset.session_gap_minutes
+        assert preset.to_denoise_config().session_gap_minutes == preset.session_gap_minutes
         background = denoise.to_frequency_keyed_params("background")
         for freq, params in background.items():
             for name, value in expected[freq]["background"].items():
@@ -152,6 +155,20 @@ class TestValidation:
         preset = load_preset(path)
         assert (preset.key, preset.status) == ("lab-export", "external")
 
+    def test_timing_settings(self):
+        timing = "reference_ping_interval_s = 2.8\nsession_gap_minutes = 10\n"
+        text = HEADER.replace("methods = [", timing + "methods = [")
+        preset = parse_preset(text + GOOD_FREQ)
+        assert (preset.reference_ping_interval_s, preset.session_gap_minutes) == (2.8, 10.0)
+        assert preset.params_sha256 != parse_preset(HEADER + GOOD_FREQ).params_sha256
+
+    @pytest.mark.parametrize("bad", ["session_gap_minutes = 0", "reference_ping_interval_s = -1",
+                                     "session_gap = 10"])
+    def test_bad_timing_settings(self, bad):
+        text = HEADER.replace("methods = [", f"{bad}\nmethods = [")
+        with pytest.raises(PresetError):
+            parse_preset(text + GOOD_FREQ)
+
     def test_params_hash_ignores_metadata(self):
         a = parse_preset(HEADER + GOOD_FREQ)
         b = parse_preset(HEADER.replace("A test preset.", "Reworded.") + GOOD_FREQ)
@@ -186,9 +203,10 @@ class TestMatch:
     def test_ship_survey_prefers_the_five_frequency_preset(self):
         matches = match_presets([18, 38, 70, 120, 200], platform="research-vessel",
                                 regime="open-ocean", water_depth_m=(3000, 5500))
-        assert matches[0].preset.key == "research-vessel-open-ocean"
-        assert matches[0].missing_khz == ()
-        assert all(m.missing_khz for m in matches[1:])
+        family = {m.preset.key for m in matches if not m.missing_khz}
+        assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-scaled",
+                          "research-vessel-open-ocean-sensitive"}
+        assert {m.preset.key for m in matches[:3]} == family
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",
