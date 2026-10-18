@@ -927,3 +927,60 @@ class TestInterleavedPruningSignalRange:
         ds["Sv"][0, :, 20:] = np.nan
         pruned = drop_noisy_pings(ds, drop_threshold=0.8)
         assert pruned.sizes["ping_time"] == 60
+
+
+def _noise_with_raised_ping(n_pings=80, n_range=1000, raised_ping=40, raise_db=10.0, layer=False):
+    """Exponential noise at -90 dB over 0-200 m, one ping raised by *raise_db*.
+
+    0.2 m samples put 100 in each 20 m bin, about as many as real 0.18 m bins hold; with
+    fewer the bin's low percentile scatters by several dB from noise alone.
+    """
+    rng = np.random.default_rng(1)
+    linear = rng.exponential(1.0, (n_pings, n_range)) * 10 ** (-90 / 10)
+    linear[raised_ping] *= 10 ** (raise_db / 10)
+    if layer:
+        linear[:, 500:600] *= 10  # 100-120 m, present in every ping
+    return xr.Dataset(
+        {"Sv": (("channel", "ping_time", "range_sample"), 10 * np.log10(linear)[None]),
+         "echo_range": (("range_sample",), np.arange(n_range) * 0.2)},
+        coords={"channel": ["a"],
+                "ping_time": pd.date_range("2022-07-02", periods=n_pings, freq="39s"),
+                "range_sample": np.arange(n_range)},
+    )
+
+
+RYAN = {"exclude_above": 50.0, "depth_bin": 20.0, "n_pings": 10, "thr_dB": 5.0, "percentile": 15}
+
+
+class TestRyanTransient:
+    """Ryan et al. (2015): a ping's low percentile per depth bin against its neighbours'."""
+
+    def test_raised_ping_is_flagged_below_exclude_above(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask_ryan
+
+        ds = _noise_with_raised_ping().isel(channel=0)
+        mask, unfeasible = transient_noise_mask_ryan(ds, RYAN)
+        raised = mask.isel(ping_time=40).values
+        assert raised[250:].all()          # from 50 m down
+        assert not raised[:250].any()      # above exclude_above
+        others = np.delete(mask.values, 40, axis=0)
+        assert others.mean() < 0.01
+        assert mask.dims == ds["Sv"].dims and not bool(unfeasible.any())
+
+    def test_layer_lasting_over_pings_is_not_flagged(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask_ryan
+
+        ds = _noise_with_raised_ping(raise_db=0.0, layer=True).isel(channel=0)
+        mask, _ = transient_noise_mask_ryan(ds, RYAN)
+        assert mask.values.mean() < 0.01
+
+    def test_preset_selects_it_for_the_transient_stage(self):
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _noise_with_raised_ping()
+        stages = {"transient": {"fn": transient_noise_mask,
+                                "param_sets": {**RYAN, "detector": "ryan"}}}
+        _, cubes = build_full_mask(ds, stages=stages)
+        raised = cubes["transient"].isel(channel=0, ping_time=40, range_sample=slice(250, None))
+        assert bool(raised.all())

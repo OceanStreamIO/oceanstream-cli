@@ -352,7 +352,10 @@ def build_full_mask(
     import xarray as xr
 
     from oceanstream.echodata.denoise.background_noise import background_noise_mask
-    from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+    from oceanstream.echodata.denoise.transient_noise import (
+        transient_noise_mask,
+        transient_noise_mask_ryan,
+    )
     from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
     from oceanstream.echodata.denoise.attenuation import attenuation_mask
 
@@ -457,8 +460,12 @@ def build_full_mask(
                 continue
 
             pars = scale_ping_windows(stage_name, pars, ratio)
+            # The transient stage runs Fielding's detector unless the preset picks Ryan's.
+            stage_fn = fn
+            if stage_name == "transient" and pars.get("detector") == "ryan":
+                stage_fn = transient_noise_mask_ryan
             stage_mask, error, skipped = _run_stage_by_session(
-                fn, work_ds, work_ref, pars, sessions, mask_unfeasible
+                stage_fn, work_ds, work_ref, pars, sessions, mask_unfeasible
             )
             if stage_mask is None:
                 if error is None:

@@ -1,0 +1,61 @@
+# research-vessel-open-ocean with Ryan et al.'s (2015) transient-noise detector.
+
+[preset]
+key = "research-vessel-open-ocean-ryan-tn"
+name = "Research vessel, open ocean, Ryan transient detector"
+status = "draft"
+summary = "The draft with Ryan et al.'s per-depth-bin transient detector instead of Fielding's."
+description = """
+On RR2205 the deep vertical streaks are pings whose noise floor sits a few dB above their neighbours'. Ryan et al. (2015) compare, in each depth bin below a start depth, a ping's 15th percentile of Sv with the median of that statistic over the pings either side, and flag the bin when the ping exceeds it; a ping raised over the whole column stands out in every bin, while a layer lasting several pings does not. Here every channel uses that detector with a 6 dB margin, keeping the draft's bin heights, ping windows and start depths. Ryan et al. used 12 dB at 38 kHz, which is above the rise these streaks show.
+
+A bin's low percentile scatters from noise alone, more so in short bins; the margin has to stay above that scatter.
+"""
+derived_from = "research-vessel-open-ocean"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "RR2205"
+days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
+outcome = "pending"
+notes = "First test survey: R/V Roger Revelle, US GO-SHIP P02, Honolulu to San Diego, 13 June to 16 July 2022. EK80 at 18, 38, 70, 120 and 200 kHz, CW 1.024 ms, complex samples; raw at NCEI. Test days not chosen yet."
+reference = "s3://noaa-wcsd-pds/data/raw/Roger_Revelle/RR2205/EK80/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 25, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 35, ping_window = 60, SNR_threshold = "3.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 50, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 20, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 25, ping_window = 50, SNR_threshold = "3.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 40, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }

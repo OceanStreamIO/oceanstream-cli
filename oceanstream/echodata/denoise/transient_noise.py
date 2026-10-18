@@ -6,8 +6,9 @@ Provides two methods for detecting transient interference in echosounder data:
    kernel that detects noise propagating from the deep reference band upward.
    Uses Dask ``map_overlap`` for lazy parallel execution.
 
-2. **Ryan et al. (2015)** (``transient_noise_mask_ryan``): Rolling 2-D
-   percentile block comparison—simpler, suitable as fallback.
+2. **Ryan et al. (2015)** (``transient_noise_mask_ryan``): per depth bin, a ping's
+   low percentile against the median of the same statistic over neighbouring pings.
+   Selected per preset with ``detector = "ryan"`` in the transient parameters.
 
 """
 
@@ -15,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from functools import partial
 from typing import TYPE_CHECKING, Dict, Tuple
 
 import numpy as np
@@ -386,36 +386,6 @@ def transient_noise_mask(
 
 
 # ---------------------------------------------------------------------------
-# Rolling-percentile helper for Ryan method
-# ---------------------------------------------------------------------------
-
-def _rolling_nanpercentile(arr, *, q: float, axis=None):
-    """Percentile reducer for ``xarray.rolling.reduce``.
-
-    Works with both NumPy and Dask arrays and properly drops rolling
-    axes to avoid stray ``_rolling_dim_*`` dimensions.
-    """
-    import dask.array as da
-
-    if isinstance(arr, da.Array):
-        if axis is None:
-            raise ValueError("rolling_nanpercentile requires 'axis' from xarray")
-        if np.isscalar(axis):
-            axis_tuple = (int(axis) % arr.ndim,)
-        else:
-            axis_tuple = tuple(int(a) % arr.ndim for a in axis)
-
-        def _nanpct(x, q):
-            with np.errstate(all="ignore"):
-                return np.nanpercentile(x, q, axis=axis_tuple)
-
-        return da.map_blocks(_nanpct, arr, q, dtype=arr.dtype, drop_axis=axis_tuple)
-
-    with np.errstate(all="ignore"):
-        return np.nanpercentile(arr, q, axis=axis)
-
-
-# ---------------------------------------------------------------------------
 # Public API – Ryan method (alternative)
 # ---------------------------------------------------------------------------
 
@@ -425,75 +395,94 @@ def transient_noise_mask_ryan(
 ) -> Tuple["xr.DataArray", "xr.DataArray"]:
     """Ryan et al. (2015) transient-noise filter for a single channel.
 
-    Uses a 2-D rolling-percentile block comparison.  Simpler than Fielding
-    but effective as a secondary filter.
+    Ryan, Downie, Kloser and Keith (2015), ICES J. Mar. Sci. 72(8): 2482-2493, section 2.3.
+    Below ``exclude_above`` the water column is cut into depth bins of ``depth_bin`` metres.
+    In each bin a ping's ``percentile``-th percentile of linear Sv is compared with the
+    median of the same statistic over the ``n_pings`` pings either side; where the ping
+    exceeds it by more than ``thr_dB`` the ping's bin is flagged. A ping whose whole column
+    is raised, by interference or a noise burst, stands out in every bin, while a school
+    or layer that persists over neighbouring pings does not.
 
     Args:
-        sv_dataset: Single-channel Sv xarray Dataset.
+        sv_dataset: Single-channel Sv dataset with ``echo_range`` (1-D or per ping).
         params: Dictionary of parameters:
-            - range_coord (str): vertical coordinate, default ``"echo_range"``
-            - ping_window (int): half-width in pings, default 5
-            - range_window (int): half-width in samples, default 3
-            - threshold (float): dB above block statistic, default 6
-            - exclude_above (float): min range to apply (m), default 250
-            - percentile (float): percentile for block, default 15
-            - min_pings / min_samples: override min_periods
+            - exclude_above (float): shallowest range filtered (m), default 250
+            - depth_bin (float): bin height (m), default 20
+            - n_pings (int): pings either side in the comparison block, default 50
+              (``ping_window`` is accepted as an alias)
+            - thr_dB (float): margin above the block statistic (dB), default 12
+              (``threshold`` is accepted as an alias)
+            - percentile (float): statistic within a bin, default 15
 
     Returns:
-        Tuple of ``(transient_mask, unfeasible_mask)`` boolean DataArrays.
+        Tuple of ``(transient_mask, unfeasible_mask)`` boolean DataArrays shaped like Sv.
+        ``unfeasible_mask`` marks bins with data whose block statistic could not be formed.
     """
+    import pandas as pd
     import xarray as xr
 
-    rng_var = params.get("range_coord", None)
-    if rng_var is None:
-        for candidate in ("echo_range", "depth", "range_sample"):
-            if candidate in sv_dataset.dims or candidate in sv_dataset.coords:
-                rng_var = candidate
-                break
-        if rng_var is None:
-            rng_var = "echo_range"
+    excl_above = float(params.get("exclude_above", 250.0))
+    depth_bin = float(params.get("depth_bin", 20.0))
+    half = int(params.get("n_pings", params.get("ping_window", 50)))
+    thr_db = float(params.get("thr_dB", params.get("threshold", 12.0)))
+    perc = float(params.get("percentile", 15.0))
 
-    half_ping = params.get("ping_window", 5)
-    half_range = params.get("range_window", 3)
-    thr_db = params.get("threshold", 6.0)
-    excl_above = params.get("exclude_above", 250.0)
-    perc = params.get("percentile", 15)
-    min_pings = params.get("min_pings", 2 * half_ping + 1)
-    min_samples = params.get("min_samples", 2 * half_range + 1)
-
-    Sv_db = sv_dataset["Sv"]
-    range_values = sv_dataset[rng_var]
+    sv = sv_dataset["Sv"]
     ping_dim = "ping_time"
-    range_dim = range_values.dims[0] if range_values.dims else rng_var
+    range_dim = next(d for d in sv.dims if d != ping_dim)
+    data = sv.transpose(ping_dim, range_dim).values
+    ranges = _ryan_ranges(sv_dataset, range_dim)
 
-    block_ping = 2 * half_ping + 1
-    block_range = 2 * half_range + 1
-    min_periods = min_pings * min_samples
+    in_zone = np.isfinite(ranges) & (ranges >= excl_above)
+    bin_of = np.full(ranges.shape, -1, dtype=int)
+    bin_of[in_zone] = np.floor((ranges[in_zone] - excl_above) / depth_bin).astype(int)
+    n_bins = int(bin_of.max()) + 1 if in_zone.any() else 0
 
-    in_zone = range_values >= excl_above
+    mask = np.zeros(data.shape, dtype=bool)
+    unfeasible = np.zeros(data.shape, dtype=bool)
+    if n_bins and data.shape[0]:
+        linear = 10.0 ** (data / 10.0)
+        stat = np.full((data.shape[0], n_bins), np.nan)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN bins stay NaN
+            for b in range(n_bins):
+                cols = bin_of == b
+                if cols.any():
+                    stat[:, b] = np.nanpercentile(linear[:, cols], perc, axis=1)
+            block = (
+                pd.DataFrame(stat)
+                .rolling(2 * half + 1, center=True, min_periods=half + 1)
+                .median()
+                .to_numpy()
+            )
+            excess = 10.0 * np.log10(stat) - 10.0 * np.log10(block)
+        flagged = np.nan_to_num(excess, nan=-np.inf) > thr_db
+        cannot = np.isfinite(stat) & ~np.isfinite(block)
+        cols = np.flatnonzero(in_zone)
+        mask[:, cols] = flagged[:, bin_of[cols]]
+        unfeasible[:, cols] = cannot[:, bin_of[cols]]
+        mask &= np.isfinite(data)
 
-    Sv_lin = 10.0 ** (Sv_db / 10.0)
+    dims = (ping_dim, range_dim)
+    coords = {d: sv[d] for d in dims if d in sv.coords}
+    mask_da = xr.DataArray(mask, dims=dims, coords=coords).transpose(*sv.dims)
+    unfeasible_da = xr.DataArray(unfeasible, dims=dims, coords=coords).transpose(*sv.dims)
 
-    rolled = Sv_lin.rolling(
-        {ping_dim: block_ping, range_dim: block_range},
-        center=True,
-        min_periods=min_periods,
-    )
+    pct_val = float(mask.mean()) * 100 if mask.size else 0.0
+    logger.info(f"Transient noise mask (Ryan): {pct_val:.2f}% flagged")
+    return mask_da, unfeasible_da
 
-    pct_func = partial(_rolling_nanpercentile, q=perc)
-    block_lin = rolled.reduce(pct_func, keep_attrs=True)
 
-    block_db = 10.0 * np.log10(block_lin)
-
-    diff_db = Sv_db - block_db
-    mask_transient = (diff_db > thr_db) & in_zone
-    mask_unfeasible = block_db.isnull() & in_zone
-
-    mask_transient = mask_transient.where(in_zone, False)
-    mask_unfeasible = mask_unfeasible.where(in_zone, False)
-
-    pct_val = float(mask_transient.mean()) * 100 if mask_transient.size > 0 else 0.0
-    logger.info(f"Transient noise mask (Ryan): {pct_val:.1f}% flagged")
-
-    return mask_transient, mask_unfeasible
+def _ryan_ranges(sv_dataset: "xr.Dataset", range_dim: str) -> np.ndarray:
+    """One range (m) per sample along *range_dim*, from the first ping that has them."""
+    if "echo_range" in sv_dataset:
+        er = sv_dataset["echo_range"]
+        if "ping_time" in er.dims:
+            values = er.transpose("ping_time", range_dim).values
+            has = np.isfinite(values).any(axis=1)
+            return values[int(np.argmax(has))] if has.any() else values[0]
+        return np.asarray(er.values, dtype=float)
+    if range_dim in sv_dataset.coords:
+        return np.asarray(sv_dataset[range_dim].values, dtype=float)
+    raise ValueError("transient_noise_mask_ryan needs echo_range or a range coordinate.")
 

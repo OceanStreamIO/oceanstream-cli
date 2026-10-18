@@ -112,10 +112,10 @@ class TestValidation:
             parse_preset(text)
 
     def test_retired_parameter_dropped_with_note(self):
-        text = HEADER + GOOD_FREQ.replace("maxts = -35.0", "maxts = -35.0, percentile = 15")
+        text = HEADER + GOOD_FREQ.replace("threshold_db = 12.0", "threshold_db = 12.0, num_lags = 3")
         preset = parse_preset(text)
-        assert "percentile" not in preset.params[38000]["transient"]
-        assert any("percentile" in note for note in preset.notes)
+        assert "num_lags" not in preset.params[38000]["impulse"]
+        assert any("num_lags" in note for note in preset.notes)
 
     def test_parameter_ignored_by_batch_pipeline_is_noted(self):
         text = HEADER + GOOD_FREQ.replace('"-125.0dB"', '"-125.0dB", depth_quantile = 0.2')
@@ -169,6 +169,20 @@ class TestValidation:
         with pytest.raises(PresetError):
             parse_preset(text + GOOD_FREQ)
 
+    def test_ryan_detector_keeps_its_percentile(self):
+        text = HEADER + GOOD_FREQ.replace("maxts = -35.0", 'maxts = -35.0, detector = "ryan", percentile = 15')
+        transient = parse_preset(text).params[38000]["transient"]
+        assert (transient["detector"], transient["percentile"]) == ("ryan", 15.0)
+
+    def test_percentile_without_ryan_is_dropped(self):
+        preset = parse_preset(HEADER + GOOD_FREQ.replace("maxts = -35.0", "maxts = -35.0, percentile = 15"))
+        assert "percentile" not in preset.params[38000]["transient"]
+        assert any("ryan detector" in n for n in preset.notes)
+
+    def test_unknown_detector(self):
+        with pytest.raises(PresetError, match="detector"):
+            parse_preset(HEADER + GOOD_FREQ.replace("maxts = -35.0", 'maxts = -35.0, detector = "x"'))
+
     def test_params_hash_ignores_metadata(self):
         a = parse_preset(HEADER + GOOD_FREQ)
         b = parse_preset(HEADER.replace("A test preset.", "Reworded.") + GOOD_FREQ)
@@ -206,8 +220,9 @@ class TestMatch:
         family = {m.preset.key for m in matches if not m.missing_khz}
         assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-scaled",
                           "research-vessel-open-ocean-sensitive",
-                          "research-vessel-open-ocean-perping"}
-        assert {m.preset.key for m in matches[:4]} == family
+                          "research-vessel-open-ocean-perping",
+                          "research-vessel-open-ocean-ryan-tn"}
+        assert {m.preset.key for m in matches[:5]} == family
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",

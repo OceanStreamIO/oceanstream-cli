@@ -277,7 +277,11 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  #
             raise PresetError(f"frequency key {raw_freq!r} is not a number in Hz.") from e
         params[freq], dropped = validate_frequency(freq, groups)
         notes += dropped
-    notes += [f"{p} is ignored by the batch pipeline" for p in inert_in_batch(params)]
+    notes += [
+        f"{p} is ignored by the batch pipeline unless --background-estimator quantile"
+        if p.endswith("depth_quantile") else f"{p} is ignored by the batch pipeline"
+        for p in inert_in_batch(params)
+    ]
 
     methods = tuple(denoise.get("methods", GROUPS))
     unknown = [m for m in methods if m not in GROUPS]

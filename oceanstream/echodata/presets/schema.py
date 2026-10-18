@@ -87,6 +87,11 @@ FIELDS: tuple[FieldSpec, ...] = (
               help="Deep reference band top. Unset derives it from the data."),
     FieldSpec("ref_max", "transient", "float", "m", required=False, min=0.0, max=6000.0,
               help="Deep reference band bottom. Unset derives it from the data."),
+    FieldSpec("detector", "transient", "enum", required=False, options=("fielding", "ryan"),
+              help="Fielding's upward-stepping detector (default) or Ryan et al.'s (2015) "
+                   "per-depth-bin comparison with neighbouring pings."),
+    FieldSpec("percentile", "transient", "float", required=False, min=0.0, max=100.0,
+              help="Ryan detector only: the percentile compared within each depth bin."),
     # background
     FieldSpec("range_window", "background", "int_auto", "samples", min=1, max=500,
               options=("auto",), help="Range samples per noise-estimate block."),
@@ -103,7 +108,8 @@ FIELDS: tuple[FieldSpec, ...] = (
               options=("quantile", "min"), batch=False,
               help="Mask filter only; the batch pipeline takes the minimum over range."),
     FieldSpec("depth_quantile", "background", "float", required=False, min=0.0, max=1.0,
-              batch=False, help="Mask filter only."),
+              batch=False, help="Mask filter, and the batch pipeline's experimental quantile "
+                                "background estimator (--background-estimator quantile)."),
     FieldSpec("guard_mode", "background", "enum", required=False,
               options=("above", "outside_band"), batch=False, help="Mask filter only."),
     FieldSpec("guard_depth", "background", "float", "m", required=False,
@@ -116,12 +122,12 @@ FIELDS_BY_GROUP: dict[str, tuple[FieldSpec, ...]] = {
     group: tuple(f for f in FIELDS if f.group == group) for group in GROUPS
 }
 
-#: Keys older presets carry that no filter reads. ``transient.percentile`` belongs to
-#: ``transient_noise_mask_ryan``, which the pipeline does not call. They are dropped on
-#: load, with a note, rather than rejected as typos.
+#: Keys older presets carry that no filter reads. They are dropped on load, with a note,
+#: rather than rejected as typos. ``transient.percentile`` is read by the Ryan detector
+#: only, so it is dropped the same way when the preset keeps Fielding's.
 RETIRED: dict[str, frozenset[str]] = {
     "impulse": frozenset({"num_lags"}),
-    "transient": frozenset({"percentile", "a", "n"}),
+    "transient": frozenset({"a", "n"}),
     "background": frozenset({"num_side_pings", "minimal_linear"}),
 }
 
@@ -246,6 +252,12 @@ def validate_frequency(freq: int, raw: Any) -> tuple[GroupParams, list[str]]:
                 continue
             resolved[spec.name] = coerce(spec, values[spec.name], where)
         out[group] = resolved
+
+    transient = out["transient"]
+    if "percentile" in transient and transient.get("detector") != "ryan":
+        del transient["percentile"]
+        notes.append(f"{label} transient.percentile is read only by the ryan detector and "
+                     "was dropped")
 
     _check_cross_field(label, out)
     return out, notes
