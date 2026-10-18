@@ -27,7 +27,12 @@ set -uo pipefail
 
 MODE="${MODE:-sv}"
 : "${CRUISE:?}" "${DAYS:?}"
-if [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"; else : "${PRESET:?}"; fi
+if [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"
+elif [ "$MODE" = report ]; then : "${REPORT_RUNS:?}"
+else : "${PRESET:?}"; fi
+# MODE=report renders echogram_report.py for each day: the stored Sv and each
+# "label=container" run in $REPORT_RUNS (';'-separated), frequency differences from
+# $REPORT_MVBS (a container) if set, into sv-runs/<run id>/report/<day>/.
 # MODE=stats reruns only split_stats.py for each preset in $PRESET (comma-separated).
 : "${OCEANSTREAM_S3_BUCKET:?}" "${AWS_ENDPOINT_URL:?}"
 BRANCH="${BRANCH:-main}"
@@ -195,6 +200,19 @@ run_denoise() {
 }
 
 FAILED=0
+if [ "$MODE" = report ]; then
+    for day in ${DAYS//,/ }; do
+        log "== $day: echograms"
+        python -u "$SCRIPTS/echogram_report.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
+            --runs "$REPORT_RUNS" --mvbs-container "${REPORT_MVBS:-}" \
+            --mvbs-label "${REPORT_MVBS_LABEL:-$REPORT_MVBS}" --out "$LOGS/report/$day" \
+            > "$LOGS/$day-report.log" 2>&1 || FAILED=1
+        tail -3 "$LOGS/$day-report.log"
+        upload_logs
+    done
+    log "done, failed=$FAILED"
+    exit "$FAILED"
+fi
 if [ "$MODE" = stats ]; then
     for preset in ${PRESET//,/ }; do
         for day in ${DAYS//,/ }; do

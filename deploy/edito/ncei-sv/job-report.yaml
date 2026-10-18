@@ -1,0 +1,55 @@
+# Echograms comparing denoise runs on the test days, for review (echogram_report.py).
+#
+#   kubectl create configmap ncei-sv-scripts --from-file=deploy/edito/ncei-sv/run.sh \
+#       --from-file=deploy/edito/ncei-sv/ncei_fetch.py --from-file=deploy/edito/ncei-sv/split_stats.py \
+#       --from-file=deploy/edito/ncei-sv/echogram_report.py --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply --dry-run=server -f deploy/edito/ncei-sv/job-report.yaml && kubectl apply -f deploy/edito/ncei-sv/job-report.yaml
+#
+# REPORT_RUNS lists 'label=container' pairs separated by ';', in display order; the stored
+# Sv is always shown first. REPORT_MVBS names the run whose MVBS is differenced. Images
+# land in sv-runs/<run id>/report/<day>/ with an index.json. One channel is held at a
+# time, a few hundred MB.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rr2205-report
+  labels: {app: ncei-sv}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 14400
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {app: ncei-sv}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      imagePullSecrets: [{name: acr-pull-secret}]
+      containers:
+        - name: report
+          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          command: [bash, /scripts/run.sh]
+          envFrom:
+            - secretRef: {name: oceanstream-s3}
+          env:
+            - {name: CRUISE, value: RR2205}
+            - {name: MODE, value: report}
+            - {name: DAYS, value: "2022-07-12,2022-07-02,2022-06-21,2022-06-30,2022-07-07"}
+            - {name: REPORT_RUNS, value: "Draft=denoised-research-vessel-open-ocean"}
+            - {name: REPORT_MVBS, value: denoised-research-vessel-open-ocean}
+            - {name: INSTALL_CUPY, value: "0"}
+            - {name: REQUIRE_GPU, value: "0"}
+            - {name: BRANCH, value: feat/denoise-presets}
+            - {name: S3_PREFIX, value: r2r/RR2205}
+            - {name: HOME, value: /work}
+          resources:
+            requests: {cpu: "2", memory: 8Gi, ephemeral-storage: 2Gi}
+            limits: {cpu: "4", memory: 8Gi, ephemeral-storage: 10Gi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: scripts
+          configMap: {name: ncei-sv-scripts, defaultMode: 0755}
+        - name: work
+          emptyDir: {sizeLimit: 8Gi}

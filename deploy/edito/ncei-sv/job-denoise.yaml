@@ -2,7 +2,8 @@
 #
 #   kubectl create configmap ncei-sv-scripts --from-file=deploy/edito/ncei-sv/run.sh \
 #       --from-file=deploy/edito/ncei-sv/ncei_fetch.py \
-#       --from-file=deploy/edito/ncei-sv/split_stats.py --dry-run=client -o yaml | kubectl apply -f -
+#       --from-file=deploy/edito/ncei-sv/split_stats.py --from-file=deploy/edito/ncei-sv/echogram_report.py \
+#       --dry-run=client -o yaml | kubectl apply -f -
 #   kubectl apply --dry-run=server -f deploy/edito/ncei-sv/job-denoise.yaml && kubectl apply -f deploy/edito/ncei-sv/job-denoise.yaml
 #
 # Denoise the stored Sv of the test days with one preset (stages 5-9), and split the
