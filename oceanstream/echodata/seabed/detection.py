@@ -964,10 +964,40 @@ def detect_seabed(
     return methods[method](ds, channel=channel, r0=r0, r1=r1, **kwargs)
 
 
+def _supported_line(
+    sv: np.ndarray,
+    range_1d: np.ndarray,
+    line: np.ndarray,
+    min_sv: float,
+    above_m: float = 5.0,
+    below_m: float = 30.0,
+    window: int = 7,
+    min_pings: int = 3,
+) -> np.ndarray:
+    """*line* where a seabed echo backs it, NaN elsewhere.
+
+    A ping's line stands when the strongest Sv from *above_m* above it to *below_m* below
+    it reaches *min_sv*, and at least *min_pings* of the *window* pings around it stand
+    too. The composite detector falls back on any cell above its floor and smooths with a
+    running median, so in water deeper than the range a few interference spikes become a
+    line wandering through the water column; a real seabed echo is tens of dB stronger.
+    """
+    from scipy.ndimage import uniform_filter1d
+
+    backed = np.zeros(line.size, dtype=bool)
+    for p in np.flatnonzero(np.isfinite(line)):
+        band = (range_1d >= line[p] - above_m) & (range_1d <= line[p] + below_m)
+        values = sv[p, band]
+        backed[p] = bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= min_sv
+    near = uniform_filter1d(backed.astype(float), size=window, mode="constant") * window
+    return np.where(backed & (near >= min_pings - 1e-9), line, np.nan)
+
+
 def detect_seabed_interleaved(
     ds: xr.Dataset,
     channel: Optional[str] = None,
     max_gap_s: float = 120.0,
+    min_seabed_sv: float = -35.0,
     **kwargs,
 ) -> SeabedDetectionResult:
     """Seabed line on every ping when the channels transmit in turn.
@@ -975,27 +1005,34 @@ def detect_seabed_interleaved(
     A multiplexed echosounder leaves each channel empty at the other channels' pings, so
     a line detected on one channel of the shared ping grid is empty, and masks nothing,
     at every ping of the others. Here the composite detector runs on the chosen channel's
-    own pings, down to the full range it recorded unless ``r1`` is given, and the line is
-    interpolated in time onto every ping. A ping more than *max_gap_s* from the nearest
-    detection gets no line.
+    own pings, down to the full range it recorded unless ``r1`` is given. Only the parts
+    of its line backed by an echo of at least *min_seabed_sv* stand (see
+    :func:`_supported_line`), and those are interpolated in time onto every ping. A ping
+    more than *max_gap_s* from the nearest standing detection gets no line.
+
+    On RR2205 at 38 kHz the seabed's strongest echo reached -21 to -3 dB in 90 % of
+    pings, while in water deeper than the range 90 % of pings peaked below -48 dB.
     """
     from oceanstream.echodata.denoise.denoise import compact_channel
 
     if channel is None:
         channel = find_optimal_seabed_channel(ds)
     compact, _, _ = compact_channel(ds.sel(channel=[channel]))
+    compact = compact[[v for v in ("Sv", "echo_range") if v in compact.data_vars]].load()
     if "r1" not in kwargs:
         kwargs["r1"] = float(_get_range_array(compact)[0].max())
     result = detect_seabed(compact, method="composite", channel=channel, **kwargs)
+    sv, range_1d, _ = _get_sv_2d(compact, channel)
+    line = _supported_line(sv, range_1d, result.seabed_depth.values.astype(float), min_seabed_sv)
 
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     dst = ds["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
-    found = np.isfinite(result.seabed_depth.values)
+    found = np.isfinite(line)
     depth = np.full(dst.size, np.nan)
     index = np.full(dst.size, np.nan)
     if found.any():
         t = src[found]
-        depth = np.interp(dst, t, result.seabed_depth.values[found])
+        depth = np.interp(dst, t, line[found])
         index = np.interp(dst, t, np.asarray(result.seabed_index.values, dtype=float)[found])
         pos = np.searchsorted(t, dst)
         before = np.abs(dst - t[np.clip(pos - 1, 0, t.size - 1)])
@@ -1015,7 +1052,8 @@ def detect_seabed_interleaved(
         pings_total=int(dst.size),
         detection_rate=detected / dst.size if dst.size else 0.0,
         params={**result.params, "interleaved": True, "max_gap_s": max_gap_s,
-                "channel_pings": int(src.size), "channel_pings_detected": int(found.sum())},
+                "min_seabed_sv": min_seabed_sv, "channel_pings": int(src.size),
+                "channel_pings_detected": int(found.sum())},
     )
 
 

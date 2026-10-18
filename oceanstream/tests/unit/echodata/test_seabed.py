@@ -577,3 +577,19 @@ class TestInterleavedSeabed:
         )
         assert np.isnan(result.seabed_depth.values[-20:]).all()
         assert np.isfinite(result.seabed_depth.values[:300]).all()
+
+    def test_spikes_in_deep_water_make_no_line(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        ds = self.interleaved()
+        gen = np.random.default_rng(1)
+        sv = gen.normal(-75, 2, ds["Sv"].shape)
+        # Water deeper than the range, with a few interference spikes above the
+        # composite detector's -40 dB floor but far below any seabed echo.
+        for p in gen.choice(ds.sizes["ping_time"], 40, replace=False):
+            start = int(gen.integers(300, 950))
+            sv[:, p, start : start + 30] = -38.0
+        ds["Sv"] = ds["Sv"].copy(data=np.where(np.isfinite(ds["Sv"].values), sv, np.nan))
+        result = detect_seabed_interleaved(ds, pick="edge")
+        assert result.pings_detected == 0
+        assert np.isfinite(mask_seabed(ds, result)["Sv"].values).sum() == np.isfinite(ds["Sv"].values).sum()
