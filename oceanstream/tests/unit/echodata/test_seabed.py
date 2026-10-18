@@ -593,3 +593,17 @@ class TestInterleavedSeabed:
         result = detect_seabed_interleaved(ds, pick="edge")
         assert result.pings_detected == 0
         assert np.isfinite(mask_seabed(ds, result)["Sv"].values).sum() == np.isfinite(ds["Sv"].values).sum()
+
+    def test_a_weak_stretch_on_station_is_bridged(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Two minutes without a seabed echo in the middle of a station.
+        fjord = create_fjord_dataset(dropout=slice(100, 220))
+        ds = self.interleaved()
+        sv = np.stack([fjord["Sv"].values, fjord["Sv"].values])
+        sv[0, 1::2] = np.nan
+        sv[1, 0::2] = np.nan
+        ds["Sv"] = ds["Sv"].copy(data=sv)
+        result = detect_seabed_interleaved(ds, pick="edge")
+        assert result.pings_detected == 300
+        assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)

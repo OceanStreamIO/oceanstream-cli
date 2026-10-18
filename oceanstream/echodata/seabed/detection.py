@@ -993,11 +993,31 @@ def _supported_line(
     return np.where(backed & (near >= min_pings - 1e-9), line, np.nan)
 
 
+def _bridge_line(
+    times_ns: np.ndarray, line: np.ndarray, max_bridge_s: float, max_step_m: float
+) -> np.ndarray:
+    """Fill runs of missing line between two detections that agree.
+
+    A run is filled by linear interpolation when the detections either side are at most
+    *max_bridge_s* apart and differ by at most *max_step_m*, as on station, where a
+    seabed echo weakened for a few minutes has not moved.
+    """
+    out = line.copy()
+    found = np.flatnonzero(np.isfinite(line))
+    for a, b in zip(found[:-1], found[1:]):
+        if (b - a > 1 and times_ns[b] - times_ns[a] <= max_bridge_s * 1e9
+                and abs(line[b] - line[a]) <= max_step_m):
+            out[a + 1 : b] = np.interp(times_ns[a + 1 : b], times_ns[[a, b]], line[[a, b]])
+    return out
+
+
 def detect_seabed_interleaved(
     ds: xr.Dataset,
     channel: Optional[str] = None,
     max_gap_s: float = 120.0,
     min_seabed_sv: float = -35.0,
+    max_bridge_s: float = 1800.0,
+    max_step_m: float = 25.0,
     **kwargs,
 ) -> SeabedDetectionResult:
     """Seabed line on every ping when the channels transmit in turn.
@@ -1007,8 +1027,10 @@ def detect_seabed_interleaved(
     at every ping of the others. Here the composite detector runs on the chosen channel's
     own pings, down to the full range it recorded unless ``r1`` is given. Only the parts
     of its line backed by an echo of at least *min_seabed_sv* stand (see
-    :func:`_supported_line`), and those are interpolated in time onto every ping. A ping
-    more than *max_gap_s* from the nearest standing detection gets no line.
+    :func:`_supported_line`). Gaps of up to *max_bridge_s* between standing parts that
+    agree within *max_step_m* are bridged (:func:`_bridge_line`), and the line is
+    interpolated in time onto every ping. A ping more than *max_gap_s* from the nearest
+    standing detection gets no line.
 
     On RR2205 at 38 kHz the seabed's strongest echo reached -21 to -3 dB in 90 % of
     pings, while in water deeper than the range 90 % of pings peaked below -48 dB.
@@ -1024,8 +1046,9 @@ def detect_seabed_interleaved(
     result = detect_seabed(compact, method="composite", channel=channel, **kwargs)
     sv, range_1d, _ = _get_sv_2d(compact, channel)
     line = _supported_line(sv, range_1d, result.seabed_depth.values.astype(float), min_seabed_sv)
-
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
+    line = _bridge_line(src, line, max_bridge_s, max_step_m)
+
     dst = ds["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     found = np.isfinite(line)
     depth = np.full(dst.size, np.nan)
@@ -1052,7 +1075,8 @@ def detect_seabed_interleaved(
         pings_total=int(dst.size),
         detection_rate=detected / dst.size if dst.size else 0.0,
         params={**result.params, "interleaved": True, "max_gap_s": max_gap_s,
-                "min_seabed_sv": min_seabed_sv, "channel_pings": int(src.size),
+                "min_seabed_sv": min_seabed_sv, "max_bridge_s": max_bridge_s,
+                "max_step_m": max_step_m, "channel_pings": int(src.size),
                 "channel_pings_detected": int(found.sum())},
     )
 
