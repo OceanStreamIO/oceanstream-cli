@@ -518,3 +518,62 @@ class TestEdgeCases:
         
         # Should handle gracefully
         assert result.pings_detected == 0 or result.pings_total > 0
+
+
+class TestInterleavedSeabed:
+    """A seabed line for channels that transmit in turn reaches every ping."""
+
+    @staticmethod
+    def interleaved(seabed_m: float = 73.0, n_pings: int = 300) -> xr.Dataset:
+        """38 and 120 kHz pinging in turn on one grid, each empty at the other's pings."""
+        fjord = create_fjord_dataset(n_pings=n_pings, seabed_m=seabed_m)
+        sv = np.stack([fjord["Sv"].values, fjord["Sv"].values])
+        sv[0, 1::2] = np.nan  # 38 kHz pings on even pings
+        sv[1, 0::2] = np.nan  # 120 kHz on odd ones
+        rng = np.where(np.isfinite(sv), np.broadcast_to(fjord["echo_range"].values, sv.shape), np.nan)
+        return xr.Dataset(
+            {
+                "Sv": (["channel", "ping_time", "range_sample"], sv),
+                "echo_range": (["channel", "ping_time", "range_sample"], rng),
+                "frequency_nominal": (["channel"], [38000.0, 120000.0]),
+            },
+            coords={
+                "channel": ["WBT 1-ES38", "WBT 2-ES120"],
+                "ping_time": fjord["ping_time"].values,
+                "range_sample": fjord["range_sample"].values,
+            },
+        )
+
+    def test_line_covers_the_other_channels_pings(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        result = detect_seabed_interleaved(self.interleaved(), pick="edge")
+        assert result.channel == "WBT 1-ES38"
+        assert result.pings_detected == 300
+        assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+
+    def test_mask_reaches_the_120_khz_pings(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        ds = self.interleaved()
+        masked = mask_seabed(ds, detect_seabed_interleaved(ds, pick="edge"), offset=0.5)
+        rng_m = ds["echo_range"].values[0, 0]
+        ch120 = masked["Sv"].values[1, 1::2]
+        assert np.isnan(ch120[:, rng_m >= 72.7]).all()
+        assert np.isfinite(ch120[:, rng_m < 72.3]).all()
+
+    def test_no_line_far_from_a_detection(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        ds = self.interleaved()
+        # Ten minutes of 120 kHz pings only, with no 38 kHz ping to take a line from.
+        late = ds.isel(ping_time=slice(0, 20)).assign_coords(
+            ping_time=ds["ping_time"].values[:20] + np.timedelta64(900, "s")
+        )
+        late["Sv"][0] = np.nan
+        late["echo_range"][0] = np.nan
+        result = detect_seabed_interleaved(
+            xr.concat([ds, late], "ping_time", data_vars="minimal"), pick="edge"
+        )
+        assert np.isnan(result.seabed_depth.values[-20:]).all()
+        assert np.isfinite(result.seabed_depth.values[:300]).all()

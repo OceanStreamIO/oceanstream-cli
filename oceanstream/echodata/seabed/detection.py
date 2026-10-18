@@ -964,6 +964,61 @@ def detect_seabed(
     return methods[method](ds, channel=channel, r0=r0, r1=r1, **kwargs)
 
 
+def detect_seabed_interleaved(
+    ds: xr.Dataset,
+    channel: Optional[str] = None,
+    max_gap_s: float = 120.0,
+    **kwargs,
+) -> SeabedDetectionResult:
+    """Seabed line on every ping when the channels transmit in turn.
+
+    A multiplexed echosounder leaves each channel empty at the other channels' pings, so
+    a line detected on one channel of the shared ping grid is empty, and masks nothing,
+    at every ping of the others. Here the composite detector runs on the chosen channel's
+    own pings, down to the full range it recorded unless ``r1`` is given, and the line is
+    interpolated in time onto every ping. A ping more than *max_gap_s* from the nearest
+    detection gets no line.
+    """
+    from oceanstream.echodata.denoise.denoise import compact_channel
+
+    if channel is None:
+        channel = find_optimal_seabed_channel(ds)
+    compact, _, _ = compact_channel(ds.sel(channel=[channel]))
+    if "r1" not in kwargs:
+        kwargs["r1"] = float(_get_range_array(compact)[0].max())
+    result = detect_seabed(compact, method="composite", channel=channel, **kwargs)
+
+    src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
+    dst = ds["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
+    found = np.isfinite(result.seabed_depth.values)
+    depth = np.full(dst.size, np.nan)
+    index = np.full(dst.size, np.nan)
+    if found.any():
+        t = src[found]
+        depth = np.interp(dst, t, result.seabed_depth.values[found])
+        index = np.interp(dst, t, np.asarray(result.seabed_index.values, dtype=float)[found])
+        pos = np.searchsorted(t, dst)
+        before = np.abs(dst - t[np.clip(pos - 1, 0, t.size - 1)])
+        after = np.abs(t[np.clip(pos, 0, t.size - 1)] - dst)
+        far = np.minimum(before, after) > max_gap_s * 1e9
+        depth[far] = np.nan
+        index[far] = np.nan
+
+    coords = {"ping_time": ds["ping_time"].values}
+    detected = int(np.isfinite(depth).sum())
+    return SeabedDetectionResult(
+        seabed_depth=xr.DataArray(depth, dims=["ping_time"], coords=coords, name="seabed_depth"),
+        seabed_index=xr.DataArray(index, dims=["ping_time"], coords=coords, name="seabed_index"),
+        method=result.method,
+        channel=result.channel,
+        pings_detected=detected,
+        pings_total=int(dst.size),
+        detection_rate=detected / dst.size if dst.size else 0.0,
+        params={**result.params, "interleaved": True, "max_gap_s": max_gap_s,
+                "channel_pings": int(src.size), "channel_pings_detected": int(found.sum())},
+    )
+
+
 def mask_seabed(
     ds: xr.Dataset,
     seabed_result: SeabedDetectionResult,
