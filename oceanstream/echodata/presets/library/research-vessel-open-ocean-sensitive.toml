@@ -3,7 +3,7 @@
 [preset]
 key = "research-vessel-open-ocean-sensitive"
 name = "Research vessel, open ocean, sensitive"
-status = "draft"
+status = "deprecated"
 summary = "Time-scaled windows plus lower impulse and transient thresholds, to catch deep vertical streaks."
 description = """
 On the RR2205 test days the draft's impulse and transient filters flagged almost nothing while thin vertical streaks reached 800-1500 m through the 38 kHz echograms. This variant lowers the thresholds toward Ryan et al.'s published values and tropical-pacific-v3 (impulse 10 dB and transient 10 dB at 38 kHz, 7 dB at 120 and 200 kHz, 8 and 7 dB at 18 kHz, 8 and 6 dB at 70 kHz), keeping the time-scaled windows and per-session filtering of research-vessel-open-ocean-scaled.
@@ -20,8 +20,8 @@ echosounders = ["Simrad EK80 WBT"]
 [[preset.validations]]
 cruise = "RR2205"
 days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
-outcome = "pending"
-notes = "Compared with research-vessel-open-ocean on the five test days, from the same stored Sv."
+outcome = "rejected"
+notes = "Rejected 2026-10-17 (round 3, five-day means, same stored Sv). Within 0.1 points of research-vessel-open-ocean-scaled on every channel (38 kHz deep band kept 9.1 %, streak pings 14.3 %): the lower impulse and transient thresholds flag almost nothing more, and the remaining noise is the scaled background's."
 reference = "s3://oceanstream-bucket/r2r/RR2205/"
 
 [echodata.denoise]

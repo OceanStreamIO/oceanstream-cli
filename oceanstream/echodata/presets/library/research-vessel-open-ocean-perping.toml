@@ -3,7 +3,7 @@
 [preset]
 key = "research-vessel-open-ocean-perping"
 name = "Research vessel, open ocean, per-ping background"
-status = "draft"
+status = "deprecated"
 summary = "Time-scaled windows and sessions, with the background noise level estimated for each ping."
 description = """
 On RR2205 the deep vertical streaks are whole pings whose noise floor sits a few dB above their neighbours'. A noise level estimated over a block of pings cannot follow that, so the excess survives background removal; only pruning's cross-talk check dropped those pings. Here each ping gets its own noise level (ping_window = 1).
@@ -22,8 +22,8 @@ echosounders = ["Simrad EK80 WBT"]
 [[preset.validations]]
 cruise = "RR2205"
 days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
-outcome = "pending"
-notes = "Compared with research-vessel-open-ocean, -scaled and -sensitive on the five test days, from the same stored Sv."
+outcome = "rejected"
+notes = "Rejected 2026-10-18 (rounds 3 and 4, five-day means, same stored Sv). The worst variant tried: deepest 30 % of range still kept 25.9 % at 18 kHz and 16.1 % at 38 kHz, streak pings 49.1 % and 30.2 % (draft 22.6 % and 11.0 %). With the experimental quantile estimator it improves (38 kHz 6.5 % and 7.5 %) but stays behind the draft with the same estimator (4.3 % and 5.8 %). One-ping blocks leave the noise level too uncertain to follow single noisy pings."
 reference = "s3://oceanstream-bucket/r2r/RR2205/"
 
 [echodata.denoise]

@@ -4,7 +4,7 @@
 [preset]
 key = "research-vessel-open-ocean-scaled"
 name = "Research vessel, open ocean, time-scaled windows"
-status = "draft"
+status = "deprecated"
 summary = "research-vessel-open-ocean with windows scaled to the ping interval and per-session filtering."
 description = """
 The ping-count windows of research-vessel-open-ocean come from presets adopted on Saildrone data pinging every 2.8 s (SD_TPOS2023_v03 short pulse; 2.5 s long pulse). RR2205 pings each channel every 39 s, so as written a 100-ping attenuation window spans 65 minutes instead of 4.7. With reference_ping_interval_s = 2.8 the pipeline scales num_side_pings, n_pings and the background ping_window by the reference interval over each channel's own, never below 5 pings (10 for background). Ping lags are not scaled.
@@ -23,8 +23,8 @@ echosounders = ["Simrad EK80 WBT"]
 [[preset.validations]]
 cruise = "RR2205"
 days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
-outcome = "pending"
-notes = "Compared with research-vessel-open-ocean on the five test days, from the same stored Sv."
+outcome = "rejected"
+notes = "Rejected 2026-10-17 (round 3, five-day means, same stored Sv). Worse than the unscaled draft on every measure: share of the deepest 30 % of each channel's range still kept 21.6 % at 18 kHz and 9.1 % at 38 kHz (draft 12.6 % and 6.8 %); pings keeping more than a fifth of that band 36.5 % and 14.4 % (draft 22.6 % and 11.0 %). Scaling shrinks the background ping_window to its floor, and the echopype estimator, the minimum of block means along range, sinks as blocks shrink."
 reference = "s3://oceanstream-bucket/r2r/RR2205/"
 
 [echodata.denoise]

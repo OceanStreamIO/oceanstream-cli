@@ -218,11 +218,11 @@ class TestMatch:
         matches = match_presets([18, 38, 70, 120, 200], platform="research-vessel",
                                 regime="open-ocean", water_depth_m=(3000, 5500))
         family = {m.preset.key for m in matches if not m.missing_khz}
-        assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-scaled",
-                          "research-vessel-open-ocean-sensitive",
-                          "research-vessel-open-ocean-perping",
-                          "research-vessel-open-ocean-ryan-tn"}
-        assert {m.preset.key for m in matches[:5]} == family
+        # The rejected -scaled, -sensitive and -perping trials are deprecated and never match.
+        assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-ryan-tn",
+                          "research-vessel-open-ocean-ryan-short",
+                          "research-vessel-open-ocean-ryan-margin"}
+        assert {m.preset.key for m in matches[:4]} == family
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",

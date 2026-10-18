@@ -11,10 +11,12 @@ The library lives in `oceanstream/echodata/presets/library/`, one TOML file per 
 | `tropical-pacific-v3` | experimental | 38, 200 | The same survey with lower thresholds; checked on one day only |
 | `munkholmen-fjord` | production | 38, 200 | Stationary buoy in a 76 m fjord; the published MUNKHOLMEN_2026 products |
 | `research-vessel-open-ocean` | draft | 18, 38, 70, 120, 200 | Hull-mounted EK80 on deep-water research cruises; first run on RR2205 |
-| `research-vessel-open-ocean-scaled` | draft | 18, 38, 70, 120, 200 | The same, with windows scaled to the ping interval and per-session filtering |
-| `research-vessel-open-ocean-sensitive` | draft | 18, 38, 70, 120, 200 | The scaled variant with lower impulse and transient thresholds |
-| `research-vessel-open-ocean-perping` | draft | 18, 38, 70, 120, 200 | The scaled variant with the background noise estimated per ping |
+| `research-vessel-open-ocean-scaled` | deprecated | 18, 38, 70, 120, 200 | Rejected: windows scaled to the ping interval left more deep noise |
+| `research-vessel-open-ocean-sensitive` | deprecated | 18, 38, 70, 120, 200 | Rejected: lower thresholds on the scaled variant changed nothing measurable |
+| `research-vessel-open-ocean-perping` | deprecated | 18, 38, 70, 120, 200 | Rejected: a per-ping background estimate left the most deep noise |
 | `research-vessel-open-ocean-ryan-tn` | draft | 18, 38, 70, 120, 200 | The draft with Ryan et al.'s transient detector |
+| `research-vessel-open-ocean-ryan-short` | draft | 18, 38, 70, 120, 200 | Ryan's detector comparing each ping with the 8 pings either side |
+| `research-vessel-open-ocean-ryan-margin` | draft | 18, 38, 70, 120, 200 | Ryan's detector with an 8 dB margin instead of 6 dB |
 
 `oceanstream process echodata presets list` prints the current list.
 
@@ -122,7 +124,7 @@ A preset adopted on one survey is the starting point for others like it. For a n
 - **Background removal does most of the work.** At Munkholmen the three mask filters removed well under 1 % of cells; background removal removed 84-91 % of the 200 kHz water column.
 - **A noise floor that steps needs headroom.** The Munkholmen 200 kHz floor moves between about -102 and -92 dB re 1 W within minutes, so its noise ceiling sits at -85 dB.
 - **Windows count pings, and ping rates differ by an order of magnitude.** TPOS Saildrones pinged every 2.8 s, while RR2205's EK80 pinged each of its five channels in turn, every 39 s per channel. A 100-ping window tuned on TPOS spans 4.7 minutes there and 65 minutes on RR2205. Record the ping interval a preset was tuned at.
-- **Channels that ping in turn need their own pings.** On RR2205 each channel has data in one ping of five; the pipeline compacts each channel onto its own pings and recorded range before filtering, background estimation and pruning, and echograms plot each channel's own pings.
+- **Channels that ping in turn need their own pings.** On RR2205 each channel has data in one ping of five; the pipeline compacts each channel onto its own pings and recorded range before filtering, background estimation and pruning, and echograms plot each channel's own pings. Seabed masking detects the line on the 38 kHz channel's own pings, down to its full recorded range, and interpolates it in time onto every ping, so the other channels are masked too.
 - **Check what looks like an event before tuning for it.** A pale band that motivated part of the TPOS tuning was a missing raw file, not attenuation.
 
 ## The Denoise Lab
