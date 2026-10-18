@@ -127,6 +127,9 @@ A preset adopted on one survey is the starting point for others like it. For a n
 - **Channels that ping in turn need their own pings.** On RR2205 each channel has data in one ping of five; the pipeline compacts each channel onto its own pings and recorded range before filtering, background estimation and pruning, and echograms plot each channel's own pings. Seabed masking detects the line on the 38 kHz channel's own pings, down to its full recorded range, and interpolates it in time onto every ping, so the other channels are masked too.
 - **Check what looks like an event before tuning for it.** A pale band that motivated part of the TPOS tuning was a missing raw file, not attenuation.
 
+- **Ryan's transient detector needs a short block where layers migrate.** On RR2205 a block of 20-50 pings either side (26-66 minutes) flagged diagonal traces along the layers migrating at dawn and dusk; 8 pings either side (about 5 minutes) left them intact and still cut 38 kHz streak pings from 8.0 % to 1.1 %. With the quantile background estimator the two together beat either alone.
+- **A seabed inside the cross-talk reference band reads as cross-talk.** On RR2205 2022-07-12 the seabed lay at 1,071 m and 1,175 m, inside the 800-1,200 m band, and cross-talk pruning dropped every 38 and 18 kHz ping of those two sessions. Run with `--no-crosstalk` until the check excludes the seabed.
+
 ## The Denoise Lab
 
 The Lab is where presets are tuned interactively. Two of its limits matter here: its form exposes only 38 and 200 kHz, so five-frequency ship data cannot be tuned there yet, and it shows the background-mask parameters listed above, which have no effect on its runs. A preset tuned in the Lab is exported as TOML and added to the library with its `[preset]` metadata.

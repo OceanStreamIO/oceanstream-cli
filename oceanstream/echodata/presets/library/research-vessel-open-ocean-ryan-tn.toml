@@ -23,7 +23,7 @@ echosounders = ["Simrad EK80 WBT"]
 cruise = "RR2205"
 days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
 outcome = "pending"
-notes = "First test survey: R/V Roger Revelle, US GO-SHIP P02, Honolulu to San Diego, 13 June to 16 July 2022. EK80 at 18, 38, 70, 120 and 200 kHz, CW 1.024 ms, complex samples; raw at NCEI. Test days not chosen yet."
+notes = "Round 5 (2026-10-18), with --background-estimator quantile, seabed mask and no cross-talk pruning, four deep-water days: deepest 30 % of range still kept 1.8 % at 38 kHz and 4.6 % at 18 kHz (draft 5.4 % and 11.4 %); streak pings 0.25 % and 1.7 % (draft 8.0 % and 19.3 %). Cleanest run so far, but the +-20-50-ping blocks flag diagonal traces along layers migrating at dawn and dusk (21 June, 38 kHz). Transient flags 4.3 % of 38 kHz and 16.9 % of 18 kHz cells. Round 4 without the quantile estimator: 3.1 % and 1.6 % at 38 kHz."
 reference = "s3://noaa-wcsd-pds/data/raw/Roger_Revelle/RR2205/EK80/"
 
 [echodata.denoise]

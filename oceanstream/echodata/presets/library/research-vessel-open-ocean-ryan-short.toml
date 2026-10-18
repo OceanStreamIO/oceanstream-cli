@@ -21,7 +21,7 @@ echosounders = ["Simrad EK80 WBT"]
 cruise = "RR2205"
 days = ["2022-06-21", "2022-06-30", "2022-07-02", "2022-07-07", "2022-07-12"]
 outcome = "pending"
-notes = "Compared with research-vessel-open-ocean-ryan-tn on the five test days, from the same stored Sv, with the experimental quantile background estimator."
+notes = "Round 5 (2026-10-18), with --background-estimator quantile, seabed mask and no cross-talk pruning, four deep-water days: deepest 30 % of range still kept 2.0 % at 38 kHz and 4.9 % at 18 kHz (draft 5.4 % and 11.4 %); streak pings 1.1 % and 4.4 % (draft 8.0 % and 19.3 %). Leaves the layers migrating at dawn and dusk intact, which -ryan-tn does not. Transient flags 4.0 % of 38 kHz and 15.4 % of 18 kHz cells."
 reference = "s3://noaa-wcsd-pds/data/raw/Roger_Revelle/RR2205/EK80/"
 
 [echodata.denoise]
