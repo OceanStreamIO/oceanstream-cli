@@ -171,7 +171,8 @@ run_sv() {
 }
 
 # run_denoise DAY: stages 5-9 from the stored Sv; appends to metrics.jsonl.
-DENOISED="denoised-${PRESET:-}"
+# DENOISED_CONTAINER keeps runs of one preset with different pipeline flags apart.
+DENOISED="${DENOISED_CONTAINER:-denoised-${PRESET:-}}"
 run_denoise() {
     local day="$1" t0 t1 rc
     t0="$(date +%s)"
@@ -186,8 +187,9 @@ run_denoise() {
         ${PIPELINE_ARGS:-} > "$LOGS/$day-denoise.log" 2>&1
     rc=$?
     t1="$(date +%s)"
-    printf '{"day": "%s", "run": "denoise", "preset": "%s", "exit": %d, "seconds": %d, "usage": %s}\n' \
-        "$day" "$PRESET" "$rc" "$((t1 - t0))" "$(summarise "$t0" "$t1")" | tee -a "$LOGS/metrics.jsonl"
+    printf '{"day": "%s", "run": "denoise", "preset": "%s", "denoised": "%s", "args": "%s", "exit": %d, "seconds": %d, "usage": %s}\n' \
+        "$day" "$PRESET" "$DENOISED" "${PIPELINE_ARGS:-}" "$rc" "$((t1 - t0))" "$(summarise "$t0" "$t1")" \
+        | tee -a "$LOGS/metrics.jsonl"
     tail -5 "$LOGS/$day-denoise.log"
     return "$rc"
 }

@@ -13,6 +13,8 @@ The library lives in `oceanstream/echodata/presets/library/`, one TOML file per 
 | `research-vessel-open-ocean` | draft | 18, 38, 70, 120, 200 | Hull-mounted EK80 on deep-water research cruises; first run on RR2205 |
 | `research-vessel-open-ocean-scaled` | draft | 18, 38, 70, 120, 200 | The same, with windows scaled to the ping interval and per-session filtering |
 | `research-vessel-open-ocean-sensitive` | draft | 18, 38, 70, 120, 200 | The scaled variant with lower impulse and transient thresholds |
+| `research-vessel-open-ocean-perping` | draft | 18, 38, 70, 120, 200 | The scaled variant with the background noise estimated per ping |
+| `research-vessel-open-ocean-ryan-tn` | draft | 18, 38, 70, 120, 200 | The draft with Ryan et al.'s transient detector |
 
 `oceanstream process echodata presets list` prints the current list.
 
@@ -83,8 +85,13 @@ Four rules come from how the pipeline reads a config, and the loader enforces th
 
 - **Every required parameter is written out.** The pipeline merges built-in per-frequency defaults underneath a config, so a key left out does not mean "off" or "the filter default"; it silently takes a built-in value. The loader rejects a preset with a required parameter missing. Optional parameters (`exclude_shallow_above`, `vote_k_of_n`, `post_dilate`, `ref_min`/`ref_max`) mean "off" when left out.
 - **Every channel needs its own frequency section.** The pipeline does not fall back to a neighbouring frequency: a channel with no section is left out of the mask filters with only a log warning. The denoise stage now stops with an error instead, naming the missing frequencies.
-- **Four background parameters matter in the batch pipeline.** Background removal follows echopype's arithmetic and reads `range_window`, `ping_window`, `SNR_threshold` and `background_noise_max`, taking absorption from the Sv data. `sound_absorption`, `depth_stat`, `depth_quantile` and the `guard_*` parameters only reach the standalone background mask, which the batch pipeline does not call. The loader accepts them but notes each one, so nobody tunes a parameter with no effect.
-- **Retired keys are dropped.** `transient.percentile` belongs to a transient detector the pipeline does not use; it and a few other leftovers are dropped on load, with a note.
+- **Four background parameters matter in the batch pipeline.** Background removal follows echopype's arithmetic and reads `range_window`, `ping_window`, `SNR_threshold` and `background_noise_max`, taking absorption from the Sv data. `sound_absorption`, `depth_stat` and the `guard_*` parameters only reach the standalone background mask, which the batch pipeline does not call, and `depth_quantile` is read only by the experimental quantile estimator below. The loader accepts them but notes each one, so nobody tunes a parameter with no effect.
+- **The transient detector is a preset choice.** `detector = "ryan"` in the transient parameters runs Ryan et al.'s (2015) detector instead of Fielding's: in depth bins of `depth_bin` metres below `exclude_above`, a ping's `percentile`-th percentile of Sv is compared with the median of the same statistic over the `n_pings` pings either side, and the bin is flagged when it exceeds that by `thr_dB`. `percentile` is read only by this detector and is dropped, with a note, when Fielding's is kept. A bin's low percentile scatters from noise alone, more in short bins, so the margin has to stay above that scatter.
+- **Retired keys are dropped.** A few leftovers no filter reads (`impulse.num_lags`, `transient.a` and `n`, `background.num_side_pings`) are dropped on load, with a note.
+
+## Background noise estimators
+
+The background estimator is chosen by the pipeline run, not by the preset: `process_from_raw.py --background-estimator echopype|quantile`. `echopype` (the default) takes, for each block of `ping_window` pings, the mean power in blocks of `range_window` samples with spreading and absorption removed, and uses the minimum of those block means as the noise level. `quantile` is experimental, written for RR2205 (`oceanstream/echodata/denoise/background_estimators.py`): it takes a low quantile of the block means (`depth_quantile`, default 0.15) instead of the minimum. The minimum of many noisy block means sits below the true noise level, and further below as blocks shrink, so small ping windows remove too little with the default estimator. The estimator used is recorded on the denoised product (`background_estimator` attribute) and in the run manifest.
 
 Two optional settings deal with how a survey pings:
 

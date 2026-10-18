@@ -644,6 +644,7 @@ def denoise_day(
     strict: bool = False,
     preset_key: str | None = None,
     preset_toml: str | None = None,
+    background_estimator: str = "echopype",
 ) -> str:
     """Apply denoising to a day Zarr and save the result.
 
@@ -760,8 +761,14 @@ def denoise_day(
                 split_sessions,
             )
 
+            from oceanstream.echodata.denoise.background_estimators import (
+                estimate_background_level,
+            )
+
             session_gap = getattr(denoise_config, "session_gap_minutes", None)
             reference_interval = getattr(denoise_config, "reference_ping_interval_s", None)
+            if background_estimator != "echopype":
+                logger.info("  Background estimator: %s (experimental)", background_estimator)
 
             diag_by_channel = {e["channel"]: e for e in diag_channels}
             before = ds_denoised["Sv"]
@@ -801,11 +808,13 @@ def denoise_day(
                     # One session uses the data as is: isel with an index array would copy it.
                     for idx in sessions if sessions and len(sessions) > 1 else [None]:
                         part = work if idx is None else work.isel(ping_time=idx)
-                        part_level = products.estimate_background_level(
+                        part_level = estimate_background_level(
                             part,
+                            background_estimator,
                             ping_num=opts.get("ping_window", 50),
                             range_sample_num=opts.get("range_window", 20),
                             background_noise_max=products.parse_db(opts.get("background_noise_max")),
+                            quantile=opts.get("depth_quantile"),
                         )
                         levels_by_session.append(part_level)
                         outs_by_session.append(
@@ -840,6 +849,7 @@ def denoise_day(
             ds_denoised["Sv"] = sv_clean
             del sv_clean
             ds_denoised.attrs.setdefault("processing_level", "Level 2A")
+            ds_denoised.attrs["background_estimator"] = background_estimator
             logger.info("  Background noise removal applied per channel")
 
         # Sanity clip — mask Sv samples louder than sv_clip_max_db as NaN.
@@ -1092,6 +1102,7 @@ def run_denoising(
                     strict=cfg.strict,
                     preset_key=getattr(cfg, "preset_key", None),
                     preset_toml=getattr(cfg, "preset_toml", None),
+                    background_estimator=getattr(cfg.denoise, "background_estimator", "echopype"),
                 )
                 futures[fut] = (day_key, category)
 

@@ -1911,6 +1911,11 @@ def parse_args() -> PipelineConfig:
         help="TOML file with per-frequency denoise parameters (loads EchodataConfig.from_toml)",
     )
     parser.add_argument(
+        "--background-estimator", choices=["echopype", "quantile"], default="echopype",
+        help="Background noise estimator: echopype's (default) or the experimental "
+             "quantile estimator (oceanstream.echodata.denoise.background_estimators).",
+    )
+    parser.add_argument(
         "--preset",
         help="Denoise preset from the library (`oceanstream process echodata presets list`). "
              "Sets --denoise-config to the library file and --preset-key to the key.",
@@ -2335,6 +2340,7 @@ def parse_args() -> PipelineConfig:
             reference_ping_interval_s=echo_cfg.denoise.reference_ping_interval_s,
             session_gap_minutes=echo_cfg.denoise.session_gap_minutes,
         )
+    cfg.denoise.background_estimator = args.background_estimator
 
     return cfg
 

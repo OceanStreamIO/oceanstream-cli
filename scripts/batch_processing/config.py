@@ -136,6 +136,9 @@ class DenoiseParams:
     reference_ping_interval_s: Optional[float] = None
     # Pings further apart than this (minutes) start a new recording session.
     session_gap_minutes: Optional[float] = None
+    # Background noise estimator: "echopype" (default) or the experimental "quantile"
+    # (oceanstream.echodata.denoise.background_estimators). Chosen by the pipeline run.
+    background_estimator: str = "echopype"
 
     # ── Post-denoise sanity clip ────────────────────────────────────────
     # Anything > sv_clip_max_db in the water column is not biology — it's
