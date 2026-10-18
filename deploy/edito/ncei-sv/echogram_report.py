@@ -153,7 +153,7 @@ def render_channels(fs, so, args, runs, out: Path, index: list) -> None:
         sel = {"ping_time": own, "range_sample": slice(0, n_range)}
         seabeds = {}
         for label, (ds, _) in opened.items():
-            if "seabed_depth" in ds.coords:
+            if "seabed_depth" in ds.coords and np.isfinite(ds["seabed_depth"].values[own]).any():
                 line = ds["seabed_depth"].values[own].astype(float)
                 pad = -line.size % fp
                 with warnings.catch_warnings():
