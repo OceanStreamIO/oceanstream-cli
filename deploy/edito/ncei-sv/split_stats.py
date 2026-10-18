@@ -9,7 +9,9 @@ The comparison shows whether station and transit need different presets.
 Per channel it also measures what is left where there should be nothing: in the deepest
 30 % of the recorded range, the share of cells that survive denoising (speckle) and the
 share of pings keeping more than 20 % of those cells (streak pings), before and after
-pruning.
+pruning. Cells masked as seabed are not water column and count in neither.
+
+Where stage 6 wrote a seabed-masked store, the flags come from it.
 
 Credentials, endpoint and region come from the environment, as for ncei_fetch.py.
 """
@@ -22,7 +24,8 @@ import json
 import os
 import sys
 
-BITS = {"impulse": 1, "attenuation": 2, "transient": 4, "background": 8, "clip": 16}
+BITS = {"impulse": 1, "attenuation": 2, "transient": 4, "background": 8, "clip": 16, "seabed": 32}
+SEABED = BITS["seabed"]
 
 #: The deepest share of each channel's recorded range, noise-dominated in deep water.
 DEEP_FRACTION = 0.3
@@ -40,7 +43,7 @@ def _quality(sv, i, finite, flags, keep_ping) -> dict:
     ranges = sv["echo_range"].isel(channel=i, ping_time=int(np.argmax(pinged))).values
     recorded = np.isfinite(ranges)
     deep = recorded & (ranges >= (1 - DEEP_FRACTION) * np.nanmax(ranges))
-    cells = finite[:, deep]
+    cells = finite[:, deep] & ((flags[:, deep] & SEABED) == 0)
     kept = cells & (flags[:, deep] == 0)
     per_ping = kept.sum(axis=1) / np.maximum(cells.sum(axis=1), 1)
     streak = pinged & (per_ping > STREAK_KEPT)
@@ -90,7 +93,9 @@ def main() -> int:
         return xr.open_zarr(fs.get_mapper(found[0]), consolidated=None)
 
     sv = store(args.sv_container, f"{args.day}--*.zarr")
-    flags_ds = store(args.denoised_container, "*--denoised.zarr")
+    noise_ds = store(args.denoised_container, "*--denoised.zarr")
+    masked = fs.glob(f"{root}/{args.denoised_container}/{args.day}/*--masked.zarr")
+    flags_ds = store(args.denoised_container, "*--masked.zarr") if masked else noise_ds
     pruned = fs.glob(f"{root}/{args.denoised_container}/{args.day}/*--pruned.zarr")
     keep_ping = (
         xr.open_zarr(fs.get_mapper(pruned[0]), consolidated=None)["keep_ping"].values.astype(bool)
@@ -107,7 +112,7 @@ def main() -> int:
     for i, channel in enumerate(sv["channel"].values):
         finite = sv["Sv"].isel(channel=i).notnull().values
         flags = flags_ds["denoise_flags"].isel(channel=i).values
-        noise = flags_ds["background_noise"].isel(channel=i).values
+        noise = noise_ds["background_noise"].isel(channel=i).values
         entry = {"channel": str(channel), "kinds": {}}
         for kind in sorted(set(kinds)):
             pings = kinds == kind
