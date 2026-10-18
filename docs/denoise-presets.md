@@ -18,6 +18,8 @@ The library lives in `oceanstream/echodata/presets/library/`, one TOML file per 
 | `research-vessel-open-ocean-ryan-short` | draft | 18, 38, 70, 120, 200 | Ryan's detector comparing each ping with the 8 pings either side |
 | `research-vessel-open-ocean-ryan-margin` | draft | 18, 38, 70, 120, 200 | Ryan's detector with an 8 dB margin instead of 6 dB |
 
+The RR2205 trials behind the `research-vessel-open-ocean` family, with figures, are in [rr2205/denoise-round5.md](rr2205/denoise-round5.md).
+
 `oceanstream process echodata presets list` prints the current list.
 
 ## Using a preset
