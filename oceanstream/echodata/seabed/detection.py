@@ -969,8 +969,8 @@ def _supported_line(
     range_1d: np.ndarray,
     line: np.ndarray,
     min_sv: float,
-    above_m: float = 5.0,
-    below_m: float = 30.0,
+    above_m: float = 10.0,
+    below_m: float = 10.0,
     window: int = 7,
     min_pings: int = 3,
 ) -> np.ndarray:
@@ -981,6 +981,8 @@ def _supported_line(
     too. The composite detector falls back on any cell above its floor and smooths with a
     running median, so in water deeper than the range a few interference spikes become a
     line wandering through the water column; a real seabed echo is tens of dB stronger.
+    The band is narrow so that a line drawn tens of metres above the seabed, over
+    near-bottom scatter, does not stand on the seabed echo below it.
     """
     from scipy.ndimage import uniform_filter1d
 
