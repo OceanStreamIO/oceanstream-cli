@@ -495,6 +495,11 @@ def cmd_pull(args) -> int:
                   if wanted(k, args.include, args.exclude)}
     present = remote.listing(args.dest)
     items = plan(source, present, args.src, args.dest, flatten=args.flatten, always=args.always)
+    if args.max_files:
+        items = items[:args.max_files]
+    if args.dry_run:
+        return dry_run(items, stale(present, source, args.include, args.exclude)
+                       if args.replace else [], "pull")
     if args.verify:
         print(f"  {len(items):,} of {len(source):,} files missing or a different size", flush=True)
         return 1 if items else 0
@@ -511,6 +516,7 @@ def cmd_pull(args) -> int:
 
 def cmd_push(args) -> int:
     store, remote = Store(), _remote()
+    present: dict[str, int] = {}
     if args.file:
         sizes = remote.listing(args.src)
         if "" not in sizes:
@@ -524,6 +530,11 @@ def cmd_push(args) -> int:
         present = store.listing(args.dest)
         items = plan(source, {} if args.always else present, args.src, args.dest,
                      always=args.always)
+    if args.max_files:
+        items = items[:args.max_files]
+    if args.dry_run:
+        return dry_run(items, stale(present, source, args.include, args.exclude)
+                       if args.replace and not args.file else [], "push")
     if args.tar and not args.file:
         failed = push_tar(store, remote, items, args.src, args.streams)
         if not failed:
@@ -544,6 +555,18 @@ def cmd_push(args) -> int:
             print(f"  removing {len(extra):,} objects the source no longer has", flush=True)
             store.delete([_join(args.dest, rel) for rel in extra])
     return failed
+
+
+def dry_run(items: list[Item], extra: list[str], label: str) -> int:
+    """Say what a run would do and move nothing."""
+    total = sum(i.size for i in items)
+    print(f"  {label} (dry run): would move {len(items):,} files, {total / 1e9:,.1f} GB"
+          + (f", and remove {len(extra):,}" if extra else ""), flush=True)
+    for item in items[:5]:
+        print(f"    {item.source} -> {item.dest}", flush=True)
+    for rel in extra[:5]:
+        print(f"    would remove {rel}", flush=True)
+    return 0
 
 
 def stale(present: dict[str, int], source: dict[str, int],
@@ -578,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
                        default=int(os.environ.get("HPC_XFER_STREAMS") or 4))
         p.add_argument("--always", action="store_true",
                        help="move everything, even what is already there at the right size")
+        p.add_argument("--max-files", type=int, default=0,
+                       help="move at most this many files: a pilot that proves the path")
+        p.add_argument("--dry-run", action="store_true", help="say what would move; move nothing")
         if name == "pull":
             p.add_argument("--files-from")
             p.add_argument("--flatten", action="store_true")
