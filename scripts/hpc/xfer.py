@@ -62,6 +62,9 @@ from pathlib import PurePosixPath
 
 CHUNK = 8 << 20
 PART = 64 << 20
+# Tar members up to this size are buffered and uploaded concurrently; larger
+# ones are streamed in line. Sixteen of them per stream bounds the memory.
+SMALL = 8 << 20
 ATTEMPTS = int(os.environ.get("HPC_XFER_ATTEMPTS") or 3)
 
 
@@ -358,7 +361,10 @@ def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
                 proc.stdin.close()
 
         threading.Thread(target=feed, daemon=True).start()
-        gate = threading.BoundedSemaphore(64)          # bounds the bytes held in memory
+        # At most SMALL * 16 bytes waiting to upload per stream: small members go
+        # to the uploaders, anything larger is uploaded in line, which holds the
+        # tar stream back rather than memory.
+        gate = threading.BoundedSemaphore(16)
         seen: set[str] = set()
 
         def put(item: Item, data: bytes) -> None:
@@ -390,7 +396,7 @@ def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
                         continue
                     seen.add(name)
                     fh = tar.extractfile(member)
-                    if member.size <= PART:
+                    if member.size <= SMALL:
                         gate.acquire()
                         futures.append(uploads.submit(put, item, fh.read()))
                     else:
