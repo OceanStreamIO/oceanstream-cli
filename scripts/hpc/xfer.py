@@ -26,7 +26,13 @@ the same command again: what is already there at the right size is skipped.
                   --opendata --dest /cluster/dir
     xfer.py push  --src /cluster/dir --dest s3://bucket/prefix/ --include 'xyz.stage.*'
     xfer.py push  --src /cluster/file --dest s3://bucket/key --file
+    xfer.py push  --src /cluster/store.zarr --dest s3://bucket/store.zarr/ --tar --replace
     xfer.py check --src /cluster/dir --dest s3://bucket/prefix/ --include '...'
+
+``--tar`` sends a whole tree as tar streams instead of one SSH channel per file,
+which is what a Zarr store of thousands of small chunks needs. ``--replace``
+makes the destination match the source inside the filters: once every transfer
+has succeeded, what the destination has and the source does not is removed.
 
 The SSH side comes from the environment the shell library sets up:
 ``HPC_SSH_CONFIG`` (a client config file) and ``HPC_XFER_TARGET``
@@ -135,6 +141,17 @@ class Remote:
     def popen(self, command: str, **kw) -> subprocess.Popen:
         return subprocess.Popen([*self._args(), command], **kw)
 
+    def delete(self, root: str, rels: list[str]) -> None:
+        """Remove *rels* under *root*: relative paths only, never above it."""
+        safe = [r for r in rels if r and not r.startswith("/") and ".." not in r.split("/")]
+        if len(safe) != len(rels):
+            raise SystemExit("refusing to delete a path that leaves the destination")
+        if not safe:
+            return
+        data = b"\0".join(r.encode() for r in safe) + b"\0"
+        self.run(f"cd {shlex.quote(root)} && xargs -0 rm -f --", input=data, check=True,
+                 capture_output=True)
+
     def listing(self, root: str) -> dict[str, int]:
         """Relative path -> size for every file under *root* (or *root* itself)."""
         q = shlex.quote(root)
@@ -179,11 +196,20 @@ class Store:
                 "s3", region_name=os.environ.get("HPC_OPENDATA_REGION", "eu-central-1"),
                 config=Config(signature_version=UNSIGNED, retries={"max_attempts": 10}))
         else:
+            # Each project names its keys differently; the first one set wins,
+            # and with none the usual AWS chain applies.
+            key = _first_env("XFER_S3_ACCESS_KEY_ID", "ARCO_S3_ACCESS_KEY_ID",
+                             "OCEANSTREAM_S3_ACCESS_KEY_ID", "AWS_S3_ACCESS_KEY_ID",
+                             "AWS_ACCESS_KEY_ID") or None
+            secret = _first_env("XFER_S3_SECRET_ACCESS_KEY", "ARCO_S3_SECRET_ACCESS_KEY",
+                                "OCEANSTREAM_S3_SECRET_ACCESS_KEY", "AWS_S3_SECRET_ACCESS_KEY",
+                                "AWS_SECRET_ACCESS_KEY") or None
             self.client = session.create_client(
                 "s3", endpoint_url=endpoint(),
                 region_name=_first_env("XFER_S3_REGION", "BASEMAP_S3_REGION",
                                        "OCEANSTREAM_S3_REGION", "AWS_DEFAULT_REGION",
                                        default="waw3-1"),
+                aws_access_key_id=key, aws_secret_access_key=secret,
                 config=Config(retries={"max_attempts": 10}))
 
     def listing(self, uri: str) -> dict[str, int]:
@@ -290,6 +316,112 @@ def push_one(store: Store, remote: Remote, item: Item) -> None:
         raise RuntimeError(f"{item.dest}: {landed} bytes in the store, {item.size} on the cluster")
 
 
+def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
+             streams: int) -> int:
+    """Many files as tar streams, one per SSH connection, uploaded as they arrive.
+
+    One channel per file costs a process and a round trip each, which for a
+    store of a hundred thousand small chunks is most of the transfer. Here the
+    cluster tars the named files to stdout and this side uploads each member as
+    it is read: small ones on a pool of uploaders, large ones streamed in parts.
+    Returns the number of files that failed.
+    """
+    import tarfile
+
+    if not items:
+        print("  push: nothing to move", flush=True)
+        return 0
+    groups: list[list[Item]] = [[] for _ in range(max(1, streams))]
+    weights = [0] * len(groups)
+    for item in sorted(items, key=lambda i: -i.size):
+        k = weights.index(min(weights))
+        groups[k].append(item)
+        weights[k] += item.size
+    total = sum(i.size for i in items)
+    print(f"  push (tar): {len(items):,} files, {total / 1e9:,.1f} GB, "
+          f"{len([g for g in groups if g])} streams", flush=True)
+    root = src_root.rstrip("/")
+    lock = threading.Lock()
+    tally = {"done": 0, "bytes": 0, "failed": 0}
+    started = time.monotonic()
+
+    def run_group(group: list[Item]) -> None:
+        by_name = {i.source[len(root) + 1:]: i for i in group}
+        proc = remote.popen(f"tar -C {shlex.quote(root)} -cf - --null -T -",
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+
+        def feed() -> None:
+            try:
+                proc.stdin.write(b"\0".join(n.encode() for n in by_name) + b"\0")
+            finally:
+                proc.stdin.close()
+
+        threading.Thread(target=feed, daemon=True).start()
+        gate = threading.BoundedSemaphore(64)          # bounds the bytes held in memory
+        seen: set[str] = set()
+
+        def put(item: Item, data: bytes) -> None:
+            try:
+                bucket, key = split_s3(item.dest)
+                for n in range(1, ATTEMPTS + 1):
+                    try:
+                        store.client.put_object(Bucket=bucket, Key=key, Body=data)
+                        break
+                    except Exception:                      # noqa: BLE001
+                        if n == ATTEMPTS:
+                            raise
+                        time.sleep(min(5 * n, 30))
+                with lock:
+                    tally["done"] += 1
+                    tally["bytes"] += len(data)
+            finally:
+                gate.release()
+
+        with ThreadPoolExecutor(max_workers=8) as uploads:
+            futures = []
+            with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
+                for member in tar:
+                    if not member.isfile():
+                        continue
+                    name = member.name[2:] if member.name.startswith("./") else member.name
+                    item = by_name.get(name)
+                    if item is None:
+                        continue
+                    seen.add(name)
+                    fh = tar.extractfile(member)
+                    if member.size <= PART:
+                        gate.acquire()
+                        futures.append(uploads.submit(put, item, fh.read()))
+                    else:
+                        store.upload(fh, item.dest)
+                        with lock:
+                            tally["done"] += 1
+                            tally["bytes"] += member.size
+            for future in futures:
+                future.result()
+        err = proc.stderr.read().decode(errors="replace").strip()
+        if proc.wait() != 0:
+            raise RuntimeError(f"tar on the cluster failed ({proc.returncode}) {err[-300:]}")
+        missing = set(by_name) - seen
+        if missing:
+            raise RuntimeError(f"{len(missing)} files were not in the tar stream, "
+                               f"e.g. {sorted(missing)[0]}")
+
+    with ThreadPoolExecutor(max_workers=len(groups)) as pool:
+        futures = [pool.submit(run_group, g) for g in groups if g]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:                       # noqa: BLE001
+                tally["failed"] += 1
+                print(f"    FAILED stream: {str(exc)[:300]}", flush=True)
+    rate = tally["bytes"] / max(time.monotonic() - started, 1e-6) / 1e6
+    print(f"    {tally['done']:,}/{len(items):,} files, {tally['bytes'] / 1e9:,.1f} GB, "
+          f"{rate:,.0f} MB/s", flush=True)
+    return tally["failed"] + (len(items) - tally["done"] if tally["failed"] else 0)
+
+
 # --- running a batch ----------------------------------------------------------------
 
 def run_batch(items: list[Item], move, streams: int, label: str) -> int:
@@ -366,7 +498,15 @@ def cmd_pull(args) -> int:
     if args.verify:
         print(f"  {len(items):,} of {len(source):,} files missing or a different size", flush=True)
         return 1 if items else 0
-    return run_batch(items, lambda i: pull_one(store, remote, i), args.streams, "pull")
+    failed = run_batch(items, lambda i: pull_one(store, remote, i), args.streams, "pull")
+    if args.replace and not failed:
+        if args.flatten:
+            raise SystemExit("--replace and --flatten together would compare different names")
+        extra = stale(present, source, args.include, args.exclude)
+        if extra:
+            print(f"  removing {len(extra):,} files the source no longer has", flush=True)
+            remote.delete(args.dest, extra)
+    return failed
 
 
 def cmd_push(args) -> int:
@@ -384,7 +524,17 @@ def cmd_push(args) -> int:
         present = store.listing(args.dest)
         items = plan(source, {} if args.always else present, args.src, args.dest,
                      always=args.always)
-    failed = run_batch(items, lambda i: push_one(store, remote, i), args.streams, "push")
+    if args.tar and not args.file:
+        failed = push_tar(store, remote, items, args.src, args.streams)
+        if not failed:
+            # Every file checked by size, since a tar member is not checked on its own.
+            left = plan(source, store.listing(args.dest), args.src, args.dest)
+            if left:
+                print(f"    {len(left):,} files did not land at their size, e.g. {left[0].dest}",
+                      flush=True)
+                failed = len(left)
+    else:
+        failed = run_batch(items, lambda i: push_one(store, remote, i), args.streams, "push")
     if args.replace and not failed and not args.file:
         # What the destination holds under the same filters and the source does
         # not: a reprocessed day replaces the old one exactly. Only after every
@@ -433,8 +583,13 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--flatten", action="store_true")
             p.add_argument("--opendata", action="store_true")
             p.add_argument("--verify", action="store_true")
+            p.add_argument("--replace", action="store_true",
+                           help="also delete destination files inside the filters that the "
+                                "source no longer has, once every pull has succeeded")
         if name == "push":
             p.add_argument("--file", action="store_true", help="--src is one file, --dest a key")
+            p.add_argument("--tar", action="store_true",
+                           help="send the files as tar streams: for many small files")
             p.add_argument("--replace", action="store_true",
                            help="also delete destination objects inside the filters that the "
                                 "source no longer has, once every upload has succeeded")
