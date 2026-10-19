@@ -16,6 +16,10 @@
 # GPU (keeping them), CPU only, then GPU again. The last two do identical work,
 # so their times compare like for like, and their outputs must agree.
 #
+# CTD_URL (optional, MODE=sv): a CCHDO CF netCDF of the cruise's CTD casts. Sv then takes
+# sound speed and absorption from the casts (--ctd-file). SV_CONTAINER names the Sv
+# container (default sv) and PIPELINE_ARGS adds pipeline flags, in every mode.
+#
 # MODE=denoise skips the downloads and runs the pipeline from stage 5 on the stored
 # Sv with $PRESET into the container denoised-$PRESET, through echograms, then writes
 # per-segment statistics (split_stats.py) for each day.
@@ -148,6 +152,15 @@ if [ "$MODE" = sv ]; then
         || { log "navigation failed"; exit 4; }
     fetch put "$W/gps/$CRUISE" --bucket "$OCEANSTREAM_S3_BUCKET" --key "$PREFIX/nav" || exit 4
 fi
+CTD_ARGS=()
+if [ "$MODE" = sv ] && [ -n "${CTD_URL:-}" ]; then
+    log "CTD casts"
+    mkdir -p "$W/ctd"
+    curl -fsSL --retry 5 --retry-all-errors -o "$W/ctd/casts.nc" "$CTD_URL" \
+        || { log "CTD download failed"; exit 4; }
+    sha256sum "$W/ctd/casts.nc" | tee "$LOGS/ctd.sha256"
+    CTD_ARGS=(--ctd-file "$W/ctd/casts.nc")
+fi
 
 # -- Sv -------------------------------------------------------------------------------
 # run_sv DAY CONTAINER TAG [extra pipeline args]; appends a line to metrics.jsonl.
@@ -259,7 +272,9 @@ for day in ${DAYS//,/ }; do
             --out "$LOGS/$day-gpu-vs-cpu.json" --delete-b || FAILED=1
     else
         log "== $day: Sv"
-        run_sv "$day" sv "$( [ "${REQUIRE_GPU}" = "1" ] && echo gpu || echo sv )" || FAILED=1
+        # shellcheck disable=SC2086 # PIPELINE_ARGS is a word list
+        run_sv "$day" "${SV_CONTAINER:-sv}" "$( [ "${REQUIRE_GPU}" = "1" ] && echo gpu || echo sv )" \
+            "${CTD_ARGS[@]+"${CTD_ARGS[@]}"}" ${PIPELINE_ARGS:-} || FAILED=1
     fi
     rm -rf "$W/raw/$day" "$W/cache"
     upload_logs

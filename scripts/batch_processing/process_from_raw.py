@@ -906,13 +906,102 @@ def _interpolate_gps_linear(ds_Sv, gps_df: pd.DataFrame):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+#: Sound speed assumed to turn sample counts into range before the CTD gives a better one.
+NOMINAL_SOUND_SPEED = 1500.0
+
+
+def _load_ctd(cfg: PipelineConfig, ed):
+    """CastProfiles from ``cfg.raw.ctd_file`` for the day's channel frequencies and ranges."""
+    import numpy as np
+
+    from oceanstream.echodata.environment.ctd_casts import load_cchdo_ctd
+
+    beam = ed["Sonar/Beam_group1"]
+    freqs = [float(f) for f in np.unique(beam["frequency_nominal"].values)]
+    longest = float(beam.sizes["range_sample"] * np.nanmax(beam["sample_interval"].values)
+                    * NOMINAL_SOUND_SPEED / 2)
+    profiles = load_cchdo_ctd(cfg.raw.ctd_file, freqs,
+                              max_depth_m=cfg.raw.depth_offset + 1.05 * longest + 10)
+    logger.info("  CTD: %d casts from %s, %s to %s", profiles.time.size, cfg.raw.ctd_file,
+                profiles.time.min(), profiles.time.max())
+    return profiles
+
+
+def _ctd_environment(ed_ch, channel: str, n_samples: int, ctd, cfg: PipelineConfig):
+    """env_params for one channel from CTD casts, the absorption per ping, and the frequency.
+
+    The values are given per ping (``time1`` = the channel's ping times), which echopype
+    takes as they are.
+    """
+    import numpy as np
+    import xarray as xr
+
+    from oceanstream.echodata.environment.ctd_casts import channel_environment
+
+    beam = ed_ch["Sonar/Beam_group1"]
+    freq = float(beam["frequency_nominal"].values.ravel()[0])
+    pings = beam["ping_time"].values
+    travel = n_samples * float(np.nanmax(beam["sample_interval"].values)) / 2
+    max_range = travel * NOMINAL_SOUND_SPEED
+    for _ in range(2):  # the range follows the sound speed it is averaged over
+        speed, absorption = channel_environment(ctd, freq, pings, max_range_m=max_range,
+                                                transducer_depth_m=cfg.raw.depth_offset)
+        max_range = travel * float(np.mean(speed))
+    coords = {"channel": [channel], "time1": pings}
+    env = {
+        "sound_speed": xr.DataArray(speed[None, :], dims=("channel", "time1"), coords=coords),
+        "sound_absorption": xr.DataArray(absorption[None, :], dims=("channel", "time1"),
+                                         coords=coords),
+    }
+    logger.info("    %.0f kHz: sound speed %.1f-%.1f m/s, absorption %.5f-%.5f dB/m over %.0f m",
+                freq / 1e3, speed.min(), speed.max(), absorption.min(), absorption.max(), max_range)
+    return env, absorption, freq
+
+
+def _correct_absorption(sv_ch, ctd, freq: float, used, cfg: PipelineConfig):
+    """Add 2 [A(d + r) - A(d)] - 2 r a_used to one channel's Sv (see ctd_casts)."""
+    import numpy as np
+    import xarray as xr
+
+    from oceanstream.echodata.environment.ctd_casts import absorption_correction
+
+    depth = cfg.raw.depth_offset
+
+    def block(echo_range, times, absorption):
+        shape = echo_range.shape
+        flat = echo_range.reshape(-1, shape[-1])
+        t = np.broadcast_to(times, shape[:-1]).reshape(-1)
+        a = np.broadcast_to(absorption, shape[:-1]).reshape(-1)
+        return absorption_correction(ctd, freq, t, flat, a, transducer_depth_m=depth).reshape(shape)
+
+    chunks = {"ping_time": sv_ch["echo_range"].chunksizes.get("ping_time", -1)} \
+        if sv_ch["echo_range"].chunks else None
+    times = sv_ch["ping_time"].copy()
+    used_da = xr.DataArray(np.asarray(used, dtype=float), dims="ping_time",
+                           coords={"ping_time": sv_ch["ping_time"].values})
+    if chunks:
+        times, used_da = times.chunk(chunks), used_da.chunk(chunks)
+    correction = xr.apply_ufunc(
+        block, sv_ch["echo_range"], times, used_da,
+        input_core_dims=[["range_sample"], [], []], output_core_dims=[["range_sample"]],
+        dask="parallelized", output_dtypes=[np.float64],
+    )
+    sv_ch["Sv"] = (sv_ch["Sv"] + correction).assign_attrs(
+        {**sv_ch["Sv"].attrs,
+         "absorption": "Francois-Garrison absorption averaged from the transducer to each "
+                       "sample, from CTD casts either side of the ping"})
+    return sv_ch
+
+
 def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: dict,
-                           cfg: PipelineConfig):
-    """Sv for channels that ping in turn, one channel at a time.
+                           cfg: PipelineConfig, ctd=None):
+    """Sv one channel at a time, for channels that ping in turn or with CTD casts.
 
     Each channel is calibrated on its own pings and recorded range only, then binned, and
     the channels are joined back on the union of their pings. Calibrating the shared,
-    NaN-padded grid instead costs about 12 times the work and memory on RR2205.
+    NaN-padded grid instead costs about 12 times the work and memory on RR2205. With
+    *ctd* (CastProfiles), each channel's sound speed and absorption come from the casts,
+    and Sv is corrected to the mean absorption along each sample's path before binning.
     """
     import echopype as ep
     import xarray as xr
@@ -926,7 +1015,13 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
         fill_transmit_type(ed_ch)
         ed_ch = ed_ch.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
         logger.info("  %s: %d pings, %d range samples", channel, int(pings.sum()), n_samples)
-        sv_ch = ep.calibrate.compute_Sv(ed_ch, **compute_kwargs)
+        kwargs, used = compute_kwargs, None
+        if ctd is not None:
+            env, used, freq = _ctd_environment(ed_ch, channel, n_samples, ctd, cfg)
+            kwargs = {**compute_kwargs, "env_params": env}
+        sv_ch = ep.calibrate.compute_Sv(ed_ch, **kwargs)
+        if ctd is not None:
+            sv_ch = _correct_absorption(sv_ch, ctd, freq, used, cfg)
         if cfg.raw.sv_range_bin_m > 0:
             sv_ch = _bin_sv_range(sv_ch, cfg.raw.sv_range_bin_m)
         parts.append(sv_ch)
@@ -1074,9 +1169,26 @@ def compute_sv_day(
         compute_kwargs["env_params"] = env_params
         logger.info("  Environment parameters for %s: %s", day_key, env_params)
 
+    ctd = None
+    if cfg.raw.ctd_file:
+        ctd = _load_ctd(cfg, ed)
+        if not by_channel:
+            # The CTD correction works one channel at a time.
+            import numpy as np
+
+            beam = ed["Sonar/Beam_group1"]
+            by_channel = {str(ch): np.ones(beam.sizes["ping_time"], dtype=bool)
+                          for ch in beam["channel"].values}
+
     logger.info("  compute_Sv (waveform=%s, encode=%s)", cfg.raw.waveform_mode, cfg.raw.encode_mode)
     if by_channel:
-        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg)
+        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd)
+        if ctd is not None:
+            ds_Sv.attrs["environment"] = (
+                f"Sound speed and absorption from {ctd.time.size} CTD casts in "
+                f"{os.path.basename(cfg.raw.ctd_file)}; Mackenzie (1981) sound speed and "
+                "Francois-Garrison (1982) absorption, pH 8.0"
+            )
     else:
         ds_Sv = ep.calibrate.compute_Sv(ed, **compute_kwargs)
         if cfg.raw.sv_range_bin_m > 0:
@@ -2049,6 +2161,14 @@ def parse_args() -> PipelineConfig:
              "temperature, salinity, pressure and pH. Default: values in the raw files.",
     )
     parser.add_argument(
+        "--ctd-file",
+        default="",
+        help="CCHDO CF netCDF of the cruise's CTD casts (<expocode>_ctd.nc). Sound speed and "
+             "absorption then come from the casts either side of each ping, and Sv is "
+             "corrected to the mean absorption along each sample's path. Excludes "
+             "--env-params-file.",
+    )
+    parser.add_argument(
         "--seabed-mask-offset",
         type=float,
         default=0.0,
@@ -2250,6 +2370,9 @@ def parse_args() -> PipelineConfig:
         cfg.chunks.ping_time = args.chunk_ping_time
     cfg.raw.reuse_converted = args.reuse_converted
     cfg.raw.env_params_file = args.env_params_file
+    cfg.raw.ctd_file = args.ctd_file
+    if cfg.raw.ctd_file and cfg.raw.env_params_file:
+        parser.error("--ctd-file and --env-params-file both set the environment; use one.")
     cfg.apply_seabed_mask = args.seabed_mask
     cfg.seabed_mask_offset = args.seabed_mask_offset
     cfg.seabed_line = args.seabed_line

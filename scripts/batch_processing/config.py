@@ -298,6 +298,13 @@ class RawConversionConfig:
     # and absorption are derived from them. Empty = use the values in the raw files.
     env_params_file: str = ""
 
+    # CCHDO CF netCDF of the cruise's CTD casts (<expocode>_ctd.nc). When set, each
+    # channel gets the harmonic-mean sound speed and mean absorption over its range from
+    # the casts either side of each ping, and Sv is corrected sample by sample to the
+    # mean absorption along the path (oceanstream.echodata.environment.ctd_casts).
+    # Excludes env_params_file.
+    ctd_file: str = ""
+
     # Concurrency knobs
     download_workers: int = 4   # parallel download threads
     convert_workers: int = 1    # parallel conversion workers (memory-bound, keep low)
