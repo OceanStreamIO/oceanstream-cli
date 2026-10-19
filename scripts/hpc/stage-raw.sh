@@ -4,8 +4,9 @@
 # =============================================================================
 # Source: s3://$OCEANSTREAM_S3_BUCKET/$OCEANSTREAM_S3_RAW_PREFIX/<cruise>/<day>/
 # (filled by mirror_raw_to_s3.py). Dest:  $HPC_RAW_DIR/<cruise>/<day>/
-# Uses `copy`, so an interrupted pull resumes and nothing at the destination
-# is deleted.
+# Streamed from object storage through this machine and over SSH: the cluster
+# may not connect out itself. Nothing at the destination is deleted, and a
+# re-run resumes, skipping files already there at their full size.
 #
 # Usage:
 #   ./scripts/hpc/stage-raw.sh --cruise SD_X --day 2023-10-10
@@ -33,10 +34,8 @@ require_hpc_key
 
 if [ "$GPS" = "1" ]; then
     DST="$HPC_GPS_DIR/$CRUISE"
-    hpc_ssh_xfer "mkdir -p '$DST'" >/dev/null 2>&1 || true
-    OUT="$(hpc_xfer_rclone "stage-gps-${CRUISE}" copy "$(s3_remote "$OCEANSTREAM_S3_GPS_PREFIX/$CRUISE")" "$DST" \
-        --transfers=16 --fast-list --retries=3)" || fail "Could not submit transfer"
-    printf '%s' "$OUT" | grep -q '^exit=0$' || { printf '%s\n' "$OUT" >&2; fail "GPS staging failed"; }
+    hpc_xfer pull --src "$(s3_uri "$OCEANSTREAM_S3_GPS_PREFIX/$CRUISE/")" --dest "$DST" \
+        || fail "GPS staging failed"
     info "$(hpc_ssh_login "find '$DST' -name '*.parquet' | wc -l; du -sh '$DST' | cut -f1" 2>/dev/null | tr '\n' ' ')"
     ok "GPS staged at $DST"
     exit 0
@@ -46,20 +45,15 @@ fi
 SRC_ROOT="${OCEANSTREAM_S3_RAW_PREFIX}/${CRUISE}"
 DST_ROOT="${HPC_RAW_DIR}/${CRUISE}"
 
-# One transfer job for all days: --include filters keep the queue short.
-INCLUDES=""
+# One pull for all days: --include filters keep the other days out.
+INCLUDES=()
 for d in $(printf '%s' "$DAYS" | tr ',' ' '); do
     case "$d" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) fail "Bad day: $d" ;; esac
-    INCLUDES="$INCLUDES --include '/${d}/**'"
+    INCLUDES+=(--include "${d}/*")
 done
-hpc_ssh_xfer "mkdir -p '$DST_ROOT'" >/dev/null 2>&1 || true
 
-OUT="$(hpc_xfer_rclone "stage-raw-${CRUISE}" copy "$(s3_remote "$SRC_ROOT")" "$DST_ROOT" \
-    $INCLUDES --transfers=16 --checkers=32 --fast-list --retries=3 --low-level-retries=10 \
-    --stats=60s --stats-one-line)" || fail "Could not submit transfer"
-printf '%s\n' "$OUT" >&2
-printf '%s' "$OUT" | grep -q '^exit=pending$' && { ok "Submitted (detached)"; exit 0; }
-printf '%s' "$OUT" | grep -q '^exit=0$' || fail "Staging failed — see ${HPC_LOG_DIR}"
+hpc_xfer pull --src "$(s3_uri "$SRC_ROOT/")" --dest "$DST_ROOT" "${INCLUDES[@]}" \
+    || fail "Staging failed"
 
 for d in $(printf '%s' "$DAYS" | tr ',' ' '); do
     info "$d: $(hpc_ssh_login "ls '$DST_ROOT/$d'/*.raw 2>/dev/null | wc -l; du -sh '$DST_ROOT/$d' 2>/dev/null | cut -f1" 2>/dev/null | tr '\n' ' ')"

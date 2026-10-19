@@ -1,19 +1,20 @@
 # Running the batch pipeline on a Slurm cluster
 
 `scripts/hpc/` runs `scripts/batch_processing/process_from_raw.py` one day at a
-time on a Slurm cluster whose compute nodes have **no internet access**. Raw
-input and outputs move through S3-compatible object storage. The cluster's data
-transfer service stages data in and out.
+time on a Slurm cluster whose machines may **not connect to external hosts**. Raw
+input and outputs move through S3-compatible object storage, and every transfer
+is opened from the EDITO side and streamed over SSH to the cluster's transfer
+node (`scripts/hpc/xfer.py`).
 
 ```
 Azure File Share ──mirror_raw_to_s3.py──▶ S3 hpc/raw/<cruise>/<day>/
-                                             │  stage-raw.sh (queued rclone)
+                                             │  stage-raw.sh (streamed over SSH from EDITO)
                                              ▼
                                cluster scratch  raw/<cruise>/<day>/
                                              │  submit-day.sh (sbatch)
                                              ▼
                                cluster scratch  products/<container>/<day>/
-                                             │  push-products.sh (queued rclone, verified)
+                                             │  push-products.sh (over SSH to EDITO, verified)
                                              ▼
                                S3 hpc/products/<cruise>/<day>/ ── publish_stac.py ──▶ item.json, collection.json
                                                                    build_campaign_tiles.py ──▶ tiles/<slug>_echodata.pmtiles
@@ -24,9 +25,8 @@ Azure File Share ──mirror_raw_to_s3.py──▶ S3 hpc/raw/<cruise>/<day>/
 - A **login node** that accepts `sbatch` for the compute partition.
 - **Compute nodes without internet.** Everything they read must already be on
   the cluster filesystem.
-- A **transfer node** that runs rclone. It may go through a queued wrapper that
-  submits the transfer as a job on a separate data-transfer cluster, and that
-  path must be able to reach S3.
+- A **transfer node** reachable over SSH, which is where the data lands. It
+  needs no internet access, no rclone and no object-storage credentials.
 - Environment modules that provide Python 3.12.
 
 ## Setup
@@ -37,9 +37,14 @@ Azure File Share ──mirror_raw_to_s3.py──▶ S3 hpc/raw/<cruise>/<day>/
    Unattended jobs cannot answer a passphrase prompt.
 3. Create the directory layout and check free space:
    `./scripts/hpc/bootstrap-dirs.sh --require-gb 150`
-4. Install the S3 remote on the transfer node, then prove the queued path
-   reaches the bucket:
-   `./scripts/hpc/bootstrap-rclone-s3.sh && ./scripts/hpc/smoke-test.sh`
+4. Prove the transfer path: `./scripts/hpc/smoke-test.sh`. The cluster never
+   connects out -- the site does not allow its machines to reach external
+   hosts -- so every transfer is opened from this side and streamed over SSH
+   to the transfer node (`scripts/hpc/xfer.py`). The cluster needs no
+   object-storage credentials and no rclone. Until October 2026 transfers ran
+   on the site's queued rclone wrapper, which reached object storage from some
+   of its nodes by accident of their network; the site has since confirmed that
+   is not permitted.
 5. Build the wheelhouse (see below), copy it to `$HPC_ROOT/wheelhouse`, sync
    the code and build the venv:
    `./scripts/hpc/sync-code.sh && ./scripts/hpc/bootstrap-env.sh`

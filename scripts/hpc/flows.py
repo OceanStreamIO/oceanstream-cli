@@ -6,9 +6,9 @@ never import the pipeline here.
 
 process_day_hpc legs:
   1. sync-code.sh        ship the pipeline source to the cluster
-  2. stage-raw.sh        S3 -> cluster scratch (queued transfer)
+  2. stage-raw.sh        S3 -> cluster scratch (streamed over SSH from here)
   3. submit-day.sh       sbatch, poll to exit
-  4. push-products.sh    cluster scratch -> S3, verified
+  4. push-products.sh    cluster scratch -> S3 over SSH from here, verified
   5. publish_stac.py     item.json (last) + collection.json
   6. cleanup             free the day's scratch
 
