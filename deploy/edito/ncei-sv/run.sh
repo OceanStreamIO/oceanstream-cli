@@ -217,7 +217,7 @@ if [ "$MODE" = report ]; then
     for day in ${DAYS//,/ }; do
         log "== $day: echograms"
         python -u "$SCRIPTS/echogram_report.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
-            --runs "$REPORT_RUNS" --mvbs-container "${REPORT_MVBS:-}" \
+            --runs "$REPORT_RUNS" --sv-container "${SV_CONTAINER:-sv}" --mvbs-container "${REPORT_MVBS:-}" \
             --mvbs-label "${REPORT_MVBS_LABEL:-$REPORT_MVBS}" --out "$LOGS/report/$day" \
             > "$LOGS/$day-report.log" 2>&1 || FAILED=1
         tail -3 "$LOGS/$day-report.log"
@@ -231,7 +231,7 @@ if [ "$MODE" = stats ]; then
         for day in ${DAYS//,/ }; do
             log "== $day: stats for $preset"
             python -u "$SCRIPTS/split_stats.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
-                --denoised-container "denoised-$preset" \
+                --sv-container "${SV_CONTAINER:-sv}" --denoised-container "denoised-$preset" \
                 --out "$LOGS/$preset--$day-segments.json" || FAILED=1
         done
     done
@@ -244,7 +244,8 @@ if [ "$MODE" = denoise ]; then
         log "== $day: denoise with $PRESET"
         if run_denoise "$day"; then
             python -u "$SCRIPTS/split_stats.py" --root "$OCEANSTREAM_S3_BUCKET/$PREFIX" --day "$day" \
-                --denoised-container "$DENOISED" --out "$LOGS/$day-segments.json" || FAILED=1
+                --sv-container "${SV_CONTAINER:-sv}" --denoised-container "$DENOISED" \
+                --out "$LOGS/$day-segments.json" || FAILED=1
         else
             FAILED=1
         fi
