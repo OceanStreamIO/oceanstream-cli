@@ -27,7 +27,11 @@ On 2026-10-22 all 32 EK80 days of RR2205 (2022-06-15 to 2022-07-16, 2,541 raw fi
 
 Each day has its Sv store and the masked, denoised, pruned, MVBS and NASC stores, plus `denoise_stats.json`. It also has per-channel echograms of the raw, denoised and pruned Sv and of the MVBS, and the NASC plots.
 
-MareNostrum 5 counts 224 CPUs per node (112 cores with two threads each). Slurm gave each task 32 CPUs, which is 16 whole cores, and billed it 32. BSC may charge the allocation either way. Either way the cruise used about 0.1 % of the 504,000 core-hours.
+MareNostrum 5 counts 224 CPUs per node (112 cores with two threads each). Slurm gave each task 32 CPUs, which is 16 whole cores, and billed it 32. BSC may charge the allocation either way. Either way the cruise used about 0.1 % of the 504,000 core-hours. The tasks kept only about two cores busy on average: 2.07 CPU-seconds per second of task time, and 2.36 at most.
+
+## STAC
+
+The products are catalogued as STAC 1.0 at `https://oceanstream-bucket.s3.waw3-1.cloudferro.com/hpc/products/RR2205/collection.json`. That is one Collection plus one Item per day (`<day>/item.json`), and all 33 documents pass stac-validator. Each Item lists the day's Zarr stores, `denoise_stats.json` and echograms as assets. It also records the day's track as a LineString, the frequencies, the echopype version, the run id `mn5-rr2205-20261022` and the day's Slurm metrics. The project's STAC browser opens it at `https://project-oceanstream-576873-0.lab.dive.edito.eu/external/oceanstream-bucket.s3.waw3-1.cloudferro.com/hpc/products/RR2205/collection.json`. The track tiles and the web-app import are not done yet.
 
 | Day | Raw files | Raw GB | Task min | Products GB |
 |---|---|---|---|---|
@@ -69,12 +73,14 @@ MareNostrum 5 counts 224 CPUs per node (112 cores with two threads each). Slurm 
 - **2022-06-19 failed on its first attempt.** It has four one-ping start-up files, each on a single channel, and a four-ping file without 18 kHz, and their channel sets did not combine with the rest of the day. The pipeline now keeps the channel set holding most of the day's pings and skips the other files with a warning (bc015f3). The rerun took 22 minutes.
 - **Pushing one file at a time ran at about 1 MB/s.** Each day is about 4,000 small Zarr chunks. The driver now pushes in the background over eight SSH streams while the next batch runs (2699b55).
 - **Raw files were left behind for days resumed from scratch.** After the driver restart, five days whose products were already on scratch were pushed but kept their raw files (34 GB). These were removed by hand, and fixed in 9d6f1fe.
+- **Four days have no raw echograms.** On 2022-06-20, 07-04, 07-06 and 07-08 the raw (pre-denoise) echograms failed with "No such file or directory". Each failure began a few seconds after another task of the same array finished on the same node, which clears `/tmp` when a job ends. The renderer now writes under `$TMPDIR`, which the Slurm template sets per job (ec9ac95). The Sv stores and every other product of those days are complete; their 20 raw echograms (5 channels × 4 days) still need rendering.
 - **Reading NCEI's bucket needs two settings.** `xfer.py --opendata` needs `HPC_OPENDATA_REGION=us-east-1` and `AWS_ENDPOINT_URL` unset, otherwise botocore sends the request to our own endpoint and gets NoSuchBucket. The driver sets both.
 
 ## For the next cruises
 
 - Each batch took about an hour: roughly 14 minutes to stage six days, then an array as long as its slowest day. Larger batches would shorten the run if scratch has room.
 - At 27 GB, the tasks use a fifth of the memory that highmem nodes give them. Standard nodes give 32 GB at 16 cores, which is probably enough but leaves little margin. Test on one long day before switching.
+- With about two busy cores per task, 16 cores is mostly idle. Either give each task fewer cores (four would roughly quarter the billing at the same speed) or make the pipeline use more of them.
 - As a planning rate, this cruise needed about 2.1 billing-hours per GB of raw EK80 data. Cruises with FM pulses or more channels will differ.
 
 ## Reproducing
