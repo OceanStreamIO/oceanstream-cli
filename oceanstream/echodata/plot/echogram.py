@@ -12,6 +12,7 @@ from oceanstream.echodata.products import open_product_uri
 import logging
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -22,6 +23,15 @@ if TYPE_CHECKING:
     import xarray as xr
 
 logger = logging.getLogger(__name__)
+
+
+def _scratch_root() -> str:
+    """Where echograms are rendered before upload: $TMPDIR, else /tmp.
+
+    A Slurm job sets TMPDIR to its own directory; node /tmp can be cleared
+    when another job on the node ends, mid-render.
+    """
+    return os.path.join(tempfile.gettempdir(), "osechograms")
 
 
 def generate_echograms(
@@ -1304,7 +1314,7 @@ def plot_and_upload_echograms(
     import shutil
 
     if save_to_blobstorage:
-        echograms_dir = f"/tmp/osechograms/{cruise_id or 'default'}/{file_base_name}"
+        echograms_dir = f"{_scratch_root()}/{cruise_id or 'default'}/{file_base_name}"
     else:
         if output_path is None:
             raise ValueError("output_path is required when save_to_blobstorage is False")
@@ -1382,7 +1392,7 @@ def plot_and_upload_masks(
     """
     import shutil
 
-    local_dir = f"/tmp/osechograms/{file_base_name}"
+    local_dir = f"{_scratch_root()}/{file_base_name}"
     os.makedirs(local_dir, exist_ok=True)
 
     try:

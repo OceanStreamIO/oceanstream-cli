@@ -29,6 +29,7 @@ import gc
 import json
 import logging
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -1992,7 +1993,9 @@ def generate_combined_echograms_day(
         logger.info("Combined: no denoised or MVBS zarrs available for %s", day_key)
         return all_uploaded
 
-    tmp_dir = Path(f"/tmp/osechograms/{cruise_id or 'default'}/combined-{day_key}")
+    # $TMPDIR, not node /tmp: Slurm can clear /tmp when another job on the node ends.
+    tmp_dir = Path(tempfile.gettempdir(), "osechograms", cruise_id or "default")
+    tmp_dir = tmp_dir / f"combined-{day_key}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     for variant_label, zarrs_by_cat in variants:
@@ -2213,7 +2216,7 @@ def _save_echogram_png(
     import os
     from pathlib import Path
 
-    tmp_dir = Path(f"/tmp/osechograms/{cruise_id}/{day_key}")
+    tmp_dir = Path(tempfile.gettempdir(), "osechograms", str(cruise_id), day_key)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     local_path = tmp_dir / filename
     fig.savefig(str(local_path), dpi=150, bbox_inches="tight")
