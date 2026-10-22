@@ -14,8 +14,12 @@ Day directory layout (as written by ``process_from_raw.py``)::
     <day>/<day>--<pulse>.zarr                  Sv
     <day>/<day>--<pulse>--<product>.zarr       denoised | pruned | mvbs | nasc | ...
     <day>/<day>--<pulse>--<product>.nc         NetCDF exports
-    <day>/<variant>/<day>--<pulse>[--<v>]--<cmap>_<channel>[--thumb].png
+    <day>/<day>--<pulse>--<product>.json       run metadata (e.g. denoise_stats)
+    <day>/<variant>/<day>--<pulse>[--<v>][--<cmap>]_<channel>[--thumb].png
     <day>/nasc_geoparquet/                     Hive-partitioned GeoParquet (optional)
+
+Echograms carry the colormap in their name only when several were rendered;
+otherwise the Item records ``default_colormap`` (the pipeline's ``--colormap``).
 """
 
 from __future__ import annotations
@@ -35,11 +39,14 @@ COLLECTION_FILENAME = "collection.json"
 
 _ZARR_RE = re.compile(r"^(?P<day>\d{4}-\d{2}-\d{2})--(?P<pulse>[a-z_]+?)(?:--(?P<product>[a-z0-9_-]+))?\.zarr$")
 _NC_RE = re.compile(r"^(?P<day>\d{4}-\d{2}-\d{2})--(?P<pulse>[a-z_]+?)(?:--(?P<product>[a-z0-9_-]+))?\.nc$")
-_PNG_RE = re.compile(
-    r"^(?P<day>\d{4}-\d{2}-\d{2})--(?P<pulse>[a-z_]+?)(?:--(?P<variant>[a-z-]+))?"
-    r"--(?P<cmap>[A-Za-z0-9]+(?:_r)?)_(?P<channel>.+?)(?P<thumb>--thumb)?\.png$"
+_JSON_RE = re.compile(
+    r"^(?P<day>\d{4}-\d{2}-\d{2})--(?P<pulse>[a-z_]+?)--(?P<product>[a-z0-9_-]+)\.json$"
 )
+_PNG_RE = re.compile(r"^(?P<day>\d{4}-\d{2}-\d{2})--(?P<rest>.+?)(?P<thumb>--thumb)?\.png$")
+# Last name segment: "<variant or cmap>_<channel>"; a cmap may end in "_r".
+_PNG_TAIL_RE = re.compile(r"^(?P<seg>[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:_r)?)_(?P<channel>.+)$")
 _POS_VARS = (("latitude", "longitude"), ("lat", "lon"))
+DEFAULT_COLORMAP = "ocean_r"  # process_from_raw.py --colormap default
 
 
 def _iso(ts: Any) -> Optional[str]:
@@ -61,6 +68,44 @@ def _slug(text: str) -> str:
 
 def _product_key(pulse: str, product: Optional[str]) -> str:
     return f"{pulse}_{(product or 'sv').replace('-', '_')}"
+
+
+def _parse_echogram(
+    name: str, day: str, folder: str, pulses: set[str], default_cmap: str
+) -> Optional[dict]:
+    """Split ``<day>--<pulse>[--<variant>][--<cmap>]_<channel>[--thumb].png``.
+
+    A raw echogram has no variant segment and a single-colormap render has no
+    colormap segment; the folder then names the variant and ``default_cmap``
+    the colormap. A lone segment is the variant when it matches the folder or
+    is hyphenated (``denoised-pruned``, ``nasc-integrated``), else a colormap.
+    """
+    m = _PNG_RE.match(name)
+    if not m or m["day"] != day:
+        return None
+    rest = m["rest"]
+    pulse = next((p for p in sorted(pulses, key=len, reverse=True)
+                  if rest.startswith(p) and rest[len(p):len(p) + 1] in ("-", "_")), None)
+    if pulse is None:
+        return None
+    rest = rest[len(pulse):]
+    if rest.startswith("_"):
+        segs, channel = [], rest[1:]
+    else:
+        parts = rest.split("--")  # "", [variant,] "<seg>_<channel>"
+        tail = _PNG_TAIL_RE.match(parts[-1])
+        if parts[0] or not tail or len(parts) > 3:
+            return None
+        segs, channel = parts[1:-1] + [tail["seg"]], tail["channel"]
+    if len(segs) == 2:
+        variant, cmap = segs
+    elif segs and (segs[0] == folder or "-" in segs[0]):
+        variant, cmap = segs[0], default_cmap
+    elif segs:
+        variant, cmap = folder, segs[0]
+    else:
+        variant, cmap = folder, default_cmap
+    return {"pulse": pulse, "variant": variant, "cmap": cmap, "channel": channel, "thumb": bool(m["thumb"])}
 
 
 def _open_zarr(fs, path: str):
@@ -101,6 +146,7 @@ def build_day_item(
     self_href: Optional[str] = None,
     properties: Optional[dict] = None,
     max_track_points: int = 500,
+    default_colormap: str = DEFAULT_COLORMAP,
 ) -> dict:
     """Build a STAC Item (as a dict) describing one processed day.
 
@@ -112,6 +158,7 @@ def build_day_item(
         self_href: Absolute URL the Item will be published at.
         properties: Extra properties merged in last (e.g. run id, job metrics).
         max_track_points: Upper bound on LineString vertices.
+        default_colormap: Colormap of echograms whose names carry none.
     """
     import fsspec
     import numpy as np
@@ -123,6 +170,9 @@ def build_day_item(
         raise ValueError(f"Day directory must end in YYYY-MM-DD: {day_path}")
 
     entries = fs.ls(root, detail=True)
+    names = [e["name"].rstrip("/").rsplit("/", 1)[-1] for e in entries]
+    stores = (_ZARR_RE.match(n) or _NC_RE.match(n) for n in names)
+    pulses = {m["pulse"] for m in stores if m and m["day"] == day}
     assets: dict[str, dict] = {}
     t_min = t_max = None
     frequencies: set[float] = set()
@@ -186,6 +236,18 @@ def build_day_item(
             }
             continue
 
+        m = _JSON_RE.match(name)
+        if m and m["day"] == day and e["type"] != "directory":
+            assets[f"{m['pulse']}_{m['product'].replace('-', '_')}"] = {
+                "href": f"./{name}",
+                "type": "application/json",
+                "roles": ["metadata"],
+                "file:size": int(e.get("size") or 0),
+                "oceanstream:pulse": m["pulse"],
+                "oceanstream:product": m["product"],
+            }
+            continue
+
         if name == "nasc_geoparquet" and e["type"] == "directory":
             assets["nasc_geoparquet"] = {
                 "href": "./nasc_geoparquet/",
@@ -198,11 +260,11 @@ def build_day_item(
         if e["type"] == "directory":  # echogram folders
             for png in sorted(fs.find(full)):
                 pname = png.rsplit("/", 1)[-1]
-                pm = _PNG_RE.match(pname)
-                if not pm or pm["day"] != day:
+                pm = _parse_echogram(pname, day, name, pulses, default_colormap)
+                if not pm:
                     continue
-                variant = pm["variant"] or name  # folder name when unnamed (raw)
-                thumb = bool(pm["thumb"])
+                variant = pm["variant"]
+                thumb = pm["thumb"]
                 key = "_".join(
                     ["echogram", pm["pulse"], _slug(variant), _slug(pm["cmap"]), _slug(pm["channel"])]
                     + (["thumb"] if thumb else [])

@@ -97,6 +97,8 @@ def main() -> int:
     p.add_argument("--title", default="")
     p.add_argument("--public-base", default="", help="Public HTTPS URL of --root for absolute self links")
     p.add_argument("--endpoint-url", default="")
+    p.add_argument("--colormap", default="ocean_r",
+                   help="Colormap of echograms whose names carry none (process_from_raw.py --colormap)")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -127,7 +129,7 @@ def main() -> int:
                 props["oceanstream:metrics"] = metrics[day]
             item = build_day_item(
                 f"{scheme}{root}/{day}", args.cruise_id,
-                storage_options=so, properties=props,
+                storage_options=so, properties=props, default_colormap=args.colormap,
                 self_href=f"{public}/{day}/{ITEM_FILENAME}" if public else None,
             )
             write_json(fs, f"{root}/{day}/{ITEM_FILENAME}", item)
