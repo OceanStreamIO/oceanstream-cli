@@ -97,10 +97,15 @@ for ((i = 0; i < ${#PENDING[@]}; i += BATCH)); do
     batch=("${PENDING[@]:i:BATCH}")
     log "Batch $((i / BATCH + 1)): ${batch[*]}"
 
-    # Days processed before a restart only need their push.
+    # Days processed before a restart only need their push, and their raw files removed.
     ready=(); todo=()
     for day in "${batch[@]}"; do
-        if on_scratch "$day"; then ready+=("$day"); else todo+=("$day"); fi
+        if on_scratch "$day"; then
+            ready+=("$day")
+            hpc_ssh_xfer "rm -rf '$HPC_RAW_DIR/$CRUISE/$day'" 2>/dev/null || warn "Could not remove raw $day"
+        else
+            todo+=("$day")
+        fi
     done
     [ ${#ready[@]} -eq 0 ] || push_in_background "${ready[@]}"
 
