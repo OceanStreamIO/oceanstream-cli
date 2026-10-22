@@ -553,6 +553,25 @@ def process_raw_files(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _files_with_common_channels(files: list[tuple[str, tuple, int]]) -> tuple[list[str], list[str]]:
+    """Paths to combine, and paths to skip, when a day's files disagree on channels.
+
+    *files* holds (path, channels, pings) per file. echopype combines only files with
+    the same channels, and a few files of a day can hold fewer: on RR2205 the EK80
+    wrote 0.5-1.4 MB files seconds apart while starting up. The channel set with the
+    most pings wins; files with any other set are skipped.
+    """
+    pings: dict[tuple, int] = {}
+    for _, channels, n in files:
+        pings[channels] = pings.get(channels, 0) + n
+    if len(pings) <= 1:
+        return [path for path, _, _ in files], []
+    best = max(pings, key=pings.get)
+    keep = [path for path, channels, _ in files if channels == best]
+    skip = [path for path, channels, _ in files if channels != best]
+    return keep, skip
+
+
 def combine_echodata_day(
     ed_zarr_paths: list[str],
     day_key: str,
@@ -582,9 +601,27 @@ def combine_echodata_day(
             ed["Vendor_specific"] = ed["Vendor_specific"].drop_vars("config_xml")
         ed_list.append(ed)
 
+    beam_channels = []
+    for zarr_path, ed in zip(sorted(ed_zarr_paths), ed_list, strict=True):
+        group = ed["Platform"] if ed["Platform"] is not None and "channel" in ed["Platform"].coords \
+            else ed["Sonar/Beam_group1"]
+        channels = tuple(sorted(str(c) for c in group["channel"].values)) if group is not None else ()
+        beam = ed["Sonar/Beam_group1"]
+        n_pings = int(beam.sizes.get("ping_time", 0)) if beam is not None else 0
+        beam_channels.append((zarr_path, channels, n_pings))
+    keep, skip = _files_with_common_channels(beam_channels)
+    if skip:
+        for path, channels, n in beam_channels:
+            if path in skip:
+                logger.warning("  Skipping %s for %s/%s: %d pings on channels %s, unlike the "
+                               "day's other files", Path(path).name, day_key, category, n,
+                               list(channels))
+        ed_list = [ed for (path, _, _), ed in zip(beam_channels, ed_list, strict=True)
+                   if path in keep]
+
     if len(ed_list) == 1:
         logger.info("  Single file for %s/%s — no combine needed", day_key, category)
-        return ed_zarr_paths[0]
+        return keep[0]
 
     ed_combined = ep.combine_echodata(ed_list)
 
