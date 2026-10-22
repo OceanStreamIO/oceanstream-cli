@@ -120,7 +120,7 @@ The second pass, unsupervised grouping of multi-frequency cells after our denois
 1. Adopt `research-vessel-open-ocean-ryan-short` with `--background-estimator quantile` as the RR2205 candidate.
 2. Add a signal-to-noise floor to frequency differencing, and make the cross-talk check exclude the seabed.
 3. Take the transducer depth from platform metadata instead of the Saildrone 1.9 m offset used for the stored Sv.
-4. Run the whole campaign on MareNostrum 5.
+4. Run the whole campaign on MareNostrum 5. Done on 2026-10-22, see [mn5-cruise-run.md](mn5-cruise-run.md).
 
 ## Reproducing
 
