@@ -60,7 +60,7 @@ dnspython==2.8.0
 docker==7.2.0
 docstring_parser==0.18.0
 donfig==0.8.1.post1
-echopype @ git+https://github.com/OceanStreamIO/echopype.git@4a7fa285d8c8629c35d7a95e378e5079600ccd09
+echopype @ git+https://github.com/OceanStreamIO/echopype.git@c93006b3c211e100df3fdf31f763945476635135
 email-validator==2.3.0
 et_xmlfile==2.0.0
 exceptiongroup==1.3.1
