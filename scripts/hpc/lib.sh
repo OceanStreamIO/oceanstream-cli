@@ -11,7 +11,7 @@
 # Assumed cluster shape (see docs/hpc.md):
 #   * a login node that accepts `sbatch` for the compute partition;
 #   * compute nodes WITHOUT outbound internet;
-#   * a data-transfer node whose queued rclone wrapper can reach S3.
+#   * a data-transfer node reachable over SSH; transfers are opened from this side.
 #
 # Portability: must run under bash on Linux and macOS. No `readlink -f`,
 # no `mapfile`, no GNU-only `date -d`.
@@ -32,7 +32,7 @@ fi
 # ---------------------------------------------------------------------------
 HPC_USER="${HPC_USER:-}"
 HPC_LOGIN_HOST="${HPC_LOGIN_HOST:-}"      # sbatch for compute jobs
-HPC_XFER_HOST="${HPC_XFER_HOST:-}"        # queued S3 transfers
+HPC_XFER_HOST="${HPC_XFER_HOST:-}"        # SSH endpoint for data transfers
 HPC_ACCOUNT="${HPC_ACCOUNT:-}"
 HPC_PROJ="${HPC_PROJ:-}"                  # persistent: code, venv, logs
 HPC_SCRATCH="${HPC_SCRATCH:-}"            # regenerable: raw, products, tmp
@@ -66,13 +66,9 @@ HPC_GPS_DIR="${HPC_GPS_DIR:-$HPC_STAGE/gps}"
 HPC_PRODUCTS_DIR="${HPC_PRODUCTS_DIR:-$HPC_STAGE/products}"
 HPC_JOB_TMP="${HPC_JOB_TMP:-$HPC_STAGE/tmp}"
 
-# Transfers. The wrapper submits rclone as a queued job on the transfer
-# cluster; HPC_DT_SLURM_CONF is that cluster's slurm.conf for squeue/sacct.
-# Plain rclone on the transfer node (non-login shells may not have it on PATH).
-HPC_RCLONE_BIN="${HPC_RCLONE_BIN:-rclone}"
-HPC_XFER_RCLONE_CMD="${HPC_XFER_RCLONE_CMD:-rclone}"
-HPC_DT_SLURM_CONF="${HPC_DT_SLURM_CONF:-}"
-HPC_RCLONE_REMOTE="${HPC_RCLONE_REMOTE:-oceanstream}"
+# Transfers run from this side over SSH (see hpc_xfer below); the cluster needs
+# no credentials for object storage and no rclone.
+_HPC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # Object storage
@@ -232,56 +228,44 @@ hpc_sacct() {
 }
 
 # ---------------------------------------------------------------------------
-# Queued rclone (transfer cluster)
+# Data transfer: initiated here, carried over SSH
 # ---------------------------------------------------------------------------
+# The site does not allow its machines to connect to external hosts. Its queued
+# transfer suite reached object storage from some of its nodes until October
+# 2026 -- by accident of their network, not by design -- and the site has since
+# said plainly that it is not permitted. So every transfer is opened from this
+# side: object storage -> here -> ssh -> scratch, and back the same way, with
+# nothing on local disk. xfer.py does the moving, size checks and retries; it is
+# the same file ocean-basemap uses.
 
-# Run an rclone operation through the site's queued transfer wrapper, wait,
-# and print its output with a trailing `exit=N` line.
-# $1 = label, remaining args = rclone arguments.
-hpc_xfer_rclone() {
-    local label="$1"; shift
-    local slurm_env=""
-    [ -n "$HPC_DT_SLURM_CONF" ] && slurm_env="SLURM_CONF='$HPC_DT_SLURM_CONF'"
-
-    log "Submitting $label via $HPC_XFER_RCLONE_CMD"
-    info "rclone $*"
-
-    # Wrappers commonly write <cmd>_<jobid>.{out,err} into $PWD.
-    local submitted jobid
-    submitted="$(hpc_ssh_xfer "mkdir -p '$HPC_LOG_DIR' && cd '$HPC_LOG_DIR' && $HPC_XFER_RCLONE_CMD $*" 2>/dev/null)"
-    jobid="$(printf '%s' "$submitted" | grep -oE 'Submitted batch job [0-9]+' | grep -oE '[0-9]+' | tail -1)"
-    [ -n "$jobid" ] || { warn "No job id from transfer wrapper. Output: ${submitted:-<empty>}"; return 1; }
-    log "Transfer job $jobid submitted"
-
-    if [ "${HPC_SUBMIT_NOWAIT:-0}" = "1" ]; then
-        printf 'jobid=%s\nexit=pending\n' "$jobid"
-        return 0
+# A client config for xfer.py's own connections, from the same settings the
+# helpers above pass on the command line.
+_hpc_ssh_config_file() {
+    if [ -z "${_HPC_XFER_SSH_CONF:-}" ]; then
+        _HPC_XFER_SSH_CONF="$(mktemp)"
+        {
+            printf 'Host *\n'
+            printf '    IdentityFile %s\n' "$HPC_SSH_KEY"
+            printf '    IdentitiesOnly yes\n    BatchMode yes\n'
+            printf '    StrictHostKeyChecking accept-new\n'
+            printf '    ConnectTimeout 20\n    ServerAliveInterval 30\n    ServerAliveCountMax 60\n'
+            [ -n "${HPC_KNOWN_HOSTS:-}" ] && printf '    UserKnownHostsFile %s\n' "$HPC_KNOWN_HOSTS"
+        } > "$_HPC_XFER_SSH_CONF"
     fi
-
-    local state last="" waited=0 interval="${HPC_POLL_INTERVAL:-15}" timeout="${HPC_POLL_TIMEOUT:-172800}"
-    while [ "$waited" -lt "$timeout" ]; do
-        state="$(hpc_ssh_xfer "$slurm_env squeue -j '$jobid' -h -o '%T' 2>/dev/null || true" 2>/dev/null | tr -d '[:space:]')"
-        [ -z "$state" ] && break
-        [ "$state" != "$last" ] && { info "$state"; last="$state"; }
-        sleep "$interval"
-        waited=$((waited + interval))
-    done
-    [ "$waited" -ge "$timeout" ] && { warn "Stopped polling after ${timeout}s"; return 1; }
-
-    local wrapper; wrapper="$(basename "${HPC_XFER_RCLONE_CMD%% *}")"
-    hpc_ssh_xfer "
-        cat '$HPC_LOG_DIR/${wrapper}_${jobid}.out' 2>/dev/null | tail -40
-        if [ -s '$HPC_LOG_DIR/${wrapper}_${jobid}.err' ]; then
-            echo '--- stderr ---'; tail -40 '$HPC_LOG_DIR/${wrapper}_${jobid}.err'
-        fi
-        code=\$($slurm_env sacct -j '$jobid' --format=ExitCode -n 2>/dev/null | head -1 | tr -d ' ')
-        echo \"jobid=$jobid\"
-        echo \"exit=\${code%%:*}\"
-    " 2>/dev/null | redact_stream
+    printf '%s' "$_HPC_XFER_SSH_CONF"
 }
 
-# Remote path for an S3 key under the bucket.
-s3_remote() { printf '%s:%s/%s\n' "$HPC_RCLONE_REMOTE" "$OCEANSTREAM_S3_BUCKET" "${1#/}"; }
+# hpc_xfer pull|push|check --src ... --dest ... [options]; see xfer.py.
+hpc_xfer() {
+    require_hpc_key
+    [ -n "$HPC_XFER_HOST" ] || fail "HPC_XFER_HOST is not set"
+    command -v ssh >/dev/null 2>&1 || fail "ssh not found"
+    HPC_SSH_CONFIG="$(_hpc_ssh_config_file)" HPC_XFER_TARGET="${HPC_USER}@${HPC_XFER_HOST}" \
+        "${HPC_LOCAL_PYTHON:-python3}" "$_HPC_LIB_DIR/xfer.py" "$@"
+}
+
+# An S3 key under the bucket, as an s3:// URI.
+s3_uri() { printf 's3://%s/%s\n' "$OCEANSTREAM_S3_BUCKET" "${1#/}"; }
 
 # ---------------------------------------------------------------------------
 # Misc
