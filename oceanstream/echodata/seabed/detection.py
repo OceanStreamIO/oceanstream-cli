@@ -1036,6 +1036,10 @@ def detect_seabed_interleaved(
 
     On RR2205 at 38 kHz the seabed's strongest echo reached -21 to -3 dB in 90 % of
     pings, while in water deeper than the range 90 % of pings peaked below -48 dB.
+
+    It suits channels that ping together as well (every ping is then the channel's own),
+    and the pipeline uses it for both: in deep water the composite detector alone joined
+    a few detections on fish or noise into a line across hours of water column.
     """
     from oceanstream.echodata.denoise.denoise import compact_channel
 
@@ -1076,7 +1080,8 @@ def detect_seabed_interleaved(
         pings_detected=detected,
         pings_total=int(dst.size),
         detection_rate=detected / dst.size if dst.size else 0.0,
-        params={**result.params, "interleaved": True, "max_gap_s": max_gap_s,
+        params={**result.params, "interleaved": int(src.size) < int(dst.size),
+                "max_gap_s": max_gap_s,
                 "min_seabed_sv": min_seabed_sv, "max_bridge_s": max_bridge_s,
                 "max_step_m": max_step_m, "channel_pings": int(src.size),
                 "channel_pings_detected": int(found.sum())},

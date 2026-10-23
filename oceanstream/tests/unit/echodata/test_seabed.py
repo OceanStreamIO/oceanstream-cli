@@ -607,3 +607,50 @@ class TestInterleavedSeabed:
         result = detect_seabed_interleaved(ds, pick="edge")
         assert result.pings_detected == 300
         assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+
+
+class TestSimultaneousSeabed:
+    """Channels that ping together get the same guarded line (IESSNS 2021)."""
+
+    @staticmethod
+    def together(sv_one: np.ndarray, range_m: np.ndarray) -> xr.Dataset:
+        import pandas as pd
+
+        sv = np.stack([sv_one, sv_one])
+        n_pings = sv_one.shape[0]
+        return xr.Dataset(
+            {
+                "Sv": (["channel", "ping_time", "range_sample"], sv),
+                "echo_range": (["channel", "ping_time", "range_sample"],
+                               np.broadcast_to(range_m, sv.shape).copy()),
+                "frequency_nominal": (["channel"], [38000.0, 120000.0]),
+            },
+            coords={
+                "channel": ["WBT 1-ES38", "WBT 2-ES120"],
+                "ping_time": pd.date_range("2021-07-12", periods=n_pings, freq="1s").values,
+                "range_sample": np.arange(range_m.size),
+            },
+        )
+
+    def test_shelf_seabed_on_every_ping(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        fjord = create_fjord_dataset(n_pings=300, seabed_m=73.0)
+        ds = self.together(fjord["Sv"].values, fjord["echo_range"].values[0])
+        result = detect_seabed_interleaved(ds, pick="edge")
+        assert result.pings_detected == 300
+        assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+
+    def test_a_school_in_deep_water_does_not_become_hours_of_seabed(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        gen = np.random.default_rng(3)
+        range_m = np.linspace(0, 500, 1000)
+        sv = gen.normal(-80, 2, (1200, range_m.size))
+        sv[100:116, (range_m > 150) & (range_m < 160)] = -32.0  # a dense school, 16 s
+        ds = self.together(sv, range_m)
+        result = detect_seabed_interleaved(ds, pick="edge")
+        depth = result.seabed_depth.values
+        # Whatever stands near the school, nothing is drawn minutes away from it.
+        assert np.isnan(depth[300:]).all()
+

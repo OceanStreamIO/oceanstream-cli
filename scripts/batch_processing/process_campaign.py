@@ -1145,8 +1145,7 @@ def mask_seabed_day(
     """
     import dask
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
-    from oceanstream.echodata.denoise.denoise import channels_ping_in_turn
-    from oceanstream.echodata.seabed import detect_seabed, detect_seabed_interleaved, mask_seabed
+    from oceanstream.echodata.seabed import detect_seabed_interleaved, mask_seabed
 
     logger.info("Seabed masking %s/%s", day_key, category)
 
@@ -1154,10 +1153,11 @@ def mask_seabed_day(
 
     with dask.config.set(scheduler="synchronous"):
         try:
-            if channels_ping_in_turn(ds["Sv"]):
-                seabed_result = detect_seabed_interleaved(ds, pick=line)
-            else:
-                seabed_result = detect_seabed(ds, method="composite", pick=line)
+            # The guarded detector (echo behind the line, short bridges, nothing far from
+            # a detection) whether or not the channels ping in turn: on its own, the
+            # composite detector draws a line through the water column when the seabed
+            # is out of range, and the mask then removes hours of water (IESSNS 2021).
+            seabed_result = detect_seabed_interleaved(ds, pick=line)
             logger.info(
                 "  Seabed on %.1f%% of pings (channel %s)",
                 100 * seabed_result.detection_rate, seabed_result.channel,
