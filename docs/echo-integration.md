@@ -15,6 +15,12 @@ A cell with both an artefact bit and the background bit counts as an artefact.
 
 **Why zero matters.** An average that skips the empty cells covers only the cells that kept signal. If 5 of 50 cells in a 10 m bin hold a layer at −60 dB and the other 45 are below the noise, skipping gives −60 dB, as if the layer filled the bin. Counting the 45 as zero gives −70 dB, and NASC ten times smaller. The overstatement equals all cells divided by kept cells, so it grows with the noise level and with range rather than with the biology. On IESSNS 2021 (2021-07-16, a weak two-hour window at 38 kHz) the difference was 13.6 dB.
 
+**Zero is a lower bound.** A cell below the noise was measured, but its content can't be told apart from noise: it held anything from nothing up to the SNR threshold. Counting it as zero follows survey practice, where integration counts only backscatter above a threshold, and makes NASC read as "backscatter above the detection threshold". On IESSNS 2021 (2021-07-16, 07:19–09:42, seabed 70–150 m, noise capped) the alternatives were measured against zero:
+- **38 kHz:** zero, the cells' own noise-subtracted values and the threshold value agree within 0.1 dB of mean water-column Sv.
+- **120 kHz:** with 74 % of cells below the noise, zero (−71.8 dB) is up to 4 dB below the noise-subtracted estimate (−67.7 dB) and 8 dB below the upper bound.
+
+A noise-subtracted second variable was considered and left out on 2026-10-23, to stay with the survey convention.
+
 **Why the seabed loses its height.** echopype's `compute_NASC` multiplies each bin's mean sv by the summed depth steps of the samples in the bin, whether or not they hold data. A 10 m bin straddling the seabed would count 10 m of height for the water above the line. Blanking the depth of seabed cells, as the surface exclusion already does, limits the height to the water.
 
 ## Output
