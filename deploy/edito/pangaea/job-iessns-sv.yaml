@@ -44,9 +44,9 @@ spec:
             - {name: RAW_INCLUDE, value: "D20210709-T(190[2-9]|191[0-9]|1931)"}
             - {name: ENCODE_MODE, value: auto}
             - {name: CAL_S3_KEY, value: pangaea/IESSNS2021/meta/calibration_2021.xml}
-            - {name: CODE_S3_KEY, value: code/oceanstream-cli-687bf98.tar.gz}
+            - {name: CODE_S3_KEY, value: code/oceanstream-cli-802a973.tar.gz}
             - {name: SV_CONTAINER, value: sv-smoke}
-            - {name: PIPELINE_ARGS, value: "--depth-offset 9"}
+            - {name: PIPELINE_ARGS, value: "--depth-offset 9 --sv-per-file --delete-raw-after-convert"}
             - {name: INSTALL_CUPY, value: "0"}
             - {name: REQUIRE_GPU, value: "0"}
             - {name: SV_RANGE_BIN_M, value: "0.18"}
