@@ -572,13 +572,22 @@ def _files_with_common_channels(files: list[tuple[str, tuple, int]]) -> tuple[li
     return keep, skip
 
 
+def _encode_mode_of(ed) -> str:
+    """"complex" when the EchoData holds complex samples, else "power"."""
+    beam = ed["Sonar/Beam_group1"]
+    return "complex" if beam is not None and "backscatter_i" in beam.data_vars else "power"
+
+
 def combine_echodata_day(
     ed_zarr_paths: list[str],
     day_key: str,
     category: str,
     echodata_dir: Path,
-) -> str:
+) -> str | list[str]:
     """Combine per-file EchoData Zarrs into one per-day EchoData Zarr.
+
+    A day whose files hold different sample types (complex and power/angle) gives one
+    Zarr per type, returned as a list.
 
     Follows echopype's recommended pattern:
     1. Open each EchoData Zarr lazily (chunks={})
@@ -616,32 +625,46 @@ def combine_echodata_day(
                 logger.warning("  Skipping %s for %s/%s: %d pings on channels %s, unlike the "
                                "day's other files", Path(path).name, day_key, category, n,
                                list(channels))
-        ed_list = [ed for (path, _, _), ed in zip(beam_channels, ed_list, strict=True)
-                   if path in keep]
 
-    if len(ed_list) == 1:
-        logger.info("  Single file for %s/%s — no combine needed", day_key, category)
-        return keep[0]
+    # Files with complex samples and files with power/angle samples cannot be combined;
+    # each kind is combined on its own and their Sv joined in stage 4.
+    groups: dict[str, list[tuple[str, object]]] = {}
+    for (path, _, _), ed in zip(beam_channels, ed_list, strict=True):
+        if path in keep:
+            groups.setdefault(_encode_mode_of(ed), []).append((path, ed))
+    if len(groups) > 1:
+        logger.info("  %s/%s mixes sample types: %s — combined apart", day_key, category,
+                    ", ".join(f"{len(g)} {mode}" for mode, g in groups.items()))
 
-    ed_combined = ep.combine_echodata(ed_list)
-
-    combined_zarr = str(echodata_dir / f"{day_key}--{category}--combined.zarr")
-    logger.info("  Saving combined EchoData: %s", combined_zarr)
-    _clean_echodata_encoding(ed_combined)
-    ed_combined.to_zarr(combined_zarr, overwrite=True)
-
-    del ed_combined, ed_list
+    outputs = []
+    for mode, members in groups.items():
+        if len(members) == 1:
+            logger.info("  Single %s file for %s/%s — no combine needed", mode, day_key, category)
+            outputs.append(members[0][0])
+            continue
+        ed_combined = ep.combine_echodata([ed for _, ed in members])
+        suffix = f"-{mode}" if len(groups) > 1 else ""
+        combined_zarr = str(echodata_dir / f"{day_key}--{category}--combined{suffix}.zarr")
+        logger.info("  Saving combined EchoData: %s", combined_zarr)
+        _clean_echodata_encoding(ed_combined)
+        ed_combined.to_zarr(combined_zarr, overwrite=True)
+        outputs.append(combined_zarr)
+        del ed_combined
+    del ed_list, groups
     _release_memory()
 
     # Delete per-file EchoData Zarrs to free disk space
     import shutil
+    removed = 0
     for zarr_path in ed_zarr_paths:
         p = Path(zarr_path)
-        if p.exists() and p.is_dir():
+        if zarr_path not in outputs and p.exists() and p.is_dir():
             shutil.rmtree(p, ignore_errors=True)
-    logger.info("  Cleaned up %d per-file EchoData Zarrs", len(ed_zarr_paths))
+            removed += 1
+    if removed:
+        logger.info("  Cleaned up %d per-file EchoData Zarrs", removed)
 
-    return combined_zarr
+    return outputs[0] if len(outputs) == 1 else outputs
 
 
 def run_echodata_combine(
@@ -1031,7 +1054,7 @@ def _correct_absorption(sv_ch, ctd, freq: float, used, cfg: PipelineConfig):
 
 
 def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: dict,
-                           cfg: PipelineConfig, ctd=None):
+                           cfg: PipelineConfig, ctd=None, cal=None):
     """Sv one channel at a time, for channels that ping in turn or with CTD casts.
 
     Each channel is calibrated on its own pings and recorded range only, then binned, and
@@ -1056,6 +1079,10 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
         if ctd is not None:
             env, used, freq = _ctd_environment(ed_ch, channel, n_samples, ctd, cfg)
             kwargs = {**compute_kwargs, "env_params": env}
+        if cal is not None:
+            from oceanstream.echodata.calibrate.case_xml import case_cal_params
+
+            kwargs = {**kwargs, "cal_params": case_cal_params(ed_ch["Sonar/Beam_group1"], cal)}
         sv_ch = ep.calibrate.compute_Sv(ed_ch, **kwargs)
         if ctd is not None:
             sv_ch = _correct_absorption(sv_ch, ctd, freq, used, cfg)
@@ -1144,43 +1171,54 @@ def _env_params_for_day(cfg: PipelineConfig, day_key: str) -> dict | None:
 
 def _reconstruct_combined_echodata(echodata_dir: Path, cfg: PipelineConfig) -> dict[str, dict[str, str]]:
     """Find the per-day combined EchoData Zarrs written by Stage 3."""
-    day_echodata: dict[str, dict[str, str]] = {}
-    for path in sorted(echodata_dir.glob("*--*--combined.zarr")):
+    day_echodata: dict[str, dict] = {}
+    for path in sorted(echodata_dir.glob("*--*--combined*.zarr")):
         day_key, category, _ = path.name.split("--")
         if not _within_date_range(datetime.fromisoformat(day_key), cfg):
             continue
-        day_echodata.setdefault(day_key, {})[category] = str(path)
+        # A day of mixed sample types left one Zarr per type ("combined-<type>.zarr").
+        prev = day_echodata.setdefault(day_key, {}).get(category)
+        day_echodata[day_key][category] = (
+            str(path) if prev is None else [*([prev] if isinstance(prev, str) else prev), str(path)]
+        )
     return day_echodata
 
 
-def compute_sv_day(
-    ed_zarr_path: str,
-    day_key: str,
-    category: str,
-    cfg: PipelineConfig,
-    output_container: str,
-    gps_df: pd.DataFrame | None = None,
-) -> str:
-    """Compute Sv from combined EchoData, add depth + GPS, save Sv Zarr.
+def _platform_gps(ed) -> pd.DataFrame | None:
+    """GPS fixes from the raw files' NMEA (the EchoData Platform group) as dt/lat/lon.
 
-    Follows echopype's recommended pattern:
-    1. Open combined EchoData lazily
-    2. Chunk along ping_time for out-of-core processing
-    3. compute_Sv (lazy computation)
-    4. add_depth (adds depth variable from echo_range + offset)
-    5. Interpolate GPS location data (linear, matching echopype add_location)
-    6. Save to output storage
-
-    Returns the Sv zarr path (in the output container).
+    GGA fixes are used when the files hold any; (0, 0) is a failed fix and is dropped.
     """
-    import echopype as ep
-    from oceanstream.echodata.storage import save_dataset_to_azure
+    import numpy as np
 
-    logger.info("Computing Sv for %s/%s", day_key, category)
+    plat = ed["Platform"]
+    if plat is None or "latitude" not in plat or "longitude" not in plat or not plat["latitude"].dims:
+        return None
+    lat = plat["latitude"]
+    tdim = lat.dims[0]
+    df = pd.DataFrame({
+        "dt": pd.to_datetime(plat[tdim].values),
+        "lat": np.asarray(lat.values, dtype=float),
+        "lon": np.asarray(plat["longitude"].values, dtype=float),
+    })
+    if "sentence_type" in plat and plat["sentence_type"].dims == lat.dims:
+        kinds = np.char.upper(plat["sentence_type"].values.astype(str))
+        if (kinds == "GGA").any():
+            df = df[kinds == "GGA"]
+    ok = np.isfinite(df["lat"]) & np.isfinite(df["lon"])
+    ok &= ~((df["lat"].abs() < 1e-6) & (df["lon"].abs() < 1e-6))
+    df = df[ok & df["dt"].notna()].sort_values("dt").drop_duplicates("dt").reset_index(drop=True)
+    return df if not df.empty else None
+
+
+def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
+    """Sv of one combined EchoData Zarr: (ds_Sv, encode mode, GPS fixes from its NMEA)."""
+    import echopype as ep
 
     # Open combined EchoData lazily and chunk for out-of-core processing
     ed = ep.open_converted(ed_zarr_path, chunks={})
     ed = ed.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
+    encode_mode = _encode_mode_of(ed) if cfg.raw.encode_mode == "auto" else cfg.raw.encode_mode
 
     # Compute Sv
     compute_kwargs = {}
@@ -1189,7 +1227,7 @@ def compute_sv_day(
         from oceanstream.echodata.compute.sv import channel_pings, fill_transmit_type
 
         compute_kwargs["waveform_mode"] = cfg.raw.waveform_mode
-        compute_kwargs["encode_mode"] = cfg.raw.encode_mode
+        compute_kwargs["encode_mode"] = encode_mode
         by_channel = channel_pings(ed)
         # Channels that ping in turn would otherwise be dropped (see fill_transmit_type).
         fill_transmit_type(ed)
@@ -1217,9 +1255,16 @@ def compute_sv_day(
             by_channel = {str(ch): np.ones(beam.sizes["ping_time"], dtype=bool)
                           for ch in beam["channel"].values}
 
-    logger.info("  compute_Sv (waveform=%s, encode=%s)", cfg.raw.waveform_mode, cfg.raw.encode_mode)
+    cal = None
+    if cfg.raw.cal_params_file:
+        from oceanstream.echodata.calibrate.case_xml import case_cal_params, load_case_xml
+
+        cal = load_case_xml(cfg.raw.cal_params_file)
+
+    logger.info("  compute_Sv (waveform=%s, encode=%s) on %s", cfg.raw.waveform_mode, encode_mode,
+                Path(ed_zarr_path).name)
     if by_channel:
-        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd)
+        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd, cal=cal)
         if ctd is not None:
             ds_Sv.attrs["environment"] = (
                 f"Sound speed and absorption from {ctd.time.size} CTD casts in "
@@ -1227,9 +1272,68 @@ def compute_sv_day(
                 "Francois-Garrison (1982) absorption, pH 8.0"
             )
     else:
+        if cal is not None:
+            compute_kwargs["cal_params"] = case_cal_params(ed["Sonar/Beam_group1"], cal)
         ds_Sv = ep.calibrate.compute_Sv(ed, **compute_kwargs)
         if cfg.raw.sv_range_bin_m > 0:
             ds_Sv = _bin_sv_range(ds_Sv, cfg.raw.sv_range_bin_m)
+    if cal is not None:
+        ds_Sv.attrs["calibration"] = (
+            f"Gain, Sa correction and equivalent beam angle from {os.path.basename(cfg.raw.cal_params_file)}"
+        )
+    return ds_Sv, encode_mode, _platform_gps(ed)
+
+
+def _join_sv_parts(parts: list):
+    """Sv of one day's groups of files (e.g. complex and power/angle), joined in time."""
+    import xarray as xr
+
+    ds_Sv = xr.concat(parts, dim="ping_time", join="outer", data_vars="minimal",
+                      coords="minimal", compat="override", combine_attrs="override")
+    factors = {p["Sv"].attrs.get("range_bin_samples") for p in parts}
+    if len(factors) > 1:
+        logger.warning("  Groups were range-binned differently: %s", sorted(map(str, factors)))
+    return ds_Sv.sortby("ping_time")
+
+
+def compute_sv_day(
+    ed_zarr_path: str | list[str],
+    day_key: str,
+    category: str,
+    cfg: PipelineConfig,
+    output_container: str,
+    gps_df: pd.DataFrame | None = None,
+) -> str:
+    """Compute Sv from combined EchoData, add depth + GPS, save Sv Zarr.
+
+    Follows echopype's recommended pattern:
+    1. Open combined EchoData lazily
+    2. Chunk along ping_time for out-of-core processing
+    3. compute_Sv (lazy computation)
+    4. add_depth (adds depth variable from echo_range + offset)
+    5. Interpolate GPS location data (linear, matching echopype add_location)
+    6. Save to output storage
+
+    *ed_zarr_path* may list several Zarrs (a day whose files hold different sample
+    types); their Sv is joined along ping_time. Without *gps_df*, positions come from
+    the NMEA in the raw files.
+
+    Returns the Sv zarr path (in the output container).
+    """
+    import echopype as ep
+    from oceanstream.echodata.storage import save_dataset_to_azure
+
+    logger.info("Computing Sv for %s/%s", day_key, category)
+    paths = [ed_zarr_path] if isinstance(ed_zarr_path, str) else list(ed_zarr_path)
+    parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
+    ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
+    ds_Sv.attrs["encode_mode"] = ",".join(dict.fromkeys(p[1] for p in parts))
+
+    if gps_df is None or gps_df.empty:
+        frames = [p[2] for p in parts if p[2] is not None]
+        if frames:
+            gps_df = pd.concat(frames).sort_values("dt").drop_duplicates("dt")
+            logger.info("  GPS from the raw files' NMEA: %d fixes", len(gps_df))
 
     # Add depth variable from echo_range + transducer depth offset
     depth_offset = cfg.raw.depth_offset
@@ -1260,15 +1364,16 @@ def compute_sv_day(
     logger.info("  Saved Sv: %s/%s [%s]", output_container, output_zarr, category)
 
     ds_Sv.close()
-    del ds_Sv, ed
+    del ds_Sv, parts
     _release_memory()
 
-    # Delete the combined EchoData Zarr to free disk space
+    # Delete the combined EchoData Zarrs to free disk space
     import shutil
-    ed_path = Path(ed_zarr_path)
-    if ed_path.exists() and ed_path.is_dir() and not cfg.raw.keep_intermediate:
-        shutil.rmtree(ed_path, ignore_errors=True)
-        logger.info("  Cleaned up combined EchoData: %s", ed_zarr_path)
+    for path in paths:
+        ed_path = Path(path)
+        if ed_path.exists() and ed_path.is_dir() and not cfg.raw.keep_intermediate:
+            shutil.rmtree(ed_path, ignore_errors=True)
+            logger.info("  Cleaned up combined EchoData: %s", path)
 
     return output_zarr
 
@@ -2150,8 +2255,8 @@ def parse_args() -> PipelineConfig:
     parser.add_argument(
         "--encode-mode",
         default="complex",
-        choices=["complex", "power"],
-        help="EK80 encode mode",
+        choices=["complex", "power", "auto"],
+        help="EK80 encode mode; auto picks complex or power per group of files",
     )
 
     # Depth
@@ -2204,6 +2309,12 @@ def parse_args() -> PipelineConfig:
              "absorption then come from the casts either side of each ping, and Sv is "
              "corrected to the mean absorption along each sample's path. Excludes "
              "--env-params-file.",
+    )
+    parser.add_argument(
+        "--cal-params-file",
+        default="",
+        help="Calibration XML of <case kHz= g= SA= equivalentBeamAngle=/> entries (MFRI/PANGAEA "
+             "format); replaces gain, Sa correction and equivalent beam angle from the raw files.",
     )
     parser.add_argument(
         "--seabed-mask-offset",
@@ -2408,6 +2519,7 @@ def parse_args() -> PipelineConfig:
     cfg.raw.reuse_converted = args.reuse_converted
     cfg.raw.env_params_file = args.env_params_file
     cfg.raw.ctd_file = args.ctd_file
+    cfg.raw.cal_params_file = args.cal_params_file
     if cfg.raw.ctd_file and cfg.raw.env_params_file:
         parser.error("--ctd-file and --env-params-file both set the environment; use one.")
     cfg.apply_seabed_mask = args.seabed_mask

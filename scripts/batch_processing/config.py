@@ -267,6 +267,8 @@ class RawConversionConfig:
     # echopype parameters
     sonar_model: str = "EK80"
     waveform_mode: str = "CW"
+    # "complex", "power", or "auto": complex where the files hold complex samples,
+    # else power/angle, decided per group of files (a day can hold both).
     encode_mode: str = "complex"
 
     # Depth
@@ -304,6 +306,11 @@ class RawConversionConfig:
     # mean absorption along the path (oceanstream.echodata.environment.ctd_casts).
     # Excludes env_params_file.
     ctd_file: str = ""
+
+    # <calibration><case kHz= g= SA= equivalentBeamAngle=/></calibration> XML (as published
+    # with MFRI survey data). Its gain, Sa correction and equivalent beam angle replace the
+    # values in the raw files (oceanstream.echodata.calibrate.case_xml).
+    cal_params_file: str = ""
 
     # Concurrency knobs
     download_workers: int = 4   # parallel download threads
