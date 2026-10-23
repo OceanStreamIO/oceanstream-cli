@@ -288,3 +288,41 @@ class TestCli:
         result = self._run("path", "tpos-sd-2023")
         assert result.exit_code == 0
         assert result.output.strip().endswith("library/tpos-sd-2023.toml")
+
+
+class TestIntegrationSection:
+    """[echodata.integration.<Hz>] tables: validated, and part of the parameter hash."""
+
+    BASE = (Path(__file__).resolve().parents[3] / "echodata" / "presets" / "library"
+            / "research-vessel-open-ocean-ryan-short.toml")
+
+    def _with(self, tables: str):
+        from oceanstream.echodata.presets.registry import parse_preset
+
+        text = self.BASE.read_text().replace(
+            'key = "research-vessel-open-ocean-ryan-short"', 'key = "test-integration"')
+        return parse_preset(text + "\n" + tables, key="test-integration")
+
+    def test_tables_are_read(self):
+        preset = self._with(
+            "[echodata.integration.38000]\nstart_depth_m = 15\nmax_noise_sv_db = -85\n")
+        assert preset.integration == {38000: {"start_depth_m": 15.0, "max_noise_sv_db": -85.0}}
+
+    def test_unknown_key_is_an_error(self):
+        from oceanstream.echodata.presets import PresetError
+
+        with pytest.raises(PresetError, match="unknown key"):
+            self._with("[echodata.integration.38000]\nend_depth_m = 400\n")
+
+    def test_frequency_without_denoise_parameters_is_an_error(self):
+        from oceanstream.echodata.presets import PresetError
+
+        with pytest.raises(PresetError, match="no denoise parameters"):
+            self._with("[echodata.integration.333000]\nstart_depth_m = 15\n")
+
+    def test_hash_changes_only_with_the_section(self):
+        plain = self._with("")
+        layered = self._with("[echodata.integration.38000]\nstart_depth_m = 15\n")
+        assert plain.integration == {}
+        assert plain.params_sha256 != layered.params_sha256
+

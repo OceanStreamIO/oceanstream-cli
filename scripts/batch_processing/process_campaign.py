@@ -1483,6 +1483,7 @@ def compute_mvbs_day(
     cruise_id: str,
     save_netcdf: bool = False,
     surface_exclusion_depth: float = 0.0,
+    integration_layers: dict | None = None,
 ) -> str:
     """Compute MVBS for a day Zarr.
 
@@ -1504,7 +1505,7 @@ def compute_mvbs_day(
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
     # Cells below the noise count as zero, artefacts and the seabed are left out.
-    ds = integration_view(ds)
+    ds = integration_view(ds, integration_layers)
 
     # Snapshot frequency_nominal BEFORE .where() — otherwise it gets broadcast
     # to all masked dims and turns into a NaN-filled 3D array.
@@ -1591,6 +1592,7 @@ def run_mvbs_computation(
                 cruise_id=cfg.cruise_id,
                 save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
                 surface_exclusion_depth=cfg.surface_exclusion_depth,
+                integration_layers=getattr(cfg, "integration_layers", None),
             )
             mvbs_zarrs[day_key][category] = mvbs_path
 
@@ -1613,6 +1615,7 @@ def compute_nasc_day(
     cruise_id: str,
     save_netcdf: bool = False,
     surface_exclusion_depth: float = 0.0,
+    integration_layers: dict | None = None,
 ) -> str:
     """Compute NASC for a day Zarr.
 
@@ -1634,7 +1637,7 @@ def compute_nasc_day(
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
     # Cells below the noise count as zero, artefacts and the seabed are left out.
-    ds = integration_view(ds)
+    ds = integration_view(ds, integration_layers)
 
     if "depth" not in ds and "depth" not in ds.coords:
         logger.warning("  No depth variable in %s/%s — skipping NASC", day_key, category)
@@ -1733,6 +1736,7 @@ def run_nasc_computation(
                     cruise_id=cfg.cruise_id,
                     save_netcdf=cfg.save_nasc_to_netcdf or cfg.save_to_netcdf,
                     surface_exclusion_depth=cfg.surface_exclusion_depth,
+                    integration_layers=getattr(cfg, "integration_layers", None),
                 )
                 futures[fut] = (day_key, category)
 

@@ -91,6 +91,9 @@ class Preset:
     #: Chain the mask filters in ``methods`` order (Ryan et al. 2015) instead of OR-combining
     #: masks each made from the source Sv.
     cascade: bool = False
+    #: {Hz: {"start_depth_m": m, "max_noise_sv_db": dB}}: the layer each channel is
+    #: integrated over in MVBS and NASC (products.integration_view). Empty: the whole range.
+    integration: dict[int, dict[str, float]] = field(default_factory=dict)
 
     @property
     def frequencies(self) -> tuple[int, ...]:
@@ -117,6 +120,8 @@ class Preset:
                 content[name] = getattr(self, name)
         if self.cascade:
             content["cascade"] = True
+        if self.integration:
+            content["integration"] = {str(f): self.integration[f] for f in sorted(self.integration)}
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -268,6 +273,39 @@ def parse_preset(text: str, *, source: Path | None = None, key: str = "") -> Pre
         raise PresetError(f"{label}: {e}") from e
 
 
+INTEGRATION_KEYS = frozenset({"start_depth_m", "max_noise_sv_db"})
+
+
+def _integration(raw: Any, params: dict[int, Any]) -> dict[int, dict[str, float]]:
+    """``[echodata.integration.<Hz>]`` tables: where each channel's integration starts
+    (``start_depth_m``) and the noise level, in Sv, at which it ends (``max_noise_sv_db``)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise PresetError("[echodata.integration] must hold one table per frequency in Hz.")
+    out: dict[int, dict[str, float]] = {}
+    for raw_freq, table in raw.items():
+        where = f"[echodata.integration.{raw_freq}]"
+        try:
+            freq = int(raw_freq)
+        except ValueError as e:
+            raise PresetError(f"{where}: the key must be a frequency in Hz.") from e
+        if freq not in params:
+            raise PresetError(f"{where}: no denoise parameters for {_khz(freq):g} kHz.")
+        if not isinstance(table, dict):
+            raise PresetError(f"{where}: expected a table.")
+        _expect_keys(table, set(INTEGRATION_KEYS), where)
+        entry: dict[str, float] = {}
+        for name, value in table.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise PresetError(f"{where}.{name} must be a number.")
+            if name == "start_depth_m" and value < 0:
+                raise PresetError(f"{where}.start_depth_m must not be negative.")
+            entry[name] = float(value)
+        out[freq] = entry
+    return out
+
+
 def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  # noqa: PLR0912
     denoise = data.get("echodata", {}).get("denoise", {})
     raw_params = denoise.get("frequency_params")
@@ -309,13 +347,15 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  #
     if cascade:
         timing["cascade"] = True
 
+    integration = _integration(data.get("echodata", {}).get("integration"), params)
+
     meta = data.get("preset")
     stem = source.stem if source else ""
     if meta is None:
         return Preset(key=key or stem, name=key or stem, status="external", summary="",
                       description="", derived_from="", applies_to=AppliesTo(),
                       validations=(), methods=methods, params=params, source=source,
-                      notes=tuple(notes), **timing)
+                      notes=tuple(notes), integration=integration, **timing)
 
     _expect_keys(meta, {"key", "name", "status", "summary", "description", "derived_from",
                         "applies_to", "validations"}, "[preset]")
@@ -344,6 +384,7 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  #
         params=params,
         source=source,
         notes=tuple(notes),
+        integration=integration,
         **timing,
     )
 

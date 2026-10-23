@@ -390,6 +390,9 @@ class PipelineConfig:
     mvbs: MVBSParams = field(default_factory=MVBSParams)
     nasc: NASCParams = field(default_factory=NASCParams)
     prune: PruneParams = field(default_factory=PruneParams)
+    # Per-channel integration layer from the preset's [echodata.integration] tables:
+    # {Hz: {"start_depth_m": m, "max_noise_sv_db": dB}}. Empty: the whole range.
+    integration_layers: dict = field(default_factory=dict)
     chunks: ChunkConfig = field(default_factory=ChunkConfig)
     days_to_combine: int = 1  # 1 = per-day concatenation
     # ── Raw conversion (process_from_raw.py) ─────────────────────

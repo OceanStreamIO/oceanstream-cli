@@ -84,7 +84,39 @@ INTEGRATION_NOTE = (
 )
 
 
-def integration_view(ds: xr.Dataset) -> xr.Dataset:
+def _outside_layer(ds: xr.Dataset, layers: Mapping[int, Mapping[str, float]]):
+    """Cells outside each channel's integration layer, and the layer per channel label.
+
+    A channel's layer starts at ``start_depth_m`` and ends where its noise, as Sv at
+    that range (the per-ping noise level plus spreading and absorption loss), exceeds
+    ``max_noise_sv_db``. Frequencies without an entry are not limited.
+    """
+    import xarray as xr
+
+    freqs = ds["frequency_nominal"]
+    extra = [d for d in freqs.dims if d != "channel"]
+    if extra:
+        freqs = freqs.isel({d: 0 for d in extra})
+    start, noise_max, used = [], [], {}
+    for label, freq in zip(ds["channel"].values, np.ravel(freqs.values), strict=True):
+        entry = next((v for f, v in layers.items() if np.isclose(float(f), float(freq))), {})
+        start.append(float(entry.get("start_depth_m", 0.0)))
+        noise_max.append(float(entry.get("max_noise_sv_db", np.inf)))
+        if entry:
+            used[str(label)] = dict(entry)
+    channel = {"channel": ds["channel"].values}
+    outside = ds["depth"] < xr.DataArray(start, dims=["channel"], coords=channel)
+    limited = np.isfinite(noise_max)
+    if limited.any() and {"background_noise", "echo_range", "sound_absorption"} <= set(ds.variables):
+        spreading_loss, absorption_loss = _range_terms(ds)
+        sv_noise = ds["background_noise"] + spreading_loss + absorption_loss
+        outside = outside | (sv_noise > xr.DataArray(noise_max, dims=["channel"], coords=channel))
+    return outside, used
+
+
+def integration_view(
+    ds: xr.Dataset, layers: Mapping[int, Mapping[str, float]] | None = None
+) -> xr.Dataset:
     """Resolved masked Sv, prepared for echo integration (MVBS and NASC).
 
     Opened through :func:`resolve_product`, a masked store has every removed cell as
@@ -98,6 +130,13 @@ def integration_view(ds: xr.Dataset) -> xr.Dataset:
     * cells at or below the seabed lose their depth as well, because echopype weights
       NASC by the height of every depth sample in a bin, and a bin straddling the
       seabed would otherwise count its full height for the water above the line.
+
+    With *layers* (``{Hz: {"start_depth_m": m, "max_noise_sv_db": dB}}``, from the
+    preset's ``[echodata.integration]``), cells above a channel's start depth, or where
+    its noise in Sv exceeds the limit, are left out with their height as well: just below
+    the transducers bubbles and ringing dominate, and where the noise approaches the
+    signal, noise samples that clear the SNR threshold by chance are integrated while
+    those below it count as zero.
 
     Data without ``denoise_flags`` (Sv straight from stage 4) is returned unchanged.
     """
@@ -113,6 +152,12 @@ def integration_view(ds: xr.Dataset) -> xr.Dataset:
     if "depth" in out:
         depth = out["depth"].where(~seabed)
         out = out.assign_coords(depth=depth) if "depth" in out.coords else out.assign(depth=depth)
+    if layers and "depth" in out and "frequency_nominal" in out:
+        outside, used = _outside_layer(out, layers)
+        out["Sv"] = out["Sv"].where(~outside).assign_attrs(ds["Sv"].attrs)
+        depth = out["depth"].where(~outside)
+        out = out.assign_coords(depth=depth) if "depth" in out.coords else out.assign(depth=depth)
+        out.attrs["integration_layers"] = json.dumps(used, sort_keys=True)
     out.attrs["integration"] = INTEGRATION_NOTE
     return out
 

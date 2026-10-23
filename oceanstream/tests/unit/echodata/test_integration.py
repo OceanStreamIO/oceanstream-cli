@@ -93,7 +93,8 @@ class TestArtefactPruning:
     def kept(ds, threshold=0.5):
         from oceanstream.echodata.denoise import drop_noisy_pings
 
-        return drop_noisy_pings(ds, drop_threshold=0.8, artefact_threshold=threshold).sizes["ping_time"]
+        pruned = drop_noisy_pings(ds, drop_threshold=0.8, artefact_threshold=threshold)
+        return pruned.sizes["ping_time"]
 
     def test_empty_water_is_kept(self):
         ds = _day()
@@ -123,3 +124,44 @@ class TestArtefactPruning:
         ds["echo_range"][1, :, :] = np.nan
         _remove(ds, (0, 2, slice(None)), IMPULSE)
         assert self.kept(ds) == 3
+
+
+class TestIntegrationLayer:
+    """Each channel is integrated from its start depth to where its noise reaches a limit."""
+
+    @staticmethod
+    def with_noise(ds, level_db=-150.0, absorption_db_m=1.0):
+        """Noise per ping as echopype stores it; with 1 dB/m absorption it rises fast."""
+        shape = (ds.sizes["channel"], ds.sizes["ping_time"])
+        ds["background_noise"] = (("channel", "ping_time"), np.full(shape, level_db))
+        ds["sound_absorption"] = (("channel", "ping_time"), np.full(shape, absorption_db_m))
+        return ds
+
+    def test_cells_above_the_start_depth_are_left_out(self):
+        ds = _day()
+        out = integration_view(ds, {38000: {"start_depth_m": 5.0}})
+        sv, depth = out["Sv"].values[0, 0], out["depth"].values[0, 0]
+        assert np.isnan(sv[:5]).all() and np.isnan(depth[:5]).all()
+        assert (sv[5:] == -60.0).all()
+
+    def test_integration_ends_where_the_noise_reaches_the_limit(self):
+        ds = self.with_noise(_day())
+        # Noise in Sv: -150 + 20 log10(r) + 2 r, above -120 dB from r = 7 m.
+        out = integration_view(ds, {38000: {"max_noise_sv_db": -120.0}})
+        sv = out["Sv"].values[0, 0]
+        assert (sv[:7] == -60.0).all()
+        assert np.isnan(sv[7:]).all()
+        assert np.isnan(out["depth"].values[0, 0, 7:]).all()
+
+    def test_a_channel_without_an_entry_is_not_limited(self):
+        ds = self.with_noise(_day())
+        out = integration_view(ds, {120000: {"start_depth_m": 5.0, "max_noise_sv_db": -120.0}})
+        assert (out["Sv"].values == -60.0).all()
+        assert out.attrs["integration_layers"] == "{}"
+
+    def test_the_layer_is_recorded(self):
+        import json
+
+        out = integration_view(_day(), {38000: {"start_depth_m": 15.0}})
+        assert json.loads(out.attrs["integration_layers"]) == {"38": {"start_depth_m": 15.0}}
+

@@ -23,6 +23,23 @@ A noise-subtracted second variable was considered and left out on 2026-10-23, to
 
 **Why the seabed loses its height.** echopype's `compute_NASC` multiplies each bin's mean sv by the summed depth steps of the samples in the bin, whether or not they hold data. A 10 m bin straddling the seabed would count 10 m of height for the water above the line. Blanking the depth of seabed cells, as the surface exclusion already does, limits the height to the water.
 
+## Integration layer per channel
+
+A preset can limit where each channel is integrated, in `[echodata.integration.<Hz>]` tables:
+
+```toml
+[echodata.integration.18000]
+start_depth_m = 30.0       # leave out everything shallower
+max_noise_sv_db = -85.0    # stop where the noise, as Sv at that range, exceeds this
+```
+
+Cells outside the layer are left out together with their height, like the seabed. Frequencies without a table are integrated over the whole range, down to the seabed.
+
+- **Start depth.** Just below the transducers, bubbles and transducer ringing produce strong echoes that are not biology. How deep they reach depends on frequency, ship and weather. On IESSNS 2021 (transducers at 9 m), 18 kHz read −61 to −63 dB from 12 to 16 m and fell to −82 dB by 30 m. In the 10–20 m bin it held 62 % of NASC on one day and 2 % on another.
+- **End, from the noise.** The per-ping noise level from background removal, plus spreading and absorption loss, gives the noise as Sv at each range. Where it approaches the weakest scattering of interest, noise samples that clear the SNR threshold by chance are integrated while those below it count as zero, so NASC rises with range. With −85 dB, the cells those samples add stay near −94 dB. On IESSNS 2021 this ends 120 kHz at about 220–300 m and 200 kHz at about 130–145 m. 18 and 38 kHz are not cut, because their noise stays below −90 dB within the 500 m range.
+
+Each channel then covers its own water: NASC at 200 kHz and at 38 kHz describe different depth ranges. The NASC store keeps its 10 m depth bins, so comparisons across frequencies can sum over the depths they share. The layer used is stored in the `integration_layers` attribute.
+
 ## Output
 
 - **MVBS.** A bin that was measured but held nothing above the noise is stored as −999 dB, meaning no backscatter. NaN still means no valid data. In echograms −999 dB takes the lowest colour; white remains "no data".

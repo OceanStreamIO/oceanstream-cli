@@ -2722,6 +2722,12 @@ def parse_args() -> PipelineConfig:
 
         cfg.preset_toml = str(Path(args.denoise_config).resolve())
         echo_cfg = EchodataConfig.from_toml(Path(args.denoise_config))
+        from oceanstream.echodata.presets import PresetError, load_preset
+
+        try:
+            cfg.integration_layers = load_preset(Path(args.denoise_config)).integration
+        except PresetError:
+            cfg.integration_layers = {}  # a denoise config in the older format
         cfg.denoise = type(cfg.denoise)(
             enabled=True,
             methods=echo_cfg.denoise.methods,

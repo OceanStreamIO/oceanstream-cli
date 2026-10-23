@@ -63,3 +63,28 @@ impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 6.0 }
 transient   = { exclude_above = 50.0, depth_bin = 10.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
 background  = { range_window = 15, ping_window = 300, SNR_threshold = "6.0dB", background_noise_max = "-132.0dB" }
+
+# Echo integration (MVBS and NASC): each channel from start_depth_m down to where its
+# noise, as Sv at that range, exceeds max_noise_sv_db. On IESSNS 2021 the transducers are
+# at 9 m; 18 kHz carries a bubble and ringing band down to about 25 m (-61 to -63 dB at
+# 12-16 m), 38 kHz down to about 13 m. 120 and 200 kHz noise reaches -85 dB at about
+# 220-300 m and 130-145 m; 18 and 38 kHz stay below -90 dB within the 500 m range.
+[echodata.integration.18000]
+start_depth_m = 30.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.38000]
+start_depth_m = 15.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.70000]
+start_depth_m = 14.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.120000]
+start_depth_m = 14.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.200000]
+start_depth_m = 14.0
+max_noise_sv_db = -85.0
