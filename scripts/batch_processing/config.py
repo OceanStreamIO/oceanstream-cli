@@ -321,6 +321,10 @@ class RawConversionConfig:
     # (for staged copies, e.g. cluster scratch).
     delete_raw_after_convert: bool = False
 
+    # With sv_per_file: files converted and calibrated at once, each in its own process
+    # (about 5-9 GB each for 500 MB EK80 files). 1 = one at a time.
+    sv_workers: int = 1
+
     # Concurrency knobs
     download_workers: int = 4   # parallel download threads
     convert_workers: int = 1    # parallel conversion workers (memory-bound, keep low)

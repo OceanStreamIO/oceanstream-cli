@@ -512,12 +512,73 @@ def process_raw_files(
     total = len(files_list)
     batch_size = min(cfg.raw.download_batch_size, total)
 
+    pool = None
+    if cfg.raw.sv_per_file and cfg.raw.sv_workers > 1:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        pool = ProcessPoolExecutor(max_workers=cfg.raw.sv_workers, mp_context=mp.get_context("spawn"))
+        logger.info("Converting and calibrating %d files with %d processes", total, cfg.raw.sv_workers)
+        if getattr(cfg, "raw_source", "") == "local":
+            batch_size = total  # nothing to download: keep every process busy
+    try:
+        _process_batches(files_list, cfg, echodata_dir, gps_df, results, batch_size, pool)
+    finally:
+        if pool is not None:
+            pool.shutdown()
+
+    successful = sum(1 for _, zp, _ in results if zp)
+    logger.info("Converted %d/%d files to EchoData", successful, total)
+    return results
+
+
+def _convert_and_sv(local_raw_path: Path, rec: dict, cfg: PipelineConfig, echodata_dir: Path,
+                    gps_df: pd.DataFrame | None) -> tuple[str, str, str]:
+    """One file of --sv-per-file in a worker process: convert, then Sv."""
+    import dask
+
+    # Several of these run at once; keep each to a couple of threads.
+    dask.config.set(scheduler="threads", num_workers=2)
+    category, path, name = convert_and_save_echodata(local_raw_path, rec, cfg, echodata_dir)
+    if path:
+        path = _sv_for_file(path, rec, cfg, echodata_dir, gps_df)
+    return category, path, name
+
+
+def _process_batches(files_list, cfg, echodata_dir, gps_df, results, batch_size, pool) -> None:  # noqa: PLR0913
+    """Stage 2 batch loop: download each batch, then convert it (in *pool* when given)."""
+    from concurrent.futures import as_completed
+
+    total = len(files_list)
     for batch_start in range(0, total, batch_size):
         batch = files_list[batch_start:batch_start + batch_size]
         logger.info("Download batch %d-%d/%d", batch_start + 1, batch_start + len(batch), total)
 
         # Download this batch in parallel
         local_paths = download_all_raw_files(batch, cfg)
+
+        if pool is not None:
+            futures = {}
+            for raw_filename, rec in batch:
+                if raw_filename not in local_paths:
+                    logger.error("  File %s not downloaded — skipping", rec["file_name"])
+                    results.append(("unknown", "", rec["file_name"]))
+                    continue
+                futures[pool.submit(_convert_and_sv, local_paths[raw_filename], rec, cfg,
+                                    echodata_dir, gps_df)] = (raw_filename, rec)
+            for done, fut in enumerate(as_completed(futures), 1):
+                raw_filename, rec = futures[fut]
+                try:
+                    results.append(fut.result())
+                    logger.info("Converted %d/%d: %s", batch_start + done, total, rec["file_name"])
+                except Exception as e:
+                    logger.error("  FAILED: %s — %s", rec["file_name"], e)
+                    results.append(("unknown", "", rec["file_name"]))
+                finally:
+                    if cfg.raw.delete_raw_after_convert or (
+                            not cfg.keep_raw and getattr(cfg, "raw_source", "fileshare") != "local"):
+                        local_paths[raw_filename].unlink(missing_ok=True)
+            continue
 
         # Convert each file in the batch
         for idx, (raw_filename, rec) in enumerate(batch, batch_start + 1):
@@ -547,10 +608,6 @@ def process_raw_files(
                 if cfg.raw.delete_raw_after_convert or (
                         not cfg.keep_raw and getattr(cfg, "raw_source", "fileshare") != "local"):
                     local_paths[raw_filename].unlink(missing_ok=True)
-
-    successful = sum(1 for _, zp, _ in results if zp)
-    logger.info("Converted %d/%d files to EchoData", successful, total)
-    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2373,6 +2430,11 @@ def parse_args() -> PipelineConfig:
              "instead of combining a day's EchoData first. Needs far less disk for large days.",
     )
     parser.add_argument(
+        "--sv-workers", type=int, default=1,
+        help="With --sv-per-file: files converted and calibrated at once, one process each "
+             "(about 5-9 GB per 500 MB EK80 file). Default 1.",
+    )
+    parser.add_argument(
         "--delete-raw-after-convert", action="store_true",
         help="Delete each raw file once converted, even from --raw-dir (staged copies).",
     )
@@ -2588,6 +2650,9 @@ def parse_args() -> PipelineConfig:
     cfg.raw.cal_params_file = args.cal_params_file
     cfg.raw.sv_per_file = args.sv_per_file
     cfg.raw.delete_raw_after_convert = args.delete_raw_after_convert
+    cfg.raw.sv_workers = max(1, args.sv_workers)
+    if cfg.raw.sv_workers > 1 and not cfg.raw.sv_per_file:
+        parser.error("--sv-workers needs --sv-per-file.")
     if cfg.raw.ctd_file and cfg.raw.env_params_file:
         parser.error("--ctd-file and --env-params-file both set the environment; use one.")
     cfg.apply_seabed_mask = args.seabed_mask
