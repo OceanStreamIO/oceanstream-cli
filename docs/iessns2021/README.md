@@ -73,11 +73,22 @@ Each denoise round used `--background-estimator quantile --seabed-mask --seabed-
 | 1 | draft preset | 07-12 ran out of memory drawing echograms; pruning kept 75.6 % of the 07-09 pings |
 | 2 | pruning ignores seabed cells; thinned echograms | pruning keeps 97.5 % on 07-09; 07-12 masked hours of false seabed |
 | 3 | guarded seabed detector | 07-12 has no seabed line; 07-09 unchanged (seabed on 100 % of pings) |
-| 4 | background noise capped at deep-water level + 6 dB | running |
+| 4 | background noise capped at deep-water level + 6 dB | on 07-16, background removal at 18 kHz fell from 55 % to 5 % and at 38 kHz from 55 % to 34 %; pruning drops 0.3 % of pings |
+| 5 | echo integration as in [../echo-integration.md](../echo-integration.md); NASC on | day-mean MVBS 4–10 dB lower on 07-09 and 4–24 dB lower on 07-12 than with removed cells skipped; pruning drops 0–0.002 % of pings |
 
 **Background noise over the shelf.** The noise estimate follows the seabed depth. At 38 kHz it is −151 to −157 dB re 1 W all day on 07-12. On 07-16 it is −147 to −153 dB where the seabed is about 200 m deep, and −133 to −140 dB where it is 59–112 m. On 07-09 it is −129 dB over a 65 m seabed and −155 dB over 180 m. Below a shallow seabed the 500 m range is filled with multiple echoes and reverberation, so no part of the ping is noise only.
 
 In a two-hour window of 07-16 (seabed 70–150 m), background removal took 89 % of the water column at 38 kHz. The removed cells had a median raw Sv of −80 dB, no weaker than the cells kept. Round 4 caps the estimate per channel at the 07-12 median plus 6 dB, which leaves deep water unchanged.
+
+**Two more fixes from round 5.**
+- **Seabed cells flagged too narrowly.** Stage 6 flagged as seabed only the cells it removed itself. Cells below the seabed that background removal had already taken kept only that flag, so integration counted them as empty water: on the 07-09 shelf window most MVBS bins below the seabed read −999 dB instead of empty. Stage 6 now flags every cell at or below the line (`seabed_region`).
+- **07-16's NASC was not written.** A per-ping `seabed_depth` coordinate from the masked store reached the NASC dataset on a leftover dimension, with chunking that no longer fitted once pruning removed 2 pings. The write failed and the stage only logged a warning. Per-ping leftovers are now dropped, and runs pass `--strict` so a failed product fails the day.
+
+**Where the NASC comes from (round 5).** Two zones still dominate it:
+- **Just below the transducers.** 18 kHz Sv is −61 to −63 dB from 12 to 16 m depth on both days, falling to −82 dB by 30 m. The 10–20 m bin holds 62 % of 18 kHz NASC on 07-09 and 28 % of 38 kHz NASC.
+- **The end of the range on the deep day.** At 18, 38 and 200 kHz, 57–65 % of NASC lies below 450 m, rising towards the last bin. There the noise is amplified by the range correction, and noise samples that clear the SNR threshold by chance are integrated while those below it count as zero.
+
+A per-channel integration layer would exclude both: a start depth below the near-field and an end depth where the noise reaches the signal of interest. It is proposed and awaiting a decision.
 
 **Open method questions for the products.** In that same window the mean 38 kHz water-column Sv is −67.9 dB when removed cells are left out, as MVBS and NASC do now (echopype averages skip NaN). It is −81.5 dB when they count as zero, a 13.6 dB difference. Pruning also drops pings whose water column is mostly removed, 30 % of 07-16, and those pings are empty water, not bad data. Both raise MVBS and NASC where scattering is weak, on RR2205 and TPOS as well. A fix would treat cells removed as below the noise as zero in integration, and prune only pings the noise detectors flag. That changes every product, so it is a decision rather than a tuning step.
 
