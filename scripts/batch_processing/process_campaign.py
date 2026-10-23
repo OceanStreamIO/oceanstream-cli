@@ -1145,7 +1145,7 @@ def mask_seabed_day(
     """
     import dask
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
-    from oceanstream.echodata.seabed import detect_seabed_interleaved, mask_seabed
+    from oceanstream.echodata.seabed import detect_seabed_interleaved, mask_seabed, seabed_region
 
     logger.info("Seabed masking %s/%s", day_key, category)
 
@@ -1163,15 +1163,19 @@ def mask_seabed_day(
                 100 * seabed_result.detection_rate, seabed_result.channel,
             )
             ds_masked = mask_seabed(ds, seabed_result, offset=mask_offset)
+            region = seabed_region(ds, seabed_result, offset=mask_offset)
         except Exception as e:
             logger.warning("Seabed detection failed for %s/%s: %s — skipping", day_key, category, e)
             ds_masked = ds
+            region = None
 
     # Seabed masking only removes cells, so on top of a masked store it is
     # one more flag bit; an old full store is still written out in full.
     from oceanstream.echodata import products
 
-    seabed = ds["Sv"].notnull() & ds_masked["Sv"].isnull()
+    # The flag marks every cell at or below the line, also those an earlier step had
+    # removed: integration leaves seabed out but counts cells below the noise as zero.
+    seabed = region if region is not None else ds["Sv"].notnull() & ds_masked["Sv"].isnull()
     extra = {}
     if "seabed_depth" in ds_masked.coords:
         extra["seabed_depth"] = ds_masked["seabed_depth"]

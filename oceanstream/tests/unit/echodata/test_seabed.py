@@ -654,3 +654,19 @@ class TestSimultaneousSeabed:
         # Whatever stands near the school, nothing is drawn minutes away from it.
         assert np.isnan(depth[300:]).all()
 
+
+class TestSeabedRegion:
+    """The seabed flag covers cells that an earlier step had already removed."""
+
+    def test_region_includes_cells_already_removed(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved, seabed_region
+
+        fjord = create_fjord_dataset(n_pings=300, seabed_m=73.0)
+        ds = TestSimultaneousSeabed.together(fjord["Sv"].values, fjord["echo_range"].values[0])
+        rng = ds["echo_range"].values[0, 0]
+        result = detect_seabed_interleaved(ds, pick="edge")
+        ds["Sv"][:, :, rng > 90] = np.nan  # removed before seabed masking, e.g. below the noise
+        region = seabed_region(ds, result, offset=0.5).values
+        assert region[:, :, rng >= 72.7].all()  # below the line, removed earlier or not
+        assert not region[:, :, rng < 72.3].any()
+

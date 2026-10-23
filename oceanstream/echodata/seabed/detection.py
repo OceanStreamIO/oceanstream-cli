@@ -1156,6 +1156,22 @@ def mask_seabed(
     return ds_out
 
 
+def seabed_region(
+    ds: xr.Dataset, seabed_result: SeabedDetectionResult, offset: float = 0
+) -> xr.DataArray:
+    """Every recorded cell that :func:`mask_seabed` puts at or below the seabed.
+
+    Unlike comparing Sv before and after masking, this includes cells an earlier step
+    had already removed (below the noise, say): they are seabed all the same, and echo
+    integration must leave them out rather than count them as empty water.
+    """
+    probe = mask_seabed(ds.assign(Sv=xr.ones_like(ds["Sv"])), seabed_result, offset=offset)
+    region = probe["Sv"].isnull()
+    if "echo_range" in ds:
+        region = region & ds["echo_range"].notnull()
+    return region.reset_coords(drop=True)
+
+
 def compute_seabed_stats(ds: xr.Dataset, result: SeabedDetectionResult) -> dict:
     """Compute statistics about detected seabed.
     
