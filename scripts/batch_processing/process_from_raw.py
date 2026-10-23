@@ -2243,7 +2243,13 @@ def parse_args() -> PipelineConfig:
     )
     parser.add_argument(
         "--prune-threshold", type=float, default=0.8,
-        help="NaN fraction above which a ping is dropped (default: 0.8 = drop pings ≥80%% NaN)",
+        help="NaN fraction above which a ping is dropped, for stores without per-cell "
+             "flags (default: 0.8 = drop pings ≥80%% NaN)",
+    )
+    parser.add_argument(
+        "--prune-artefact-threshold", type=float, default=0.5,
+        help="Share of a ping's measured water column removed as noise artefacts at which "
+             "the ping is dropped (default 0.5). Cells below the noise do not count.",
     )
     parser.add_argument(
         "--no-crosstalk", action="store_true",
@@ -2612,6 +2618,7 @@ def parse_args() -> PipelineConfig:
     cfg.mvbs_echograms_only = args.mvbs_echograms_only
     cfg.prune.enabled = not args.skip_pruning
     cfg.prune.drop_threshold = args.prune_threshold
+    cfg.prune.artefact_threshold = args.prune_artefact_threshold
     cfg.prune.crosstalk_enabled = not args.no_crosstalk
     cfg.prune.crosstalk_ref_depth_min = args.crosstalk_ref_depth_min
     cfg.prune.crosstalk_ref_depth_max = args.crosstalk_ref_depth_max

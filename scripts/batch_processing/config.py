@@ -213,7 +213,11 @@ class PruneParams:
     """
 
     enabled: bool = True
-    drop_threshold: float = 0.8  # drop pings with >= 80% NaN samples
+    drop_threshold: float = 0.8  # drop pings with >= 80% NaN samples (stores without flags)
+    # With per-cell denoise flags: drop a ping when at least this share of its measured
+    # water column was removed as artefacts, or when it has none. Cells removed as below
+    # the noise are empty water and keep the ping.
+    artefact_threshold: float = 0.5
     # Cross-talk detection — flag pings where a "quiet" deep reference band has
     # abnormally elevated Sv (a signature of interference from another
     # echosounder, ADCP, or electrical source). The mesopelagic below the DSL

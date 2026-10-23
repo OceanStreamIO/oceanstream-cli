@@ -67,6 +67,55 @@ MASK_STAGE_BITS = (
     FLAG_BITS["impulse"] | FLAG_BITS["attenuation"] | FLAG_BITS["transient"] | FLAG_BITS["other"]
 )
 
+#: Steps whose removed cells hold no valid measurement (noise bursts, dropouts,
+#: clipped samples, and ``legacy`` cells whose cause is unknown). Echo integration
+#: leaves them out, and the other cells of their bin stand in for them.
+ARTEFACT_BITS = MASK_STAGE_BITS | FLAG_BITS["clip"] | FLAG_BITS["legacy"]
+
+#: Sv stored for a bin that was measured and held nothing above the noise: zero in the
+#: linear domain, written the way echo-integration software writes it.
+NO_BACKSCATTER_DB = -999.0
+
+INTEGRATION_NOTE = (
+    "Cells removed as below the noise count as zero; cells removed as noise artefacts "
+    "(impulse, attenuation, transient, clip) are left out and the rest of their bin stands "
+    "in for them; cells at or below the seabed are left out with their height. "
+    f"{NO_BACKSCATTER_DB:g} dB means no backscatter above the noise."
+)
+
+
+def integration_view(ds: xr.Dataset) -> xr.Dataset:
+    """Resolved masked Sv, prepared for echo integration (MVBS and NASC).
+
+    Opened through :func:`resolve_product`, a masked store has every removed cell as
+    NaN, and averages that skip NaN then cover only the cells that kept signal: with
+    nine cells in ten below the noise, a bin reads ten times its backscatter. Here:
+
+    * cells background removal judged below the noise were measured and showed nothing
+      above it, so they become zero in the linear domain (Sv -inf);
+    * cells removed as artefacts stay NaN: no valid measurement, so the bin's other
+      cells stand in for them;
+    * cells at or below the seabed lose their depth as well, because echopype weights
+      NASC by the height of every depth sample in a bin, and a bin straddling the
+      seabed would otherwise count its full height for the water above the line.
+
+    Data without ``denoise_flags`` (Sv straight from stage 4) is returned unchanged.
+    """
+    if "denoise_flags" not in ds or "Sv" not in ds:
+        return ds
+    flags = ds["denoise_flags"]
+    seabed = (flags & FLAG_BITS["seabed"]) != 0
+    below_noise = ((flags & FLAG_BITS["background"]) != 0) & (
+        (flags & (ARTEFACT_BITS | FLAG_BITS["seabed"])) == 0
+    )
+    out = ds.copy()
+    out["Sv"] = ds["Sv"].where(~below_noise, -np.inf).assign_attrs(ds["Sv"].attrs)
+    if "depth" in out:
+        depth = out["depth"].where(~seabed)
+        out = out.assign_coords(depth=depth) if "depth" in out.coords else out.assign(depth=depth)
+    out.attrs["integration"] = INTEGRATION_NOTE
+    return out
+
 #: Attribute on a resolved dataset's ``denoise_flags`` holding the store's own
 #: attributes (source, fingerprint, thresholds), for :func:`extend_masked`.
 PRODUCT_ATTRS_KEY = "oceanstream_product_attrs"

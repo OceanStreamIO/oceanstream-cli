@@ -1245,9 +1245,11 @@ def prune_day(
     crosstalk_ref_depth_min: float = 800.0,
     crosstalk_ref_depth_max: float = 1200.0,
     crosstalk_threshold_db: float = 6.0,
+    artefact_threshold: float | None = 0.5,
 ) -> str:
-    """Drop pings whose NaN fraction exceeds ``drop_threshold`` and
-    (optionally) pings whose deep reference band shows cross-talk.
+    """Drop pings whose water column is mostly artefacts (or whose NaN fraction exceeds
+    ``drop_threshold``, for stores without per-cell flags) and (optionally) pings
+    whose deep reference band shows cross-talk.
 
     Runs after denoising/seabed-masking so that MVBS/NASC are computed on
     an "analysis-ready" Sv dataset with junk pings excluded. Saves output
@@ -1266,7 +1268,8 @@ def prune_day(
 
     # ── Step 1: NaN-fraction drop (existing behaviour) ────────────
     with dask.config.set(scheduler="synchronous"):
-        ds_pruned = drop_noisy_pings(ds, drop_threshold=drop_threshold)
+        ds_pruned = drop_noisy_pings(ds, drop_threshold=drop_threshold,
+                                     artefact_threshold=artefact_threshold)
     n_after_nan = ds_pruned.sizes.get("ping_time", 0)
     n_dropped_nan = n_before - n_after_nan
     pct = (n_dropped_nan / n_before * 100) if n_before > 0 else 0.0
@@ -1453,6 +1456,7 @@ def run_pruning(
                 crosstalk_ref_depth_min=cfg.prune.crosstalk_ref_depth_min,
                 crosstalk_ref_depth_max=cfg.prune.crosstalk_ref_depth_max,
                 crosstalk_threshold_db=cfg.prune.crosstalk_threshold_db,
+                artefact_threshold=cfg.prune.artefact_threshold,
             )
             pruned_zarrs[day_key][category] = pruned_path
 
@@ -1491,8 +1495,12 @@ def compute_mvbs_day(
 
     logger.info("Computing MVBS %s/%s", day_key, category)
 
+    from oceanstream.echodata.products import INTEGRATION_NOTE, NO_BACKSCATTER_DB, integration_view
+
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
+    # Cells below the noise count as zero, artefacts and the seabed are left out.
+    ds = integration_view(ds)
 
     # Snapshot frequency_nominal BEFORE .where() — otherwise it gets broadcast
     # to all masked dims and turns into a NaN-filled 3D array.
@@ -1517,6 +1525,11 @@ def compute_mvbs_day(
     # snapshot avoids the broadcast-NaN problem.
     if freq_nominal is not None and "frequency_nominal" not in ds_mvbs:
         ds_mvbs = ds_mvbs.assign_coords(frequency_nominal=freq_nominal)
+
+    # A bin measured with nothing above the noise averages to zero (-inf dB).
+    if "integration" in ds.attrs and "Sv" in ds_mvbs:
+        ds_mvbs["Sv"] = ds_mvbs["Sv"].where(ds_mvbs["Sv"] != -np.inf, NO_BACKSCATTER_DB)
+        ds_mvbs.attrs["integration"] = INTEGRATION_NOTE
 
     # Drop fully-empty ping_time bins (0 raw pings fell in the 10s window,
     # typically at raw-file boundaries — visible as white vertical stripes
@@ -1612,8 +1625,12 @@ def compute_nasc_day(
 
     logger.info("Computing NASC %s/%s", day_key, category)
 
+    from oceanstream.echodata.products import INTEGRATION_NOTE, integration_view
+
     ds = open_sv_from_azure(zarr_path=zarr_path, container=output_container)
     ds = _ensure_position_coords(ds)
+    # Cells below the noise count as zero, artefacts and the seabed are left out.
+    ds = integration_view(ds)
 
     if "depth" not in ds and "depth" not in ds.coords:
         logger.warning("  No depth variable in %s/%s — skipping NASC", day_key, category)
@@ -1647,6 +1664,8 @@ def compute_nasc_day(
     # Re-attach the clean 1D (channel,) frequency_nominal.
     if freq_nominal is not None and "frequency_nominal" not in ds_nasc:
         ds_nasc = ds_nasc.assign_coords(frequency_nominal=freq_nominal)
+    if "integration" in ds.attrs:
+        ds_nasc.attrs["integration"] = INTEGRATION_NOTE
 
     # Drop fully-empty distance bins (all-NaN NASC values along depth+channel).
     # NASC bins by along-track distance; empty bins would leave visible gaps.

@@ -725,9 +725,17 @@ def drop_noisy_pings(
     drop_threshold: float = 1.0,
     freq_coord: str = "frequency_nominal",
     multichannel_reduce: str = "min",
+    artefact_threshold: float | None = None,
 ) -> "xr.Dataset":
     """
     Drop ping_time slices where the fraction of NaNs exceeds a threshold.
+
+    With ``artefact_threshold`` and per-cell ``denoise_flags``, a ping is judged by
+    what removed its cells instead: it is dropped when cells removed as noise
+    artefacts (impulse, attenuation, transient, clip) make up at least that share of
+    its measured water column, or when it has no measured water column at all.
+    Cells removed as below the noise are empty water, not bad data, and a ping of
+    empty water stays: averages need it as zero (see products.integration_view).
     
     This is useful for cleaning up data after applying noise masks,
     removing pings that are mostly or entirely noise.
@@ -744,6 +752,9 @@ def drop_noisy_pings(
                        - 0.5 = remove pings with ≥50% NaN
                        - 0.0 = remove any ping with any NaN
         freq_coord: Name of the frequency coordinate (default: "frequency_nominal")
+        artefact_threshold: Share (0-1) of a ping's measured water column removed as
+                            artefacts at which the ping is dropped; needs
+                            ``denoise_flags``. None keeps the NaN-fraction rule.
         multichannel_reduce: How to combine NaN fractions across channels when
                              multiple channels are present.
                              - "min" (default): drop only if ALL channels agree
@@ -788,6 +799,31 @@ def drop_noisy_pings(
     range_dim = range_dim[0]
     
     # Compute fraction NaN per ping_time
+    if artefact_threshold is not None and "denoise_flags" in ds:
+        from oceanstream.echodata.products import ARTEFACT_BITS, FLAG_BITS
+
+        flags = ds["denoise_flags"]
+        water = (flags & FLAG_BITS["seabed"]) == 0
+        if "echo_range" in ds:
+            water = water & ds["echo_range"].notnull()
+        # Measured: a cell that kept a value or that a step removed. A channel that did
+        # not transmit in a ping has no measured cells there and no say about it.
+        measured = water & (ds[var_name].notnull() | (flags != 0))
+        n_measured = measured.sum(dim=range_dim)
+        n_bad = (water & ((flags & ARTEFACT_BITS) != 0)).sum(dim=range_dim)
+        frac_bad = (n_bad / n_measured).where(n_measured > 0)
+        if "channel" in frac_bad.dims:
+            frac_bad = frac_bad.min(dim="channel", skipna=True)
+        keep_mask = (frac_bad < artefact_threshold).fillna(False)
+        keep_mask = keep_mask.compute().values if hasattr(keep_mask, "compute") else keep_mask.values
+        n_dropped = int((~keep_mask).sum())
+        logger.info(
+            f"Dropping {n_dropped}/{keep_mask.size} pings "
+            f"({100 * n_dropped / max(keep_mask.size, 1):.1f}%) with no measured water column "
+            f"or ≥{artefact_threshold * 100:.0f}% of it removed as artefacts"
+        )
+        return ds.isel(ping_time=keep_mask)
+
     if "echo_range" in ds and channels_ping_in_turn(ds[var_name], range_dim):
         # Count only the cells each channel recorded: on the shared grid a short-range
         # channel is mostly NaN by construction, and a channel is empty at the other
