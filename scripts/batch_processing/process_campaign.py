@@ -1535,6 +1535,8 @@ def compute_mvbs_day(
     if "integration" in ds.attrs and "Sv" in ds_mvbs:
         ds_mvbs["Sv"] = ds_mvbs["Sv"].where(ds_mvbs["Sv"] != -np.inf, NO_BACKSCATTER_DB)
         ds_mvbs.attrs["integration"] = INTEGRATION_NOTE
+        if "integration_layers" in ds.attrs:
+            ds_mvbs.attrs["integration_layers"] = ds.attrs["integration_layers"]
 
     # Drop fully-empty ping_time bins (0 raw pings fell in the 10s window,
     # typically at raw-file boundaries — visible as white vertical stripes
@@ -1673,6 +1675,8 @@ def compute_nasc_day(
         ds_nasc = ds_nasc.assign_coords(frequency_nominal=freq_nominal)
     if "integration" in ds.attrs:
         ds_nasc.attrs["integration"] = INTEGRATION_NOTE
+        if "integration_layers" in ds.attrs:
+            ds_nasc.attrs["integration_layers"] = ds.attrs["integration_layers"]
 
     # Drop fully-empty distance bins (all-NaN NASC values along depth+channel).
     # NASC bins by along-track distance; empty bins would leave visible gaps.
