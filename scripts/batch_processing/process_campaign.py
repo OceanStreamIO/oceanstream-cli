@@ -28,6 +28,7 @@ import argparse
 import gc
 import json
 import logging
+import os
 import sys
 import tempfile
 import time
@@ -1736,15 +1737,58 @@ def run_nasc_computation(
 # STAGE 8: Echograms
 # ═══════════════════════════════════════════════════════════════════════════
 
+#: Most pings an echogram panel draws. A PNG is a few thousand pixels wide; a day of
+#: pings every second (about 86,000) drawn whole needs tens of GB for the mesh.
+MAX_ECHOGRAM_PINGS = int(os.environ.get("OCEANSTREAM_MAX_ECHOGRAM_PINGS", "6000"))
+
+
+def _thin_pings_for_plot(ds: "xr.Dataset", max_pings: int = MAX_ECHOGRAM_PINGS) -> "xr.Dataset":
+    """Average blocks of pings so a panel draws at most *max_pings* columns.
+
+    Sv is averaged in the linear domain, other numbers arithmetically; flags and masks
+    keep a cell set if any ping in the block had it. Display only: products are untouched.
+    """
+    import numpy as np
+
+    import xarray as xr
+
+    n = ds.sizes.get("ping_time", 0)
+    if not max_pings or n <= max_pings:
+        return ds
+    factor = int(np.ceil(n / max_pings))
+    # Whole windows per chunk, so each block averages within one chunk.
+    ds = ds.chunk({"ping_time": factor * max(1, 2000 // factor)})
+
+    def blocks(var):
+        return var.coarsen(ping_time=factor, boundary="trim", coord_func="min")
+
+    out = {}
+    for name, var in ds.data_vars.items():
+        if "ping_time" not in var.dims:
+            out[name] = var
+        elif name == "Sv":
+            out[name] = (10 * np.log10(blocks(10 ** (var / 10)).mean())).assign_attrs(var.attrs)
+        elif var.dtype.kind in "biu":
+            out[name] = blocks(var).max().astype(var.dtype).assign_attrs(var.attrs)
+        elif var.dtype.kind == "f":
+            out[name] = blocks(var).mean().assign_attrs(var.attrs)
+    thinned = xr.Dataset(out, attrs=ds.attrs)
+    logger.info("  Echogram drawn from %d pings in blocks of %d (%d columns)",
+                n, factor, thinned.sizes["ping_time"])
+    return thinned
+
+
 def _load_zarr_to_memory(zarr_path: str, container: str) -> "xr.Dataset":
     """Open a zarr from Azure and load fully into memory (numpy-backed).
 
     Loading into memory avoids Dask scheduler / matplotlib GIL contention
-    that causes hangs during pcolormesh rendering.
+    that causes hangs during pcolormesh rendering. Days with more pings than an
+    echogram can show are thinned first (_thin_pings_for_plot).
     """
     from oceanstream.echodata.storage import open_sv_from_azure
 
     ds = open_sv_from_azure(zarr_path=zarr_path, container=container)
+    ds = _thin_pings_for_plot(ds)
     ds = ds.load()  # materialise all dask arrays → numpy
     return ds
 
