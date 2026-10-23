@@ -264,7 +264,9 @@ def normalize_nasc_schema(
        arrives as ``(channel, distance_nmi, range_sample)`` — a multi-GiB array
        that carries one scalar per channel. It is reduced back to ``(channel,)``.
     2. ``distance_nmi`` / ``range_sample`` survive as orphan dimension
-       coordinates once (1) is fixed. They are dropped.
+       coordinates once (1) is fixed. They are dropped, together with any per-ping
+       variable still on them (e.g. a ``seabed_depth`` coordinate from a masked store,
+       whose chunk encoding no longer fits once pruning has removed pings).
     """
     if "frequency_nominal" in ds_NASC:
         fn = ds_NASC["frequency_nominal"]
@@ -281,18 +283,15 @@ def normalize_nasc_schema(
             fn = fn.isel({d: 0 for d in extra}, drop=True)
         ds_NASC = ds_NASC.assign_coords(frequency_nominal=fn.reset_coords(drop=True))
 
-    used_dims = set()
-    for var in list(ds_NASC.data_vars.values()) + list(ds_NASC.coords.values()):
-        if var.name in ds_NASC.dims:
-            continue  # dimension coordinate — only keeps its own dim alive
-        used_dims.update(var.dims)
-    orphan = [
-        d for d in ds_NASC.dims
-        if d not in NASC_ALLOWED_DIMS and d not in used_dims
-    ]
+    orphan = [d for d in ds_NASC.dims if d not in NASC_ALLOWED_DIMS]
     if orphan:
+        carried = sorted(
+            str(name) for name, var in ds_NASC.variables.items()
+            if set(var.dims) & set(orphan) and name not in orphan
+        )
         ds_NASC = ds_NASC.drop_dims(orphan)
-        logger.info("Dropped orphan NASC dimensions: %s", ", ".join(sorted(orphan)))
+        logger.info("Dropped orphan NASC dimensions: %s%s", ", ".join(sorted(orphan)),
+                    f" (with {', '.join(carried)})" if carried else "")
 
     return ds_NASC
 

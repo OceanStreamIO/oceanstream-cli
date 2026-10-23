@@ -158,6 +158,17 @@ class TestNormalizeNascSchema:
         assert "distance_nmi" not in normalized.dims
         assert "range_sample" not in normalized.dims
 
+    def test_per_ping_leftovers_are_dropped(self):
+        source = _moving_track_source()
+        collapsed = _collapsed_nasc(source)
+        # A per-ping coordinate (from a masked store) left on the raw distance dimension.
+        n = collapsed.sizes.get("distance_nmi", 7)
+        collapsed = collapsed.assign_coords(seabed_depth=("distance_nmi", np.linspace(60, 80, n)))
+        normalized = normalize_nasc_schema(collapsed, source)
+        assert "distance_nmi" not in normalized.dims
+        assert "seabed_depth" not in normalized.variables
+        assert set(normalized["NASC"].dims) == {"channel", "distance", "depth"}
+
     def test_normalization_is_idempotent(self):
         source = _moving_track_source()
         once = normalize_nasc_schema(_collapsed_nasc(source), source)
