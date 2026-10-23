@@ -219,10 +219,12 @@ class TestMatch:
                                 regime="open-ocean", water_depth_m=(3000, 5500))
         family = {m.preset.key for m in matches if not m.missing_khz}
         # The rejected -scaled, -sensitive and -perping trials are deprecated and never match.
-        assert family == {"research-vessel-open-ocean", "research-vessel-open-ocean-ryan-tn",
-                          "research-vessel-open-ocean-ryan-short",
-                          "research-vessel-open-ocean-ryan-margin"}
-        assert {m.preset.key for m in matches[:4]} == family
+        open_ocean = {"research-vessel-open-ocean", "research-vessel-open-ocean-ryan-tn",
+                      "research-vessel-open-ocean-ryan-short",
+                      "research-vessel-open-ocean-ryan-margin"}
+        assert family == open_ocean | {"research-vessel-nordic-shelf"}
+        # The shelf preset covers the frequencies but ranks below the open-ocean ones.
+        assert {m.preset.key for m in matches[:4]} == open_ocean
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",
@@ -257,7 +259,8 @@ class TestCli:
         assert "MUNKHOLMEN_2026" in result.output
 
     def test_match(self):
-        result = self._run("match", "-f", "18,38,70,120,200", "--platform", "research-vessel")
+        result = self._run("match", "-f", "18,38,70,120,200", "--platform", "research-vessel",
+                           "--regime", "open-ocean")
         assert result.exit_code == 0, result.output
         assert result.output.splitlines()[0].endswith("research-vessel-open-ocean [draft]")
 

@@ -1,0 +1,67 @@
+# Sv for IESSNS 2021 days from the PANGAEA mirror in the project bucket (ncei-sv/run.sh).
+#
+#   kubectl create configmap iessns-sv-scripts --from-file=deploy/edito/ncei-sv/ \
+#       --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply -f deploy/edito/pangaea/job-iessns-sv.yaml
+#
+# The code comes from a tarball in the bucket (CODE_S3_KEY, from `git archive HEAD`).
+# Large-memory GPU node without a GPU request, as for RR2205.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: iessns2021-sv-smoke
+  labels: {app: iessns-sv}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {app: iessns-sv}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      imagePullSecrets: [{name: acr-pull-secret}]
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: nvidia.com/gpu.product, operator: Exists}
+      tolerations:
+        - {key: node.cloudferro.com/type, operator: Equal, value: gpu, effect: NoSchedule}
+      containers:
+        - name: sv
+          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          command: [bash, /scripts/run.sh]
+          envFrom:
+            - secretRef: {name: oceanstream-s3}
+          env:
+            - {name: CRUISE, value: IESSNS2021}
+            - {name: DAYS, value: "2021-07-09"}
+            - {name: S3_PREFIX, value: pangaea/IESSNS2021}
+            - {name: RAW_S3_PREFIX, value: pangaea/IESSNS2021/raw}
+            - {name: RAW_INCLUDE, value: "D20210709-T(190[2-9]|191[0-9]|1931)"}
+            - {name: ENCODE_MODE, value: auto}
+            - {name: CAL_S3_KEY, value: pangaea/IESSNS2021/meta/calibration_2021.xml}
+            - {name: CODE_S3_KEY, value: code/oceanstream-cli-687bf98.tar.gz}
+            - {name: SV_CONTAINER, value: sv-smoke}
+            - {name: PIPELINE_ARGS, value: "--depth-offset 9"}
+            - {name: INSTALL_CUPY, value: "0"}
+            - {name: REQUIRE_GPU, value: "0"}
+            - {name: SV_RANGE_BIN_M, value: "0.18"}
+            - {name: CHUNK_PING_TIME, value: "200"}
+            - {name: DASK_WORKERS, value: "2"}
+            - {name: DASK_MEMORY, value: 24GB}
+            - {name: HOME, value: /work}
+          resources:
+            requests: {cpu: "8", memory: 72Gi, ephemeral-storage: 40Gi}
+            limits: {cpu: "14", memory: 72Gi, ephemeral-storage: 120Gi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: scripts
+          configMap: {name: iessns-sv-scripts, defaultMode: 0755}
+        - name: work
+          emptyDir: {sizeLimit: 110Gi}
