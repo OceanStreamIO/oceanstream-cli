@@ -8,7 +8,9 @@ summary = "Ryan transient detector and quantile background for an EK80 pinging a
 description = """
 Starting point for the Icelandic part of IESSNS 2021 (R/V Árni Friðriksson). The EK80 pings 18, 38, 70, 120 and 200 kHz together about every 0.9 s to about 500 m, against 39 s per channel and up to 2 km on RR2205, and most days cross the shelf with the seabed in range.
 
-The windows are written for a 1 s ping interval (reference_ping_interval_s = 1). Ryan's detector compares each ping with the 30 pings either side, about half a minute: long enough for a single noisy ping to stand out, too short for a migrating layer to move a depth bin. The attenuation reference layer is 30-80 m, so it lies above the seabed on most of the shelf; the background block is 300 pings, about 5 minutes. Depth limits for the transient detector are scaled to the 500 m range. Not yet tuned: the first round compares it on 2021-07-12 (deep), 2021-07-16 (shelf) and part of 2021-07-09.
+The windows are written for a 1 s ping interval (reference_ping_interval_s = 1). Ryan's detector compares each ping with the 30 pings either side, about half a minute: long enough for a single noisy ping to stand out, too short for a migrating layer to move a depth bin. The attenuation reference layer is 30-80 m, so it lies above the seabed on most of the shelf; the background block is 300 pings, about 5 minutes. Depth limits for the transient detector are scaled to the 500 m range.
+
+The background noise estimate is capped at the level measured in deep water plus 6 dB (background_noise_max). Over a shallow shelf the 500 m range below the seabed fills with multiple echoes and reverberation, so no part of a ping is noise only: on 2021-07-16 and 2021-07-09 the 38 kHz estimate rose from about -154 dB re 1 W in deep water to -129 to -140 dB where the seabed was 59-112 m deep, and background removal then took 89 % of the water column, including scattering at -80 dB. The caps come from 2021-07-12, where the seabed was out of range all day (median estimates -156.9, -154.5, -155.1, -149.8 and -138.6 dB at 18, 38, 70, 120 and 200 kHz).
 """
 derived_from = "research-vessel-open-ocean-ryan-short"
 
@@ -36,28 +38,28 @@ reference_ping_interval_s = 1.0
 impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 6.0 }
 transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
-background  = { range_window = 35, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-130.0dB" }
+background  = { range_window = 35, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-150.0dB" }
 
 [echodata.denoise.frequency_params.38000]
 impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 10.0 }
 transient   = { exclude_above = 150.0, depth_bin = 20.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
-background  = { range_window = 30, ping_window = 300, SNR_threshold = "5.0dB", background_noise_max = "-125.0dB" }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "5.0dB", background_noise_max = "-148.0dB" }
 
 [echodata.denoise.frequency_params.70000]
 impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 5.0 }
 transient   = { exclude_above = 100.0, depth_bin = 8.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
-background  = { range_window = 25, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-120.0dB" }
+background  = { range_window = 25, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-149.0dB" }
 
 [echodata.denoise.frequency_params.120000]
 impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 7.0 }
 transient   = { exclude_above = 80.0, depth_bin = 15.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
-background  = { range_window = 20, ping_window = 300, SNR_threshold = "6.0dB", background_noise_max = "-115.0dB" }
+background  = { range_window = 20, ping_window = 300, SNR_threshold = "6.0dB", background_noise_max = "-144.0dB" }
 
 [echodata.denoise.frequency_params.200000]
 impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
 attenuation = { upper_limit_sl = 30.0, lower_limit_sl = 80.0, num_side_pings = 30, threshold = 6.0 }
 transient   = { exclude_above = 50.0, depth_bin = 10.0, n_pings = 30, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
-background  = { range_window = 15, ping_window = 300, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }
+background  = { range_window = 15, ping_window = 300, SNR_threshold = "6.0dB", background_noise_max = "-132.0dB" }
