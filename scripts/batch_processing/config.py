@@ -312,6 +312,15 @@ class RawConversionConfig:
     # values in the raw files (oceanstream.echodata.calibrate.case_xml).
     cal_params_file: str = ""
 
+    # Compute Sv file by file right after conversion and drop the converted EchoData;
+    # stage 3 then joins the per-file Sv in time instead of combining EchoData. A day
+    # then needs disk for its raw files and a few GB of binned Sv, not three copies of it.
+    sv_per_file: bool = False
+
+    # Delete each raw file once converted, also from a --raw-source local directory
+    # (for staged copies, e.g. cluster scratch).
+    delete_raw_after_convert: bool = False
+
     # Concurrency knobs
     download_workers: int = 4   # parallel download threads
     convert_workers: int = 1    # parallel conversion workers (memory-bound, keep low)

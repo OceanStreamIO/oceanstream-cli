@@ -499,6 +499,7 @@ def process_raw_files(
     files_list: list[tuple[str, dict]],
     cfg: PipelineConfig,
     echodata_dir: Path,
+    gps_df: pd.DataFrame | None = None,
 ) -> list[tuple[str, str, str]]:
     """Download and convert raw files to EchoData Zarrs.
 
@@ -533,6 +534,9 @@ def process_raw_files(
                     cfg=cfg,
                     echodata_dir=echodata_dir,
                 )
+                if cfg.raw.sv_per_file and result[1]:
+                    result = (result[0], _sv_for_file(result[1], rec, cfg, echodata_dir, gps_df),
+                              result[2])
                 results.append(result)
             except Exception as e:
                 logger.error("  FAILED: %s — %s", rec["file_name"], e)
@@ -540,7 +544,8 @@ def process_raw_files(
             finally:
                 # Delete raw file after conversion to free disk space.
                 # Never touch files on a read-only local raw mount.
-                if not cfg.keep_raw and getattr(cfg, "raw_source", "fileshare") != "local":
+                if cfg.raw.delete_raw_after_convert or (
+                        not cfg.keep_raw and getattr(cfg, "raw_source", "fileshare") != "local"):
                     local_paths[raw_filename].unlink(missing_ok=True)
 
     successful = sum(1 for _, zp, _ in results if zp)
@@ -695,6 +700,13 @@ def run_echodata_combine(
                 by_category[cat].append(zp)
 
         day_echodata[day_key] = {}
+
+        if cfg.raw.sv_per_file:
+            # Per-file Sv is joined in stage 4; nothing to combine.
+            for category, zarr_paths in by_category.items():
+                day_echodata[day_key][category] = sorted(zarr_paths)
+                logger.info("  %s/%s: Sv of %d files", day_key, category, len(zarr_paths))
+            continue
 
         if cfg.category_parallel and len(by_category) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1296,6 +1308,38 @@ def _join_sv_parts(parts: list):
     return ds_Sv.sortby("ping_time")
 
 
+def _sv_for_file(ed_zarr_path: str, file_record: dict, cfg: PipelineConfig, echodata_dir: Path,
+                 gps_df: pd.DataFrame | None = None) -> str:
+    """Sv of one converted file, with positions, saved next to it; the EchoData is removed.
+
+    Positions come from *gps_df* when given, else from the file's own NMEA.
+    """
+    import shutil
+
+    start = file_record.get("file_start_time") or ""
+    day_key = start[:10] if start else (datetime.now().strftime("%Y-%m-%d"))
+    ds_Sv, encode_mode, nmea = _sv_for_echodata(ed_zarr_path, day_key, cfg)
+    gps = gps_df if gps_df is not None and not gps_df.empty else nmea
+    if gps is not None:
+        ds_Sv = _interpolate_gps_linear(ds_Sv, gps)
+    ds_Sv.attrs["encode_mode"] = encode_mode
+    for name in list(ds_Sv.data_vars) + list(ds_Sv.coords):
+        ds_Sv[name].encoding.clear()
+    for var in ("Sv", "echo_range"):
+        if var in ds_Sv:
+            ds_Sv[var] = ds_Sv[var].astype("float32", keep_attrs=True)
+    out = echodata_dir / f"{Path(ed_zarr_path).name.removesuffix('.zarr')}--sv.zarr"
+    ds_Sv.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1}).to_zarr(out, mode="w")
+    logger.info("  Sv of %s: %d pings [%s] -> %s", Path(ed_zarr_path).name, ds_Sv.sizes["ping_time"],
+                encode_mode, out.name)
+    ds_Sv.close()
+    del ds_Sv
+    if not cfg.raw.keep_intermediate:
+        shutil.rmtree(ed_zarr_path, ignore_errors=True)
+    _release_memory()
+    return str(out)
+
+
 def compute_sv_day(
     ed_zarr_path: str | list[str],
     day_key: str,
@@ -1325,15 +1369,28 @@ def compute_sv_day(
 
     logger.info("Computing Sv for %s/%s", day_key, category)
     paths = [ed_zarr_path] if isinstance(ed_zarr_path, str) else list(ed_zarr_path)
-    parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
-    ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
-    ds_Sv.attrs["encode_mode"] = ",".join(dict.fromkeys(p[1] for p in parts))
+    if cfg.raw.sv_per_file:
+        import xarray as xr
 
-    if gps_df is None or gps_df.empty:
-        frames = [p[2] for p in parts if p[2] is not None]
-        if frames:
-            gps_df = pd.concat(frames).sort_values("dt").drop_duplicates("dt")
-            logger.info("  GPS from the raw files' NMEA: %d fixes", len(gps_df))
+        # Stage 2 computed Sv (with positions) file by file; join it in time.
+        files = [xr.open_zarr(path, chunks={}) for path in paths]
+        ds_Sv = files[0] if len(files) == 1 else _join_sv_parts(files)
+        ds_Sv.attrs["encode_mode"] = ",".join(dict.fromkeys(
+            f.attrs.get("encode_mode", "") for f in files if f.attrs.get("encode_mode")))
+        logger.info("  Joined Sv of %d files: %d pings", len(files), ds_Sv.sizes["ping_time"])
+        parts = files
+        if "latitude" in ds_Sv:
+            gps_df = None  # positions were added file by file
+    else:
+        parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
+        ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
+        ds_Sv.attrs["encode_mode"] = ",".join(dict.fromkeys(p[1] for p in parts))
+
+        if gps_df is None or gps_df.empty:
+            frames = [p[2] for p in parts if p[2] is not None]
+            if frames:
+                gps_df = pd.concat(frames).sort_values("dt").drop_duplicates("dt")
+                logger.info("  GPS from the raw files' NMEA: %d fixes", len(gps_df))
 
     # Add depth variable from echo_range + transducer depth offset
     depth_offset = cfg.raw.depth_offset
@@ -1876,7 +1933,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                     logger.info("Stopping after stage 1 (--stop-after-stage)")
                     return
                 t0 = time.time()
-                file_results = process_raw_files(files_list, cfg, echodata_dir)
+                file_results = process_raw_files(files_list, cfg, echodata_dir, gps_df=gps_df)
                 logger.info(
                     "STAGE 2 complete: %d files converted to EchoData (%.1fs)",
                     len(file_results), time.time() - t0,
@@ -2311,6 +2368,15 @@ def parse_args() -> PipelineConfig:
              "--env-params-file.",
     )
     parser.add_argument(
+        "--sv-per-file", action="store_true",
+        help="Compute Sv for each file right after conversion and join the day's Sv in time, "
+             "instead of combining a day's EchoData first. Needs far less disk for large days.",
+    )
+    parser.add_argument(
+        "--delete-raw-after-convert", action="store_true",
+        help="Delete each raw file once converted, even from --raw-dir (staged copies).",
+    )
+    parser.add_argument(
         "--cal-params-file",
         default="",
         help="Calibration XML of <case kHz= g= SA= equivalentBeamAngle=/> entries (MFRI/PANGAEA "
@@ -2520,6 +2586,8 @@ def parse_args() -> PipelineConfig:
     cfg.raw.env_params_file = args.env_params_file
     cfg.raw.ctd_file = args.ctd_file
     cfg.raw.cal_params_file = args.cal_params_file
+    cfg.raw.sv_per_file = args.sv_per_file
+    cfg.raw.delete_raw_after_convert = args.delete_raw_after_convert
     if cfg.raw.ctd_file and cfg.raw.env_params_file:
         parser.error("--ctd-file and --env-params-file both set the environment; use one.")
     cfg.apply_seabed_mask = args.seabed_mask
