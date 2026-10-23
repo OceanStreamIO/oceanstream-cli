@@ -2,8 +2,9 @@
 """Denoise statistics for one day, split by survey segment (station, transit, transition).
 
 Reads the day's Sv store and its denoised (masked-Sv) store from the project bucket and
-the survey's segment table, and writes, per channel and segment kind: pings, cells with
-data, the share of those cells each step removed, and the median background noise level.
+the survey's segment table (when it has one; otherwise every ping is "all"), and writes,
+per channel and segment kind: pings, cells with data, the share of those cells each step
+removed, and the median background noise level.
 The comparison shows whether station and transit need different presets.
 
 Per channel it also measures what is left where there should be nothing: in the deepest
@@ -101,12 +102,14 @@ def main() -> int:
         xr.open_zarr(fs.get_mapper(pruned[0]), consolidated=None)["keep_ping"].values.astype(bool)
         if len(pruned) == 1 else None
     )
-    with fs.open(f"{root}/{args.segments}", "rb") as fh:
-        segments = pd.read_parquet(fh)
-
-    seg_ids = assign_segments(sv["ping_time"].values, segments)
-    kind_of = dict(zip(segments["segment_id"], segments["kind"], strict=True))
-    kinds = np.array([kind_of.get(s, "outside") for s in seg_ids])
+    if fs.exists(f"{root}/{args.segments}"):
+        with fs.open(f"{root}/{args.segments}", "rb") as fh:
+            segments = pd.read_parquet(fh)
+        seg_ids = assign_segments(sv["ping_time"].values, segments)
+        kind_of = dict(zip(segments["segment_id"], segments["kind"], strict=True))
+        kinds = np.array([kind_of.get(s, "outside") for s in seg_ids])
+    else:  # a survey without a segment table: one kind for the whole day
+        kinds = np.full(sv.sizes["ping_time"], "all")
 
     report = {"day": args.day, "denoised": args.denoised_container, "channels": []}
     for i, channel in enumerate(sv["channel"].values):
