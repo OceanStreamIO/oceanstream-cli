@@ -20,7 +20,8 @@
 # sound speed and absorption from the casts (--ctd-file). SV_CONTAINER names the Sv
 # container (default sv) and PIPELINE_ARGS adds pipeline flags, in every mode.
 #
-# WITH_NASC=1 (MODE=denoise) computes NASC too.
+# WITH_NASC=1 (MODE=denoise) computes NASC too. RESUME_STAGE=6 reruns seabed masking,
+# pruning, MVBS, NASC and echograms from the denoised stores already in DENOISED_CONTAINER.
 # MODE=denoise skips the downloads and runs the pipeline from stage 5 on the stored
 # Sv with $PRESET into the container denoised-$PRESET, through echograms, then writes
 # per-segment statistics (split_stats.py) for each day.
@@ -239,7 +240,7 @@ run_denoise() {
         --expected-categories short_pulse --force \
         --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
-        --resume-stage 5 --sv-source-container "${SV_CONTAINER:-sv}" --output-container "$DENOISED" \
+        --resume-stage "${RESUME_STAGE:-5}" --sv-source-container "${SV_CONTAINER:-sv}" --output-container "$DENOISED" \
         --preset "$PRESET" --emit-denoise-diagnostics --stop-after-stage 9 \
         $( [ "${WITH_NASC:-0}" = 1 ] || echo --skip-nasc ) --skip-pmtiles \
         --skip-combined-echograms --skip-campaign-echograms \
