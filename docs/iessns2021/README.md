@@ -90,7 +90,7 @@ In a two-hour window of 07-16 (seabed 70–150 m), background removal took 89 % 
 
 A per-channel integration layer would exclude both: a start depth below the near-field and an end depth where the noise reaches the signal of interest. It is proposed and awaiting a decision.
 
-**Open method questions for the products.** In that same window the mean 38 kHz water-column Sv is −67.9 dB when removed cells are left out, as MVBS and NASC do now (echopype averages skip NaN). It is −81.5 dB when they count as zero, a 13.6 dB difference. Pruning also drops pings whose water column is mostly removed, 30 % of 07-16, and those pings are empty water, not bad data. Both raise MVBS and NASC where scattering is weak, on RR2205 and TPOS as well. A fix would treat cells removed as below the noise as zero in integration, and prune only pings the noise detectors flag. That changes every product, so it is a decision rather than a tuning step.
+**Integration (decided 2026-10-23).** Cells removed as below the noise now count as zero in MVBS and NASC, artefact cells are left out, and pruning drops only pings with no measured water column or mostly artefacts; see [../echo-integration.md](../echo-integration.md). Zero is a lower bound where real signal dominates. RR2205 and SD_TPOS2023_v03 still carry the old integration until rerun from stage 6.
 
 ## Next
 
