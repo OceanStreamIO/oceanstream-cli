@@ -20,6 +20,7 @@
 # sound speed and absorption from the casts (--ctd-file). SV_CONTAINER names the Sv
 # container (default sv) and PIPELINE_ARGS adds pipeline flags, in every mode.
 #
+# WITH_NASC=1 (MODE=denoise) computes NASC too.
 # MODE=denoise skips the downloads and runs the pipeline from stage 5 on the stored
 # Sv with $PRESET into the container denoised-$PRESET, through echograms, then writes
 # per-segment statistics (split_stats.py) for each day.
@@ -240,7 +241,8 @@ run_denoise() {
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
         --resume-stage 5 --sv-source-container "${SV_CONTAINER:-sv}" --output-container "$DENOISED" \
         --preset "$PRESET" --emit-denoise-diagnostics --stop-after-stage 9 \
-        --skip-nasc --skip-pmtiles --skip-combined-echograms --skip-campaign-echograms \
+        $( [ "${WITH_NASC:-0}" = 1 ] || echo --skip-nasc ) --skip-pmtiles \
+        --skip-combined-echograms --skip-campaign-echograms \
         --n-workers "${DASK_WORKERS:-2}" --memory-limit "${DASK_MEMORY:-20GB}" \
         ${PIPELINE_ARGS:-} > "$LOGS/$day-denoise.log" 2>&1
     rc=$?
