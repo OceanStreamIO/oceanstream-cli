@@ -821,6 +821,43 @@ class TestInterleavedPruning:
         assert np.datetime64(ds["ping_time"].values[7]) not in pruned["ping_time"].values
 
 
+class TestShelfPruning:
+    """Pruning ignores cells flagged as seabed when channels ping together."""
+
+    @staticmethod
+    def _shelf_sv(n_pings=20, n_range=100, seabed_at=40):
+        sv = np.full((2, n_pings, n_range), -70.0)
+        flags = np.zeros(sv.shape, dtype=np.uint8)
+        flags[:, :, seabed_at:] = 32  # seabed and below
+        sv[:, :, seabed_at:] = np.nan
+        sv[:, :, : seabed_at // 2] = np.nan  # background removed half the water column
+        return xr.Dataset(
+            {"Sv": (("channel", "ping_time", "range_sample"), sv),
+             "echo_range": (("channel", "ping_time", "range_sample"),
+                            np.broadcast_to(np.arange(n_range, dtype=float), sv.shape).copy()),
+             "denoise_flags": (("channel", "ping_time", "range_sample"), flags)},
+            coords={"channel": ["a", "b"],
+                    "ping_time": pd.date_range("2021-07-09", periods=n_pings, freq="1s")},
+        )
+
+    def test_pings_over_the_shelf_are_kept(self):
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        ds = self._shelf_sv()
+        # 80 % of each ping is NaN on the full grid, half of its water column.
+        assert drop_noisy_pings(ds, drop_threshold=0.8).sizes["ping_time"] == 20
+        without_flags = drop_noisy_pings(ds.drop_vars("denoise_flags"), drop_threshold=0.8)
+        assert without_flags.sizes["ping_time"] == 0
+
+    def test_empty_water_column_is_dropped(self):
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        ds = self._shelf_sv()
+        ds["Sv"][:, 3, :40] = np.nan
+        pruned = drop_noisy_pings(ds, drop_threshold=0.8)
+        assert pruned.sizes["ping_time"] == 19
+
+
 class TestBreakAtGaps:
     """Echograms leave recording gaps blank instead of stretching pings across them."""
 

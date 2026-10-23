@@ -805,6 +805,18 @@ def drop_noisy_pings(
         n_signal = signal.sum(dim=range_dim)
         n_nan = (ds[var_name].isnull() & signal).sum(dim=range_dim)
         frac_nan = (n_nan / n_signal).where(n_signal > 0)
+    elif "denoise_flags" in ds:
+        # Count only water column: on a shelf the cells below the seabed are most of the
+        # range, and with them counted every ping looks dead. Cells past a channel's own
+        # range (NaN echo_range on the shared grid) do not count either.
+        from oceanstream.echodata.products import FLAG_BITS
+
+        water = (ds["denoise_flags"] & FLAG_BITS["seabed"]) == 0
+        if "echo_range" in ds:
+            water = water & ds["echo_range"].notnull()
+        n_water = water.sum(dim=range_dim)
+        n_nan = (ds[var_name].isnull() & water).sum(dim=range_dim)
+        frac_nan = (n_nan / n_water).where(n_water > 0, 1.0)
     else:
         n_nan = ds[var_name].isnull().sum(dim=range_dim)
         total = ds[var_name].sizes[range_dim]
