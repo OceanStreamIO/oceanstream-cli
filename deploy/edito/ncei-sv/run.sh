@@ -31,7 +31,14 @@ set -uo pipefail
 
 MODE="${MODE:-sv}"
 : "${CRUISE:?}" "${DAYS:?}"
-if [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"
+# RAW_S3_PREFIX (MODE=sv): read the raw files from this prefix of the project bucket (e.g.
+# a PANGAEA mirror) instead of NCEI; SHIP and NAV_URL are then optional, and without
+# NAV_URL positions come from the NMEA in the raw files. ENCODE_MODE: complex (default),
+# power or auto. CAL_S3_KEY: a calibration XML in the project bucket (--cal-params-file).
+# CODE_S3_KEY: an oceanstream-cli source tarball in the project bucket, used instead of
+# downloading $BRANCH from GitHub. RAW_INCLUDE: only raw files whose names match this regex.
+if [ "$MODE" = sv ] && [ -n "${RAW_S3_PREFIX:-}" ]; then :
+elif [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"
 elif [ "$MODE" = report ]; then : "${REPORT_RUNS:?}"
 else : "${PRESET:?}"; fi
 # MODE=report renders echogram_report.py for each day: the stored Sv and each
@@ -65,7 +72,10 @@ gpu_now() {
 }
 ( while true; do echo "$(date +%s) $(mem_now) $(gpu_now)" >> "$LOGS/samples.txt"; sleep 10; done ) &
 SAMPLER=$!
-trap 'kill $SAMPLER 2>/dev/null; upload_logs' EXIT
+# Work-directory size every minute (du over Zarr trees is too slow for every 10 s).
+( while true; do echo "$(date +%s) $(du -sb "$W" 2>/dev/null | cut -f1)" >> "$LOGS/disk.txt"; sleep 60; done ) &
+DISK_SAMPLER=$!
+trap 'kill $SAMPLER $DISK_SAMPLER 2>/dev/null; upload_logs' EXIT
 
 # Peak memory and GPU use between two epoch seconds, from the samples.
 summarise() {
@@ -81,8 +91,17 @@ for line in open(sys.argv[1]):
     if len(parts) > 2 and parts[2] not in ("-,-", "-"):
         u, m = parts[2].split(",")
         util.append(float(u)); gmem.append(float(m))
+disk = []
+try:
+    for line in open(sys.argv[1].replace("samples.txt", "disk.txt")):
+        parts = line.split()
+        if len(parts) == 2 and t0 <= int(parts[0]) <= t1:
+            disk.append(int(parts[1]))
+except OSError:
+    pass
 print(json.dumps({
     "max_mem_gib": round(max(mem) / 2**30, 1) if mem else None,
+    "max_disk_gib": round(max(disk) / 2**30, 1) if disk else None,
     "gpu_util_mean": round(sum(util) / len(util), 1) if util else None,
     "gpu_util_max": max(util) if util else None,
     "gpu_mem_max_mib": max(gmem) if gmem else None,
@@ -91,14 +110,24 @@ PY
 }
 
 # -- code and CuPy ---------------------------------------------------------------------
-log "oceanstream-cli $BRANCH"
 # Retries: a node's DNS can fail for minutes at a time.
 CURL=(curl -fsSL --retry 8 --retry-delay 15 --retry-all-errors --connect-timeout 20)
-"${CURL[@]}" -o "$W/src.tar.gz" "https://github.com/OceanStreamIO/oceanstream-cli/archive/refs/heads/$BRANCH.tar.gz" \
-    && tar -xzf "$W/src.tar.gz" -C "$W" || { log "could not download $BRANCH"; exit 2; }
+if [ -n "${CODE_S3_KEY:-}" ]; then
+    log "oceanstream-cli from s3://$OCEANSTREAM_S3_BUCKET/$CODE_S3_KEY"
+    python - "$OCEANSTREAM_S3_BUCKET" "$CODE_S3_KEY" "$W/src.tar.gz" <<'PY' || { log "could not download $CODE_S3_KEY"; exit 2; }
+import os, sys, boto3
+boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT_URL"]).download_file(*sys.argv[1:4])
+PY
+    mkdir -p "$W/oceanstream-cli-s3" && tar -xzf "$W/src.tar.gz" -C "$W/oceanstream-cli-s3" || exit 2
+    COMMIT="$(basename "$CODE_S3_KEY" .tar.gz)"
+else
+    log "oceanstream-cli $BRANCH"
+    "${CURL[@]}" -o "$W/src.tar.gz" "https://github.com/OceanStreamIO/oceanstream-cli/archive/refs/heads/$BRANCH.tar.gz" \
+        && tar -xzf "$W/src.tar.gz" -C "$W" || { log "could not download $BRANCH"; exit 2; }
+    COMMIT="$("${CURL[@]}" "https://api.github.com/repos/OceanStreamIO/oceanstream-cli/commits/$BRANCH" \
+        | python -c 'import json,sys; print(json.load(sys.stdin)["sha"])' 2>/dev/null || echo unknown)"
+fi
 SRC="$(ls -d "$W"/oceanstream-cli-* | head -1)"
-COMMIT="$("${CURL[@]}" "https://api.github.com/repos/OceanStreamIO/oceanstream-cli/commits/$BRANCH" \
-    | python -c 'import json,sys; print(json.load(sys.stdin)["sha"])' 2>/dev/null || echo unknown)"
 export PYTHONPATH="$SRC:$W/pylib"
 PIPELINE="$SRC/scripts/batch_processing/process_from_raw.py"
 
@@ -146,7 +175,9 @@ printf '{"run_id": "%s", "branch": "%s", "commit": "%s", "days": "%s"}\n' \
     "$RUN_ID" "$BRANCH" "$COMMIT" "$DAYS" > "$LOGS/run.json"
 
 # -- navigation ------------------------------------------------------------------------
-if [ "$MODE" = sv ]; then
+GPS_ARGS=()
+if [ "$MODE" = sv ] && [ -n "${NAV_URL:-}" ]; then
+    GPS_ARGS=(--gps-dir "$W/gps/$CRUISE")
     log "navigation"
     fetch nav --url "$NAV_URL" --md5 "${NAV_MD5:-}" --dest "$W/gps/$CRUISE" | tee "$LOGS/nav.json" \
         || { log "navigation failed"; exit 4; }
@@ -160,6 +191,15 @@ if [ "$MODE" = sv ] && [ -n "${CTD_URL:-}" ]; then
         || { log "CTD download failed"; exit 4; }
     sha256sum "$W/ctd/casts.nc" | tee "$LOGS/ctd.sha256"
     CTD_ARGS=(--ctd-file "$W/ctd/casts.nc")
+fi
+if [ "$MODE" = sv ] && [ -n "${CAL_S3_KEY:-}" ]; then
+    mkdir -p "$W/cal"
+    python - "$OCEANSTREAM_S3_BUCKET" "$CAL_S3_KEY" "$W/cal/calibration.xml" <<'PY' || { log "calibration download failed"; exit 4; }
+import os, sys, boto3
+boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT_URL"]).download_file(*sys.argv[1:4])
+PY
+    sha256sum "$W/cal/calibration.xml" | tee "$LOGS/calibration.sha256"
+    CTD_ARGS+=(--cal-params-file "$W/cal/calibration.xml")
 fi
 
 # -- Sv -------------------------------------------------------------------------------
@@ -176,10 +216,10 @@ run_sv() {
         --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
         --output-container "$container" --stop-after-stage 4 \
-        --waveform-mode CW --encode-mode complex --sv-float32 \
+        --waveform-mode CW --encode-mode "${ENCODE_MODE:-complex}" --sv-float32 \
         --sv-range-bin-m "${SV_RANGE_BIN_M:-0.18}" --chunk-ping-time "${CHUNK_PING_TIME:-100}" \
         --n-workers "${DASK_WORKERS:-2}" --memory-limit "${DASK_MEMORY:-20GB}" \
-        --gps-dir "$W/gps/$CRUISE" "$@" > "$LOGS/$day-$tag.log" 2>&1
+        "${GPS_ARGS[@]+"${GPS_ARGS[@]}"}" "$@" > "$LOGS/$day-$tag.log" 2>&1
     rc=$?
     t1="$(date +%s)"
     printf '{"day": "%s", "run": "%s", "exit": %d, "seconds": %d, "usage": %s}\n' \
@@ -257,7 +297,8 @@ fi
 
 for day in ${DAYS//,/ }; do
     log "== $day: download"
-    if ! fetch raw --ship "$SHIP" --cruise "$CRUISE" --day "$day" --dest "$W/raw/$day" \
+    if ! fetch raw --ship "${SHIP:-}" --cruise "$CRUISE" --day "$day" --dest "$W/raw/$day" \
+            ${RAW_S3_PREFIX:+--from-prefix "$RAW_S3_PREFIX"} ${RAW_INCLUDE:+--include "$RAW_INCLUDE"} \
             | tee "$LOGS/$day-raw.json"; then
         FAILED=1; continue
     fi

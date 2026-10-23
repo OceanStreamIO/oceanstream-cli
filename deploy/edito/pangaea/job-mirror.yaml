@@ -1,0 +1,46 @@
+# Copy raw files of a PANGAEA dataset into the project bucket (mirror.py).
+#
+#   kubectl create configmap pangaea-mirror-scripts --from-file=deploy/edito/pangaea/mirror.py \
+#       --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply -f deploy/edito/pangaea/job-mirror.yaml
+#
+# Network-bound: a standard node, no GPU. Rerunning skips files already copied.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: iessns2021-mirror
+  labels: {app: pangaea-mirror}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {app: pangaea-mirror}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      imagePullSecrets: [{name: acr-pull-secret}]
+      containers:
+        - name: mirror
+          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          command:
+            - python
+            - -u
+            - /scripts/mirror.py
+            - --dataset=975782
+            - --prefix=pangaea/IESSNS2021/raw
+            - --days=2021-07-12,2021-07-16
+            - --window=2021-07-09T17:00/2021-07-09T21:00
+            - --workers=4
+            - --prefetch=24
+          envFrom:
+            - secretRef: {name: oceanstream-s3}
+          resources:
+            requests: {cpu: "1", memory: 2Gi}
+            limits: {cpu: "2", memory: 4Gi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: pangaea-mirror-scripts}

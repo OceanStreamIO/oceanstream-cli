@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Inputs and outputs for the NCEI Sv job on EDITO.
 
-    raw      download one day of EK80 raw files from the public NCEI water-column bucket
+    raw      download one day of EK80 raw files from the public NCEI water-column bucket,
+             or with --from-prefix from a prefix of the project bucket (e.g. a PANGAEA mirror)
     nav      download an R2R navigation geoCSV and write it as GPS parquet for --gps-dir
     put      upload a file or directory to the project bucket
     compare  compare two Sv stores in the project bucket, then optionally delete the second
@@ -49,17 +50,26 @@ def _project_client():
 
 
 def cmd_raw(args: argparse.Namespace) -> int:
-    s3 = _ncei_client()
-    prefix = f"data/raw/{args.ship}/{args.cruise}/{args.instrument}/"
+    if args.from_prefix:
+        s3, bucket = _project_client(), os.environ["OCEANSTREAM_S3_BUCKET"]
+        prefix = args.from_prefix.rstrip("/") + "/"
+    else:
+        if not (args.ship and args.cruise):
+            print("raw: give --ship and --cruise, or --from-prefix", file=sys.stderr)
+            return 2
+        s3, bucket = _ncei_client(), NCEI_BUCKET
+        prefix = f"data/raw/{args.ship}/{args.cruise}/{args.instrument}/"
     stamp = re.compile(r"D" + args.day.replace("-", "") + r"-T\d{6}")
-    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=NCEI_BUCKET, Prefix=prefix)
+    include = re.compile(args.include) if args.include else None
+    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
     objects = [
         o for page in pages
         for o in page.get("Contents", [])
         if o["Key"].endswith(".raw") and stamp.search(Path(o["Key"]).name)
+        and (include is None or include.search(Path(o["Key"]).name))
     ]
     if not objects:
-        print(f"No raw files for {args.day} under s3://{NCEI_BUCKET}/{prefix}", file=sys.stderr)
+        print(f"No raw files for {args.day} under s3://{bucket}/{prefix}", file=sys.stderr)
         return 2
     dest = Path(args.dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -68,7 +78,7 @@ def cmd_raw(args: argparse.Namespace) -> int:
         target = dest / Path(obj["Key"]).name
         if target.is_file() and target.stat().st_size == obj["Size"]:
             return 0
-        s3.download_file(NCEI_BUCKET, obj["Key"], str(target))
+        s3.download_file(bucket, obj["Key"], str(target))
         if target.stat().st_size != obj["Size"]:
             raise OSError(f"Size mismatch for {obj['Key']}")
         return obj["Size"]
@@ -168,8 +178,10 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("raw")
-    r.add_argument("--ship", required=True)
-    r.add_argument("--cruise", required=True)
+    r.add_argument("--ship", default="")
+    r.add_argument("--cruise", default="")
+    r.add_argument("--from-prefix", default="", help="Project-bucket prefix to read instead of NCEI")
+    r.add_argument("--include", default="", help="Only file names matching this regex")
     r.add_argument("--day", required=True)
     r.add_argument("--dest", required=True)
     r.add_argument("--instrument", default="EK80")
