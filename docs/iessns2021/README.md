@@ -28,6 +28,17 @@ Our copy of the data is in `s3://oceanstream-bucket/pangaea/IESSNS2021/`:
 
 `deploy/edito/pangaea/mirror.py` makes the mirror. It starts PANGAEA's tape recalls ahead of the downloads and checks every file's MD5. PANGAEA serves each file at 1–4 MB/s.
 
+## Supporting data
+
+Copied to `s3://oceanstream-bucket/pangaea/IESSNS2021/aux/` (all CC-BY-4.0 on PANGAEA):
+
+- **Trawl catches** (`PANGAEA.942987.tab`, [doi:10.1594/PANGAEA.942987](https://doi.org/10.1594/PANGAEA.942987)): 38 stations of the Multpelt832 pelagic trawl, 17–26 July 2021, strata 5 and 6 south and west of Iceland. The table gives catch by species per station, and length, sex, maturity and age for herring, blue whiting and mackerel, with the 5 m water temperature. Trawls in the northern strata are not published.
+- **Survey report** (`IESSNS_IS_2021.pdf`, MFRI HV 2022-06): track, stations and scrutiny method. Herring and blue whiting were scrutinised at 38 kHz with a −72 dB threshold.
+- **Station map** (`Map_IESSNS_2021.zip`).
+- **Mesopelagic fish sampled on the survey:** *Notoscopelus kroyeri* size and otoliths 2020–2021 (`PANGAEA.966742.tab`), and *Centrolophus niger* otoliths, characteristics and prey from 2017 and 2021 (`PANGAEA.955693/955695/955697.tab`).
+
+Not found openly: the 54 CTD casts the report mentions (not on PANGAEA; the ICES oceanographic database or MFRI may hold them), and MFRI's scrutinised NASC in the ICES acoustic database, whose downloads go through its web portal. Sound speed and absorption therefore come from the environment settings in the raw files, which the operators updated during the survey.
+
 ## Pipeline changes
 
 All are in `scripts/batch_processing/process_from_raw.py`:
