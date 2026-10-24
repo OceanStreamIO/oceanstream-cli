@@ -140,3 +140,18 @@ class TestFillMissingPositions:
         out = pfr._fill_missing_positions(ds)
         np.testing.assert_allclose(out["latitude"].values, [66.0, 66.1, 66.2, 66.3, 66.4])
         np.testing.assert_allclose(out["longitude"].values, [-20.0, -20.1, -20.2, -20.3, -20.4])
+
+    def test_join_keeps_a_repeated_ping_once(self):
+        def part(times):
+            t = pd.to_datetime(times)
+            return xr.Dataset(
+                {"Sv": (("channel", "ping_time", "range_sample"), np.zeros((1, len(t), 2)))},
+                coords={"channel": ["WBT 38"], "ping_time": t, "range_sample": [0, 1]},
+            )
+
+        a = part(["2021-07-21T00:00:00", "2021-07-21T00:00:01"])
+        b = part(["2021-07-21T00:00:01", "2021-07-21T00:00:02"])  # opens with a's last ping
+        joined = pfr._join_sv_parts([a, b])
+        assert joined.sizes["ping_time"] == 3
+        assert joined.indexes["ping_time"].is_unique
+

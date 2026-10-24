@@ -1387,7 +1387,14 @@ def _join_sv_parts(parts: list):
     factors = {p["Sv"].attrs.get("range_bin_samples") for p in parts}
     if len(factors) > 1:
         logger.warning("  Groups were range-binned differently: %s", sorted(map(str, factors)))
-    return ds_Sv.sortby("ping_time")
+    ds_Sv = ds_Sv.sortby("ping_time")
+    # A ping can close one raw file and open the next; keep it once. Repeated ping
+    # times also break joins on ping_time downstream (echopype's NASC distance).
+    n = ds_Sv.sizes["ping_time"]
+    ds_Sv = ds_Sv.drop_duplicates("ping_time", keep="first")
+    if ds_Sv.sizes["ping_time"] < n:
+        logger.info("  Dropped %d repeated ping times", n - ds_Sv.sizes["ping_time"])
+    return ds_Sv
 
 
 def _sv_for_file(ed_zarr_path: str, file_record: dict, cfg: PipelineConfig, echodata_dir: Path,
