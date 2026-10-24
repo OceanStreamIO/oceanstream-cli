@@ -127,3 +127,16 @@ class TestSampleTypes:
         assert joined.sizes == {"channel": 1, "ping_time": 4, "range_sample": 4}
         assert joined["ping_time"].to_index().is_monotonic_increasing
         assert np.isnan(joined["Sv"].isel(ping_time=3, range_sample=3)).item()
+
+
+class TestFillMissingPositions:
+    def test_pings_without_a_fix_get_interpolated_positions(self):
+        t = pd.date_range("2021-07-21T00:00", periods=5, freq="1s")
+        ds = xr.Dataset(
+            {"latitude": ("ping_time", [66.0, np.nan, 66.2, np.nan, 66.4]),
+             "longitude": ("ping_time", [-20.0, np.nan, -20.2, np.nan, -20.4])},
+            coords={"ping_time": t},
+        )
+        out = pfr._fill_missing_positions(ds)
+        np.testing.assert_allclose(out["latitude"].values, [66.0, 66.1, 66.2, 66.3, 66.4])
+        np.testing.assert_allclose(out["longitude"].values, [-20.0, -20.1, -20.2, -20.3, -20.4])

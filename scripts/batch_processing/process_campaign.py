@@ -1755,7 +1755,7 @@ def run_nasc_computation(
                     nasc_failures.append(f"{day_key}/{category}: skipped (missing depth or lat/lon)")
             except Exception as e:
                 nasc_failures.append(f"{day_key}/{category}: {e}")
-                logger.warning("NASC failed for %s/%s: %s", day_key, category, e)
+                logger.warning("NASC failed for %s/%s: %s", day_key, category, e, exc_info=True)
 
     if nasc_failures and cfg.strict:
         raise StrictModeError("NASC computation failed: " + "; ".join(nasc_failures))

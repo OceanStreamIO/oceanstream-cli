@@ -436,6 +436,14 @@ def compute_nasc(
     # Ensure required variables
     sv_dataset = _ensure_location(sv_dataset)
     sv_dataset = _ensure_depth(sv_dataset, echodata=echodata, transducer_depth=transducer_depth)
+
+    # echopype measures distance from the positions and drops pings without one, which
+    # leaves its distance axis shorter than the pings. Leave those pings out here.
+    if "latitude" in sv_dataset and "longitude" in sv_dataset:
+        placed = (sv_dataset["latitude"].notnull() & sv_dataset["longitude"].notnull()).values
+        if placed.ndim == 1 and not placed.all():
+            logger.warning("  %d pings without a position left out of NASC", int((~placed).sum()))
+            sv_dataset = sv_dataset.isel(ping_time=np.flatnonzero(placed))
     
     logger.info(f"Computing NASC with range_bin={range_bin}, dist_bin={dist_bin}")
     logger.info(f"  latitude range: [{float(sv_dataset['latitude'].min()):.3f}, {float(sv_dataset['latitude'].max()):.3f}]")

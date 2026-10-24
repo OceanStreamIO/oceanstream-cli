@@ -1353,6 +1353,31 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
     return ds_Sv, encode_mode, _platform_gps(ed)
 
 
+def _fill_missing_positions(ds_Sv):
+    """Positions for pings that have none, interpolated in time from the day's fixes.
+
+    With --sv-per-file each file takes positions from its own NMEA, and a file of one
+    or two start-up pings can hold no fix. NASC measures distance from the positions
+    and leaves out pings without one, which breaks its alignment with the pings.
+    """
+    import numpy as np
+
+    lat = ds_Sv["latitude"].values.astype(float)
+    lon = ds_Sv["longitude"].values.astype(float)
+    missing = ~(np.isfinite(lat) & np.isfinite(lon))
+    if not missing.any() or missing.all():
+        return ds_Sv
+    t = ds_Sv["ping_time"].values.astype("datetime64[ns]").astype(np.int64).astype(float)
+    ok = ~missing
+    lat[missing] = np.interp(t[missing], t[ok], lat[ok])
+    lon[missing] = np.interp(t[missing], t[ok], lon[ok])
+    logger.info("  Positions interpolated for %d pings without a fix", int(missing.sum()))
+    attrs_lat, attrs_lon = ds_Sv["latitude"].attrs, ds_Sv["longitude"].attrs
+    ds_Sv["latitude"] = ds_Sv["latitude"].copy(data=lat).assign_attrs(attrs_lat)
+    ds_Sv["longitude"] = ds_Sv["longitude"].copy(data=lon).assign_attrs(attrs_lon)
+    return ds_Sv
+
+
 def _join_sv_parts(parts: list):
     """Sv of one day's groups of files (e.g. complex and power/angle), joined in time."""
     import xarray as xr
@@ -1438,6 +1463,7 @@ def compute_sv_day(
         parts = files
         if "latitude" in ds_Sv:
             gps_df = None  # positions were added file by file
+            ds_Sv = _fill_missing_positions(ds_Sv)
     else:
         parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
         ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
