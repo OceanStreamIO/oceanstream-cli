@@ -183,6 +183,20 @@ class TestValidation:
         with pytest.raises(PresetError, match="detector"):
             parse_preset(HEADER + GOOD_FREQ.replace("maxts = -35.0", 'maxts = -35.0, detector = "x"'))
 
+    def test_ryan2015_detector_keeps_its_parameters(self):
+        ryan = ('maxts = -35.0, detector = "ryan2015", percentile = 15, block_pings = 50, '
+                "block_height = 20.0, threshold_db = 12.0, vertical_bin_size = 5.0")
+        transient = parse_preset(HEADER + GOOD_FREQ.replace("maxts = -35.0", ryan)).params[38000]["transient"]
+        assert transient["detector"] == "ryan2015"
+        assert (transient["percentile"], transient["block_pings"], transient["block_height"]) == (15.0, 50, 20.0)
+
+    def test_cascade(self):
+        preset = parse_preset(HEADER.replace("methods = [", "cascade = true\nmethods = [") + GOOD_FREQ)
+        assert preset.cascade and preset.to_denoise_config().cascade
+        assert preset.params_sha256 != parse_preset(HEADER + GOOD_FREQ).params_sha256
+        with pytest.raises(PresetError, match="cascade"):
+            parse_preset(HEADER.replace("methods = [", "cascade = 1\nmethods = [") + GOOD_FREQ)
+
     def test_params_hash_ignores_metadata(self):
         a = parse_preset(HEADER + GOOD_FREQ)
         b = parse_preset(HEADER.replace("A test preset.", "Reworded.") + GOOD_FREQ)

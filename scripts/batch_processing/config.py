@@ -136,6 +136,8 @@ class DenoiseParams:
     reference_ping_interval_s: Optional[float] = None
     # Pings further apart than this (minutes) start a new recording session.
     session_gap_minutes: Optional[float] = None
+    # Chain the mask filters in methods order instead of OR-combining independent masks.
+    cascade: bool = False
     # Background noise estimator: "echopype" (default) or the experimental "quantile"
     # (oceanstream.echodata.denoise.background_estimators). Chosen by the pipeline run.
     background_estimator: str = "echopype"
@@ -183,6 +185,7 @@ class DenoiseParams:
             attenuation_side_pings=self.attenuation_side_pings,
             reference_ping_interval_s=self.reference_ping_interval_s,
             session_gap_minutes=self.session_gap_minutes,
+            cascade=self.cascade,
         )
 
 

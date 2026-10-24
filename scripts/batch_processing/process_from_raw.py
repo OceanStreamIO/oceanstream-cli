@@ -2751,6 +2751,7 @@ def parse_args() -> PipelineConfig:
             attenuation_side_pings=echo_cfg.denoise.attenuation_side_pings,
             reference_ping_interval_s=echo_cfg.denoise.reference_ping_interval_s,
             session_gap_minutes=echo_cfg.denoise.session_gap_minutes,
+            cascade=echo_cfg.denoise.cascade,
         )
     cfg.denoise.background_estimator = args.background_estimator
 

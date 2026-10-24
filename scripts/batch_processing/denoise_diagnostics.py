@@ -53,9 +53,8 @@ PERCENTILE_SAMPLE_CAP = 4_000_000
 #:
 #: ``transient`` lists the keys of :func:`transient_noise_mask`, the
 #: **Fielding-style** deep-band detector that oceanstream wires up by default.
-#: Ryan's own transient filter lives in ``transient_noise_mask_ryan`` and is not
-#: wired in — which is why ``percentile`` (a Ryan-TN-only parameter) is present
-#: in the preset TOMLs but silently ignored at runtime.
+#: The transient keys are Fielding's, the default detector; a preset that picks another
+#: with ``detector`` is checked against that one's keys (``TRANSIENT_KEYS_BY_DETECTOR``).
 CONSUMED_PARAM_KEYS: dict[str, frozenset[str]] = {
     "impulse": frozenset(
         {
@@ -69,7 +68,8 @@ CONSUMED_PARAM_KEYS: dict[str, frozenset[str]] = {
     "transient": frozenset(
         {
             "range_coord", "ping_window", "n_pings", "threshold", "thr_dB",
-            "exclude_above", "ref_min", "ref_max", "jumps", "depth_bin", "maxts",
+            "thr_dB_stop", "exclude_above", "ref_min", "ref_max", "jumps", "depth_bin",
+            "maxts", "detector",
         }
     ),
     "background": frozenset(
@@ -78,6 +78,19 @@ CONSUMED_PARAM_KEYS: dict[str, frozenset[str]] = {
             "background_noise_max", "SNR_threshold", "depth_stat",
             "depth_quantile", "guard_mode", "guard_depth", "guard_band",
         }
+    ),
+}
+
+#: Keys each transient detector reads, by the ``detector`` value that picks it.
+TRANSIENT_KEYS_BY_DETECTOR: dict[str, frozenset[str]] = {
+    "fielding": CONSUMED_PARAM_KEYS["transient"],
+    "ryan": frozenset(
+        {"detector", "exclude_above", "depth_bin", "n_pings", "ping_window", "thr_dB",
+         "threshold", "percentile"}
+    ),
+    "ryan2015": frozenset(
+        {"detector", "exclude_above", "block_pings", "block_height", "percentile",
+         "threshold_db", "vertical_bin_size"}
     ),
 }
 
@@ -154,6 +167,8 @@ def find_unused_toml_fields(toml_path) -> list[dict]:
             if not isinstance(params, dict):
                 continue
             consumed = CONSUMED_PARAM_KEYS.get(method)
+            if method == "transient":
+                consumed = TRANSIENT_KEYS_BY_DETECTOR.get(params.get("detector", "fielding"), consumed)
             if consumed is None:
                 continue
             for key in params:

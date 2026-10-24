@@ -100,7 +100,7 @@ def channels_ping_in_turn(sv: "xr.DataArray", range_dim: str = "range_sample") -
 #: down to. Ping lags are not here: they compare neighbouring pings by definition.
 PING_WINDOWS: dict[str, dict[str, int]] = {
     "attenuation": {"num_side_pings": 5},
-    "transient": {"n_pings": 5},
+    "transient": {"n_pings": 5, "block_pings": 10},
     "background": {"ping_window": 10},
 }
 
@@ -355,6 +355,7 @@ def build_full_mask(
     from oceanstream.echodata.denoise.transient_noise import (
         transient_noise_mask,
         transient_noise_mask_ryan,
+        transient_noise_mask_ryan2015,
     )
     from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
     from oceanstream.echodata.denoise.attenuation import attenuation_mask
@@ -416,6 +417,12 @@ def build_full_mask(
         logger.info("Channels ping in turn: each channel is filtered on its own pings and range")
     reference_interval = getattr(config, "reference_ping_interval_s", None)
     session_gap = getattr(config, "session_gap_minutes", None)
+    cascade = bool(getattr(config, "cascade", False))
+    transient_detectors = {
+        "fielding": transient_noise_mask,
+        "ryan": transient_noise_mask_ryan,
+        "ryan2015": transient_noise_mask_ryan2015,
+    }
     window_ratios: dict[str, float] = {}
     session_skips: dict[str, dict[str, int]] = {name: {} for name in stages}
 
@@ -426,6 +433,7 @@ def build_full_mask(
         stage_or = None
 
         work_ds, work_ref = ch_ds, reference
+        work_or = None  # what this channel's filters removed so far, for a cascade
         if compact_pings:
             work_ds, ping_idx, n_range = compact_channel(ch_ds, var_name, range_dim)
             work_ref = work_ds[var_name]
@@ -460,12 +468,23 @@ def build_full_mask(
                 continue
 
             pars = scale_ping_windows(stage_name, pars, ratio)
-            # The transient stage runs Fielding's detector unless the preset picks Ryan's.
+            # The transient stage runs the stage's function (Fielding's detector) unless the
+            # preset names a detector.
             stage_fn = fn
-            if stage_name == "transient" and pars.get("detector") == "ryan":
-                stage_fn = transient_noise_mask_ryan
+            detector = pars.get("detector") if stage_name == "transient" else None
+            if detector is not None:
+                if detector not in transient_detectors:
+                    stage_status[stage_name][ch_label] = f"failed: unknown detector {detector!r}"
+                    continue
+                stage_fn = transient_detectors[detector]
+            # In a cascade each filter sees Sv with what the filters before it removed already
+            # gone, as in Ryan et al.'s chain: an impulse spike cannot raise a block median,
+            # nor an attenuated ping lower a transient reference.
+            stage_ds = work_ds
+            if cascade and work_or is not None:
+                stage_ds = work_ds.assign({var_name: work_ds[var_name].where(~work_or)})
             stage_mask, error, skipped = _run_stage_by_session(
-                stage_fn, work_ds, work_ref, pars, sessions, mask_unfeasible
+                stage_fn, stage_ds, work_ref, pars, sessions, mask_unfeasible
             )
             if stage_mask is None:
                 if error is None:
@@ -474,6 +493,9 @@ def build_full_mask(
                     logger.warning(f"Error computing {stage_name} mask for channel {ch}: {error}")
                     stage_status[stage_name][ch_label] = f"failed: {error}"
                 continue
+            if cascade:
+                removed = stage_mask.astype(bool)
+                work_or = removed if work_or is None else (work_or | removed)
             if skipped:
                 session_skips[stage_name][ch_label] = skipped
                 logger.warning(

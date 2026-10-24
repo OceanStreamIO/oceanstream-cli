@@ -80,18 +80,30 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("n_pings", "transient", "int", "pings", min=1, max=500,
               help="Pings each side of the running median."),
     FieldSpec("thr_dB", "transient", "float", "dB", min=0.0, max=40.0,
-              help="Primary threshold; the secondary one is max(2, thr - 3)."),
+              help="Primary threshold; the secondary one is thr_dB_stop, else max(2, thr - 3)."),
+    FieldSpec("thr_dB_stop", "transient", "float", "dB", required=False, min=0.0, max=40.0,
+              help="Fielding detector: the excess each step upward must keep."),
     FieldSpec("maxts", "transient", "float", "dB", min=-100.0, max=0.0,
               help="Upper bound on what counts as transient rather than signal."),
     FieldSpec("ref_min", "transient", "float", "m", required=False, min=0.0, max=6000.0,
               help="Deep reference band top. Unset derives it from the data."),
     FieldSpec("ref_max", "transient", "float", "m", required=False, min=0.0, max=6000.0,
               help="Deep reference band bottom. Unset derives it from the data."),
-    FieldSpec("detector", "transient", "enum", required=False, options=("fielding", "ryan"),
-              help="Fielding's upward-stepping detector (default) or Ryan et al.'s (2015) "
-                   "per-depth-bin comparison with neighbouring pings."),
+    FieldSpec("detector", "transient", "enum", required=False,
+              options=("fielding", "ryan", "ryan2015"),
+              help="Fielding's upward-stepping detector (default); Ryan et al.'s (2015) "
+                   "equation (3) on 5 m averages against a percentile of a resampling cell "
+                   "(ryan2015); or the per-depth-bin variant (ryan)."),
     FieldSpec("percentile", "transient", "float", required=False, min=0.0, max=100.0,
-              help="Ryan detector only: the percentile compared within each depth bin."),
+              help="Ryan detectors only: the percentile taken as the reference."),
+    FieldSpec("block_pings", "transient", "int", "pings", required=False, min=1, max=5000,
+              help="ryan2015 only: resampling cell width m, in pings."),
+    FieldSpec("block_height", "transient", "float", "m", required=False, min=0.5, max=500.0,
+              help="ryan2015 only: resampling cell height n."),
+    FieldSpec("threshold_db", "transient", "float", "dB", required=False, min=0.0, max=40.0,
+              help="ryan2015 only: margin over the cell's percentile (delta)."),
+    FieldSpec("vertical_bin_size", "transient", "float", "m", required=False,
+              min=0.1, max=50.0, help="ryan2015 only: height averaged in each ping."),
     # background
     FieldSpec("range_window", "background", "int_auto", "samples", min=1, max=500,
               options=("auto",), help="Range samples per noise-estimate block."),
@@ -254,9 +266,9 @@ def validate_frequency(freq: int, raw: Any) -> tuple[GroupParams, list[str]]:
         out[group] = resolved
 
     transient = out["transient"]
-    if "percentile" in transient and transient.get("detector") != "ryan":
+    if "percentile" in transient and transient.get("detector") not in ("ryan", "ryan2015"):
         del transient["percentile"]
-        notes.append(f"{label} transient.percentile is read only by the ryan detector and "
+        notes.append(f"{label} transient.percentile is read only by the ryan detectors and "
                      "was dropped")
 
     _check_cross_field(label, out)

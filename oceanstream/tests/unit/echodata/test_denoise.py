@@ -1021,3 +1021,175 @@ class TestRyanTransient:
         _, cubes = build_full_mask(ds, stages=stages)
         raised = cubes["transient"].isel(channel=0, ping_time=40, range_sample=slice(250, None))
         assert bool(raised.all())
+
+
+def _spike_sv(layout, n_pings=40, n_range=3000, dz=0.2, spike_ping=20, spike_m=(300.0, 310.0)):
+    """Exponential noise at -90 dB with a +20 dB spike over *spike_m* in one ping.
+
+    *layout* is how the range is carried: ``echo_range`` as a 1-D variable over
+    ``range_sample`` (the stage-4 Sv), a 2-D ``depth`` variable over ``range_sample``, or a
+    ``depth`` dimension in metres.
+    """
+    rng = np.random.default_rng(3)
+    metres = np.arange(n_range) * dz
+    linear = rng.exponential(1.0, (n_pings, n_range)) * 10 ** (-90 / 10)
+    rows = (metres >= spike_m[0]) & (metres < spike_m[1])
+    linear[spike_ping, rows] *= 100.0
+    sv = 10 * np.log10(linear)
+    times = pd.date_range("2022-07-04", periods=n_pings, freq="2s")
+    if layout == "depth_dim":
+        return xr.Dataset({"Sv": (("ping_time", "depth"), sv)},
+                          coords={"ping_time": times, "depth": metres}), rows
+    variables = {"Sv": (("ping_time", "range_sample"), sv)}
+    if layout == "echo_range":
+        variables["echo_range"] = (("range_sample",), metres)
+    else:
+        variables["depth"] = (("ping_time", "range_sample"), np.broadcast_to(metres, sv.shape).copy())
+    return xr.Dataset(variables, coords={"ping_time": times, "range_sample": np.arange(n_range)}), rows
+
+
+class TestImpulseNoiseDepth:
+    """The impulse filter flags a spike where it is, whatever carries the range."""
+
+    @pytest.mark.parametrize("layout", ["echo_range", "depth_2d", "depth_dim"])
+    def test_spike_is_flagged_at_its_own_depth(self, layout):
+        from oceanstream.echodata.denoise.impulse_noise import impulse_noise_mask
+
+        ds, rows = _spike_sv(layout)
+        mask, unfeasible = impulse_noise_mask(ds, {"vertical_bin_size": "5m", "ping_lags": [1, 2],
+                                                   "threshold_db": 10.0})
+        hit = mask.isel(ping_time=20).values
+        metres = np.arange(hit.size) * 0.2
+        assert hit[rows].all()
+        # Only the 5 m bins the spike falls in: nothing 1/dz too deep, nothing elsewhere.
+        assert metres[hit].min() >= 295.0 and metres[hit].max() < 315.0
+        assert not np.delete(mask.values, 20, axis=0).any()
+        # Pooling leaves no unfeasible band at the top of the column.
+        assert not unfeasible.isel(ping_time=slice(2, -2)).values.any()
+
+
+def _raised_ping_sv(n_pings=60, n_range=3000, dz=0.2, raised_ping=30, raise_db=10.0):
+    """Exponential noise at -90 dB over 0-600 m on ``range_sample``, one ping raised."""
+    rng = np.random.default_rng(5)
+    linear = rng.exponential(1.0, (n_pings, n_range)) * 10 ** (-90 / 10)
+    linear[raised_ping] *= 10 ** (raise_db / 10)
+    return xr.Dataset(
+        {"Sv": (("ping_time", "range_sample"), 10 * np.log10(linear)),
+         "echo_range": (("range_sample",), np.arange(n_range) * dz)},
+        coords={"ping_time": pd.date_range("2022-07-04", periods=n_pings, freq="2s"),
+                "range_sample": np.arange(n_range)},
+    )
+
+
+FIELDING = {"exclude_above": 100.0, "ref_min": 300.0, "ref_max": 500.0, "depth_bin": 5.0,
+            "n_pings": 5, "thr_dB": 3.0, "thr_dB_stop": 1.0, "maxts": -35.0}
+
+
+class TestFieldingMetres:
+    """Fielding's depths are metres on the stage-4 layout, not sample indices."""
+
+    def test_raised_ping_is_masked_from_exclude_above_down(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _raised_ping_sv()
+        mask, _ = transient_noise_mask(ds, FIELDING)
+        flagged = mask.isel(ping_time=30).values
+        metres = np.arange(flagged.size) * 0.2
+        # The whole column is raised, so the mask climbs to the exclusion depth and stops.
+        assert flagged[metres >= 100.0].all()
+        assert not flagged[metres < 99.0].any()
+        assert not np.delete(mask.values, 30, axis=0).any()
+
+    def test_stop_threshold_is_read(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        # Raised only in the reference band: the first step up falls short of any stop
+        # threshold, so the mask starts one step above the band.
+        ds = _raised_ping_sv(raise_db=0.0)
+        ds["Sv"][30, 1500:] += 10.0
+        mask, _ = transient_noise_mask(ds, FIELDING)
+        flagged = mask.isel(ping_time=30).values
+        top = np.flatnonzero(flagged)[0] * 0.2
+        assert 290.0 <= top < 300.0
+
+
+RYAN_2015 = {"exclude_above": 250.0, "block_pings": 50, "block_height": 20.0, "percentile": 15,
+             "threshold_db": 12.0, "vertical_bin_size": 5.0}
+
+
+class TestRyan2015Transient:
+    """Ryan et al. (2015) eq. (3): 5 m averages against the 15th percentile of their cell."""
+
+    def test_speckle_alone_is_not_flagged(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask_ryan2015
+
+        ds = _raised_ping_sv(n_pings=200, raise_db=0.0)
+        mask, unfeasible = transient_noise_mask_ryan2015(ds, RYAN_2015)
+        assert mask.values.mean() < 0.001
+        assert not bool(unfeasible.any())
+
+    def test_burst_is_flagged_at_its_depths_below_exclude_above(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask_ryan2015
+
+        ds = _raised_ping_sv(n_pings=200, raise_db=0.0)
+        ds["Sv"][60:80, 1000:2000] += 20.0   # 200-400 m for 20 pings, half above 250 m
+        mask, _ = transient_noise_mask_ryan2015(ds, RYAN_2015)
+        metres = np.arange(ds.sizes["range_sample"]) * 0.2
+        burst = mask.isel(ping_time=slice(60, 80)).values
+        assert burst[:, (metres >= 250.0) & (metres < 400.0)].all()
+        assert not burst[:, metres < 250.0].any()        # above exclude_above
+        assert not burst[:, metres >= 400.0].any()       # below the burst
+        assert mask.isel(ping_time=slice(0, 50)).values.mean() < 0.001
+
+    def test_preset_selects_it_for_the_transient_stage(self):
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _raised_ping_sv(n_pings=200, raise_db=0.0).expand_dims(channel=["a"])
+        ds["Sv"][0, 60:80, 1500:2000] += 20.0
+        stages = {"transient": {"fn": transient_noise_mask,
+                                "param_sets": {**RYAN_2015, "detector": "ryan2015"}}}
+        _, cubes = build_full_mask(ds, stages=stages)
+        assert bool(cubes["transient"].isel(channel=0, ping_time=70, range_sample=slice(1500, 2000)).all())
+
+    def test_unknown_detector_fails_the_stage(self):
+        from oceanstream.echodata.denoise import build_full_mask
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _raised_ping_sv().expand_dims(channel=["a"])
+        stages = {"transient": {"fn": transient_noise_mask, "param_sets": {**RYAN_2015, "detector": "x"}}}
+        _, status = build_full_mask(ds, stages=stages, return_stage_masks=False, return_status=True)
+        assert status["transient"]["a"].startswith("failed: unknown detector")
+
+
+class TestCascade:
+    """With ``cascade`` each filter sees Sv without what the filters before it removed."""
+
+    @pytest.mark.parametrize("cascade", [True, False])
+    def test_later_filter_sees_earlier_removals(self, cascade):
+        from oceanstream.echodata.config import DenoiseConfig
+        from oceanstream.echodata.denoise import build_full_mask
+
+        ds = _raised_ping_sv(n_pings=20, n_range=100, raised_ping=10).expand_dims(channel=["a"])
+        seen = {}
+
+        def first(part, pars):
+            mask = xr.zeros_like(part["Sv"], dtype=bool)
+            mask[5] = True
+            return mask, mask
+
+        def second(part, pars):
+            seen["nan"] = int(part["Sv"].isnull().sum())
+            return xr.zeros_like(part["Sv"], dtype=bool), xr.zeros_like(part["Sv"], dtype=bool)
+
+        stages = {"impulse": {"fn": first, "param_sets": {"x": 1}},
+                  "attenuation": {"fn": second, "param_sets": {"x": 1}}}
+        build_full_mask(ds, stages=stages, config=DenoiseConfig(cascade=cascade))
+        assert seen["nan"] == (100 if cascade else 0)
+
+    def test_cascade_is_read_from_the_toml(self, tmp_path):
+        from oceanstream.echodata.config import EchodataConfig
+
+        path = tmp_path / "preset.toml"
+        path.write_text("[echodata.denoise]\ncascade = true\nmethods = [\"impulse\"]\n")
+        assert EchodataConfig.from_toml(path).denoise.cascade is True

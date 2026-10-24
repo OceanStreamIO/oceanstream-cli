@@ -206,12 +206,18 @@ def impulse_noise_mask(
     Sv_lin = 10.0 ** (Sv_db / 10.0)
 
     if bin_sz > 1 and range_dim in Sv_lin.dims:
-        Sv_lin = (
-            Sv_lin
+        # Pool and spread back by sample position. ``range_values`` are metres while
+        # ``range_dim`` is often ``range_sample``, a sample index: interpolating at the
+        # metres put each bin about 1/dz bins too deep, so a spike was flagged far below
+        # where it was and the spike itself was kept.
+        index = np.arange(Sv_lin.sizes[range_dim])
+        pooled = (
+            Sv_lin.assign_coords({range_dim: index})
             .coarsen({range_dim: bin_sz}, boundary="trim")
             .mean(skipna=True)
-            .interp({range_dim: range_values}, method="nearest")
+            .interp({range_dim: index}, method="nearest", kwargs={"fill_value": "extrapolate"})
         )
+        Sv_lin = Sv_lin.copy(data=pooled.transpose(*Sv_lin.dims).data)
 
     Sv_sm_db = 10.0 * np.log10(Sv_lin)
 

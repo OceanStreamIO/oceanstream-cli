@@ -300,6 +300,10 @@ class DenoiseConfig:
     # Filter each recording session separately: pings further apart than this
     # (minutes) start a new session, so no window spans a recording gap.
     session_gap_minutes: Optional[float] = None
+    # Run the mask filters as a chain, in ``methods`` order: each sees Sv with what the
+    # filters before it removed already gone (Ryan et al. 2015). False: every filter
+    # sees the source Sv and their masks are OR-combined.
+    cascade: bool = False
     
     def get_params_for_frequency(
         self,
@@ -637,6 +641,7 @@ class EchodataConfig:
             ).get("num_side_pings", default_denoise.attenuation_side_pings),
             reference_ping_interval_s=denoise_data.get("reference_ping_interval_s"),
             session_gap_minutes=denoise_data.get("session_gap_minutes"),
+            cascade=bool(denoise_data.get("cascade", False)),
         )
         
         # Parse MVBS config

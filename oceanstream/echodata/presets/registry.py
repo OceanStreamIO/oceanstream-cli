@@ -88,6 +88,9 @@ class Preset:
     #: Pings further apart than this (minutes) start a new recording session, and each
     #: session is filtered on its own. None: one session per day.
     session_gap_minutes: float | None = None
+    #: Chain the mask filters in ``methods`` order (Ryan et al. 2015) instead of OR-combining
+    #: masks each made from the source Sv.
+    cascade: bool = False
 
     @property
     def frequencies(self) -> tuple[int, ...]:
@@ -112,6 +115,8 @@ class Preset:
         for name in ("reference_ping_interval_s", "session_gap_minutes"):
             if getattr(self, name) is not None:
                 content[name] = getattr(self, name)
+        if self.cascade:
+            content["cascade"] = True
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -133,6 +138,7 @@ class Preset:
             frequency_params=self.frequency_params(),
             reference_ping_interval_s=self.reference_ping_interval_s,
             session_gap_minutes=self.session_gap_minutes,
+            cascade=self.cascade,
         )
 
     def uncovered(self, channel_frequencies: Iterable[float]) -> list[int]:
@@ -288,7 +294,7 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  #
     if unknown:
         raise PresetError(f"unknown denoise method(s) {unknown}.")
     _expect_keys(denoise, {"methods", "use_frequency_specific", "frequency_params",
-                           "reference_ping_interval_s", "session_gap_minutes"},
+                           "reference_ping_interval_s", "session_gap_minutes", "cascade"},
                  "[echodata.denoise]")
     timing = {}
     for name in ("reference_ping_interval_s", "session_gap_minutes"):
@@ -297,6 +303,11 @@ def _build(data: dict[str, Any], *, source: Path | None, key: str) -> Preset:  #
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
                 raise PresetError(f"[echodata.denoise].{name} must be a positive number.")
             timing[name] = float(value)
+    cascade = denoise.get("cascade", False)
+    if not isinstance(cascade, bool):
+        raise PresetError("[echodata.denoise].cascade must be true or false.")
+    if cascade:
+        timing["cascade"] = True
 
     meta = data.get("preset")
     stem = source.stem if source else ""
@@ -396,7 +407,7 @@ def diff(base: Preset, other: Preset) -> list[str]:
                                  f"{new.get(name, 'unset')}")
     if base.methods != other.methods:
         lines.append(f"methods: {list(base.methods)} -> {list(other.methods)}")
-    for name in ("reference_ping_interval_s", "session_gap_minutes"):
+    for name in ("reference_ping_interval_s", "session_gap_minutes", "cascade"):
         if getattr(base, name) != getattr(other, name):
             lines.append(f"{name}: {getattr(base, name)} -> {getattr(other, name)}")
     return lines

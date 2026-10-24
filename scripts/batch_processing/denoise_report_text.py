@@ -249,12 +249,14 @@ should be read.
    oceanstream and echopype default their dedicated transient detector to
    Fielding-style methods (echopype's `detect_transient`, PR #1544). Ryan-style
    transient noise detection exists in both codebases but is not the default —
-   `transient_noise_mask_ryan` in oceanstream is implemented but unwired, and
-   echopype's is `mask_transient_noise`.
+   in oceanstream a preset picks it with `detector = "ryan2015"` (Ryan et al.'s
+   equation (3)) or `"ryan"` (a per-depth-bin variant), and echopype's is
+   `mask_transient_noise`.
 
 3. **The `percentile` parameter present in all three preset TOMLs is inert.**
-   It is a Ryan-TN parameter; the Fielding detector never reads it. It is
-   listed explicitly below rather than silently dropped.
+   It is a Ryan-TN parameter; the Fielding detector never reads it, and only a
+   preset that picks a Ryan detector uses it. It is listed explicitly below
+   rather than silently dropped.
 
 4. **Parameters are adapted, not reproduced.** The "Ryan-inspired" arm uses
    Ryan's parameter *values* where they transfer, with per-frequency variants
