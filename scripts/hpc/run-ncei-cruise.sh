@@ -18,7 +18,10 @@
 #       --days-file days.txt --batch 6 --dest hpc/products/RR2205 \
 #       --state ~/work/hpc-runs/rr2205/state.tsv \
 #       [--instrument EK80] [--container RR2205] [--cpus 16] [--time 04:00:00] \
-#       [--preset NAME] -- <process_from_raw.py flags>
+#       [--preset NAME] [--src s3://bucket/prefix/] -- <process_from_raw.py flags>
+#
+# --src reads the raw files from the project bucket (e.g. a PANGAEA mirror) instead of
+# NCEI's public bucket; --ship and --instrument are then not needed.
 # =============================================================================
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 SHIP=""; CRUISE=""; INSTRUMENT="EK80"; DAYS_FILE=""; BATCH=6; DEST=""; STATE=""
-CONTAINER=""; CPUS=16; WALLTIME="04:00:00"; PRESET=""; PIPELINE_ARGS=()
+CONTAINER=""; CPUS=16; WALLTIME="04:00:00"; PRESET=""; PIPELINE_ARGS=(); SRC=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --ship)        SHIP="${2:?}"; shift ;;
@@ -40,17 +43,23 @@ while [ $# -gt 0 ]; do
         --cpus)        CPUS="${2:?}"; shift ;;
         --time)        WALLTIME="${2:?}"; shift ;;
         --preset)      PRESET="${2:?}"; shift ;;
+        --src)         SRC="${2:?}"; shift ;;
         --)            shift; PIPELINE_ARGS=("$@"); break ;;
         -h|--help)     sed -n '2,22p' "$0" >&2; exit 0 ;;
         *)             fail "Unknown argument: $1" ;;
     esac
     shift
 done
-[ -n "$SHIP" ] && [ -n "$CRUISE" ] && [ -n "$DAYS_FILE" ] && [ -n "$DEST" ] && [ -n "$STATE" ] \
-    || fail "Specify --ship, --cruise, --days-file, --dest and --state"
+[ -n "$CRUISE" ] && [ -n "$DAYS_FILE" ] && [ -n "$DEST" ] && [ -n "$STATE" ] \
+    && { [ -n "$SHIP" ] || [ -n "$SRC" ]; } \
+    || fail "Specify --cruise, --days-file, --dest, --state, and --ship or --src"
 [ -f "$DAYS_FILE" ] || fail "No days file at $DAYS_FILE"
 CONTAINER="${CONTAINER:-$CRUISE}"
-SRC="s3://noaa-wcsd-pds/data/raw/${SHIP}/${CRUISE}/${INSTRUMENT}/"
+OPENDATA=()
+if [ -z "$SRC" ]; then
+    SRC="s3://noaa-wcsd-pds/data/raw/${SHIP}/${CRUISE}/${INSTRUMENT}/"
+    OPENDATA=(--opendata)
+fi
 # NCEI's bucket is in us-east-1; xfer.py's open-data client defaults elsewhere.
 export HPC_OPENDATA_REGION="${HPC_OPENDATA_REGION:-us-east-1}"
 # botocore applies AWS_ENDPOINT_URL to every client it makes, which would send the
@@ -111,7 +120,8 @@ for ((i = 0; i < ${#PENDING[@]}; i += BATCH)); do
 
     staged=()
     for day in "${todo[@]}"; do
-        if hpc_xfer pull --opendata --src "$SRC" --include "D${day//-/}-T*.raw" \
+        # Any prefix before the timestamp: NCEI names D<date>-T<time>, MFRI A2021_12-D...
+        if hpc_xfer pull "${OPENDATA[@]}" --src "$SRC" --include "*D${day//-/}-T*.raw" \
                 --dest "$HPC_RAW_DIR/$CRUISE/$day"; then
             staged+=("$day"); mark "$day" staged
         else
