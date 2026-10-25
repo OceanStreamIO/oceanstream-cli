@@ -86,6 +86,7 @@ Each denoise round used `--background-estimator quantile --seabed-mask --seabed-
 | 3 | guarded seabed detector | 07-12 has no seabed line; 07-09 unchanged (seabed on 100 % of pings) |
 | 4 | background noise capped at deep-water level + 6 dB | on 07-16, background removal at 18 kHz fell from 55 % to 5 % and at 38 kHz from 55 % to 34 %; pruning drops 0.3 % of pings |
 | 5 | echo integration as in [../echo-integration.md](../echo-integration.md); NASC on | day-mean MVBS 4–10 dB lower on 07-09 and 4–24 dB lower on 07-12 than with removed cells skipped; pruning drops 0–0.002 % of pings |
+| 6 | integration layer per channel (18 kHz from 30 m, 38 kHz from 15 m, others from 14 m; end where noise reaches −85 dB) | the near-surface 18 kHz band is gone from NASC; 120 kHz ends at about 220–300 m and 200 kHz at 130–145 m; the deep 18/38 kHz layer is kept (SNR 20–35 dB) |
 
 **Background noise over the shelf.** The noise estimate follows the seabed depth. At 38 kHz it is −151 to −157 dB re 1 W all day on 07-12. On 07-16 it is −147 to −153 dB where the seabed is about 200 m deep, and −133 to −140 dB where it is 59–112 m. On 07-09 it is −129 dB over a 65 m seabed and −155 dB over 180 m. Below a shallow seabed the 500 m range is filled with multiple echoes and reverberation, so no part of the ping is noise only.
 
@@ -99,12 +100,21 @@ In a two-hour window of 07-16 (seabed 70–150 m), background removal took 89 % 
 - **Just below the transducers.** 18 kHz Sv is −61 to −63 dB from 12 to 16 m depth on both days, falling to −82 dB by 30 m. The 10–20 m bin holds 62 % of 18 kHz NASC on 07-09 and 28 % of 38 kHz NASC.
 - **The end of the range on the deep day.** At 18, 38 and 200 kHz, 57–65 % of NASC lies below 450 m, rising towards the last bin. There the noise is amplified by the range correction, and noise samples that clear the SNR threshold by chance are integrated while those below it count as zero.
 
-A per-channel integration layer would exclude both: a start depth below the near-field and an end depth where the noise reaches the signal of interest. It is proposed and awaiting a decision.
+A per-channel integration layer would exclude both: a start depth below the near-field and an end depth where the noise reaches the signal of interest. Round 6 adds it (decided 2026-10-23).
 
 **Integration (decided 2026-10-23).** Cells removed as below the noise now count as zero in MVBS and NASC, artefact cells are left out, and pruning drops only pings with no measured water column or mostly artefacts; see [../echo-integration.md](../echo-integration.md). Zero is a lower bound where real signal dominates. RR2205 and SD_TPOS2023_v03 still carry the old integration until rerun from stage 6.
 
+## MareNostrum 5 run
+
+All 22 days ran on MareNostrum 5 (ehpc812, `highmem`, 16 CPUs per day) with the round 6 settings, `--sv-per-file --sv-workers 8 --delete-raw-after-convert --strict`, from 2026-10-24 10:07 to 2026-10-25 04:03 UTC. The driver was `scripts/hpc/run-ncei-cruise.sh --src s3://oceanstream-bucket/pangaea/IESSNS2021/raw/`, which streams each batch of days from the mirror to scratch over SSH and pushes the products back. Run files are in `~/work/hpc-runs/iessns2021/`.
+
+- **Products:** `s3://oceanstream-bucket/hpc/products/IESSNS2021/`, one folder per day, 201,280 objects, 91.9 GB, each day checked against scratch before scratch was freed.
+- **Time per day:** 21–81 min for power/angle days (07-24 the longest), 1 h 59 min for 07-08 and 2 h 22 min for 07-09 (complex). About 20 task-hours in all.
+- **One fix during the run.** 07-21 and 07-22 failed at NASC twice. Two raw files shared a ping time, so the joined Sv had a repeated `ping_time` and the distance join could not align. The join now keeps a repeated ping once (c89a46a); the safeguard that interpolates missing positions (2e32232) stays.
+
 ## Next
 
-1. Compare round 4 with round 3 on 07-16 and 07-09.
-2. Check the 18 kHz offset at the 07-08 switch.
-3. The MareNostrum 5 run. Group scratch had 179 GB free on 2026-10-23. Three power/angle days fit per batch (about 135 GB with their products), but the complex days (209 and 243 GB raw) do not fit whole.
+1. Delete the raw mirror (`pangaea/IESSNS2021/raw/`, about 1 TB), as decided before the run.
+2. Publish the products to STAC.
+3. Check the 18 kHz offset at the 07-08 switch, now that both complex days are processed.
+4. On 07-16, 55 % of 200 kHz NASC lies at 14–20 m: check whether it is plankton or near-field.
