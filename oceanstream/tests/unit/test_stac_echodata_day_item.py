@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from oceanstream.stac.echodata import _parse_echogram, build_day_item
+from oceanstream.stac.echodata import _parse_echogram, build_collection, build_day_item
 
 DAY = "2022-06-21"
 CH = "WBT-747014-15-ES38-7_ES-38-kHz"
@@ -79,3 +79,15 @@ def test_build_day_item_single_colormap(tmp_path: Path) -> None:
     assert variants == {"raw", "denoised", "denoised-pruned"}
     assert {a["oceanstream:colormap"] for a in echograms.values()} == {"ocean_r"}
     assert "echogram_short_pulse_raw_ocean-r_wbt-747014-15-es38-7-es-38-khz" in echograms
+
+
+def test_collection_metadata() -> None:
+    item = {"bbox": [-20.0, 63.0, -10.0, 66.0], "properties": {
+        "oceanstream:day": DAY, "start_datetime": f"{DAY}T00:00:00Z", "end_datetime": f"{DAY}T23:59:59Z"}}
+    meta = {"license": "CC-BY-4.0", "keywords": ["IESSNS"], "id": "ignored",
+            "links": [{"rel": "cite-as", "href": "https://doi.org/10.1594/PANGAEA.975782"}]}
+    coll = build_collection([item], "IESSNS2021", metadata=meta)
+    assert coll["license"] == "CC-BY-4.0" and coll["keywords"] == ["IESSNS"]
+    assert coll["id"] == "IESSNS2021"
+    assert [link["rel"] for link in coll["links"]] == ["item", "cite-as"]
+    assert build_collection([item], "X")["license"] == "proprietary"

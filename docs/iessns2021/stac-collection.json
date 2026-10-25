@@ -1,0 +1,23 @@
+{
+  "description": "Processed EK80 echosounder data (18, 38, 70, 120 and 200 kHz) from the Icelandic part of the International Ecosystem Summer Survey in Nordic Seas (IESSNS), 5-26 July 2021, R/V Árni Friðriksson. One Item per day, with Sv, denoised, masked and pruned Sv, MVBS and NASC as Zarr, denoising statistics and echograms. Processed by OceanStream on MareNostrum 5 (EuroHPC ehpc812) from the raw files published on PANGAEA. Calibration from the survey's calibration file; sound speed and absorption from the environment settings recorded in the raw files. In MVBS and NASC, cells below the noise count as zero (-999 dB in MVBS), artefact and seabed cells are left out, and each channel is integrated over its own layer (attribute integration_layers). Source data: Ólafsdóttir, Anna H; Pampoulie, Christophe (2025): Acoustic data from IESSNS north, northeast, south and west of Iceland in July 2021 [dataset]. PANGAEA, https://doi.org/10.1594/PANGAEA.975782 (CC BY 4.0).",
+  "license": "CC-BY-4.0",
+  "keywords": ["echosounder", "EK80", "Sv", "NASC", "MVBS", "IESSNS", "Iceland", "Nordic Seas", "pelagic fish", "mesopelagic"],
+  "providers": [
+    {"name": "Marine and Freshwater Research Institute (MFRI), Iceland", "roles": ["producer", "licensor"], "url": "https://www.hafogvatn.is/en"},
+    {"name": "PANGAEA", "roles": ["host"], "url": "https://doi.org/10.1594/PANGAEA.975782"},
+    {"name": "OceanStream", "roles": ["processor", "host"], "url": "https://github.com/OceanStreamIO"}
+  ],
+  "stac_extensions": ["https://stac-extensions.github.io/scientific/v1.0.0/schema.json"],
+  "sci:citation": "Ólafsdóttir, Anna H; Pampoulie, Christophe (2025): Acoustic data from IESSNS north, northeast, south and west of Iceland in July 2021 [dataset]. PANGAEA, https://doi.org/10.1594/PANGAEA.975782",
+  "sci:publications": [
+    {"doi": "10.1594/PANGAEA.942987", "citation": "Ólafsdóttir, Anna H; Pampoulie, Christophe (2022): Fish and invertebrate trawl sampling south and west of Iceland in July 2021 [dataset]. PANGAEA, https://doi.org/10.1594/PANGAEA.942987"},
+    {"doi": "10.1594/PANGAEA.966742", "citation": "Matthews, Charlotte Sarah; Kennedy, James; Ólafsdóttir, Anna H; Pampoulie, Christophe (2024): Size and otolith morphometrics of Notoscopelus kroyeri collected during IESSNS south of Iceland in July 2020 and 2021 [dataset]. PANGAEA, https://doi.org/10.1594/PANGAEA.966742"}
+  ],
+  "links": [
+    {"rel": "cite-as", "href": "https://doi.org/10.1594/PANGAEA.975782", "title": "Source dataset (raw EK80 files)"},
+    {"rel": "license", "href": "https://creativecommons.org/licenses/by/4.0/", "type": "text/html", "title": "CC BY 4.0"},
+    {"rel": "related", "href": "https://doi.org/10.1594/PANGAEA.942987", "title": "Trawl catches, July 2021"},
+    {"rel": "related", "href": "https://doi.org/10.1594/PANGAEA.966742", "title": "Notoscopelus kroyeri size and otoliths, 2020-2021"},
+    {"rel": "related", "href": "https://doi.org/10.1594/PANGAEA.955695", "title": "Centrolophus niger characteristics, 2017 and 2021"}
+  ]
+}

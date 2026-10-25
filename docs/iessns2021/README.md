@@ -112,9 +112,12 @@ All 22 days ran on MareNostrum 5 (ehpc812, `highmem`, 16 CPUs per day) with the 
 - **Time per day:** 21–81 min for power/angle days (07-24 the longest), 1 h 59 min for 07-08 and 2 h 22 min for 07-09 (complex). About 20 task-hours in all.
 - **One fix during the run.** 07-21 and 07-22 failed at NASC twice. Two raw files shared a ping time, so the joined Sv had a repeated `ping_time` and the distance join could not align. The join now keeps a repeated ping once (c89a46a); the safeguard that interpolates missing positions (2e32232) stays.
 
+## STAC
+
+The products are catalogued as STAC 1.0 at `https://oceanstream-bucket.s3.waw3-1.cloudferro.com/hpc/products/IESSNS2021/collection.json`: one Collection and one Item per day (`<day>/item.json`), all 23 documents valid under stac-validator. Each Item lists the day's Zarr stores, `denoise_stats.json` and 30 echograms as assets, with the track as a LineString, the five frequencies, the echopype version, the run id `mn5-iessns2021-20261024` and the day's Slurm metrics. The Collection takes its licence (CC BY 4.0, as the source), providers, citation and links to the source and supporting PANGAEA datasets from [stac-collection.json](stac-collection.json), passed with `publish_stac.py --metadata-json`. The STAC browser opens it at `https://project-oceanstream-576873-0.lab.dive.edito.eu/external/oceanstream-bucket.s3.waw3-1.cloudferro.com/hpc/products/IESSNS2021/collection.json`. The supporting files in `pangaea/IESSNS2021/aux/` are not public, so the Collection links to their DOIs. NASC GeoParquet, track tiles and the web-app import are not done yet.
+
 ## Next
 
-1. Delete the raw mirror (`pangaea/IESSNS2021/raw/`, about 1 TB), as decided before the run.
-2. Publish the products to STAC.
-3. Check the 18 kHz offset at the 07-08 switch, now that both complex days are processed.
-4. On 07-16, 55 % of 200 kHz NASC lies at 14–20 m: check whether it is plankton or near-field.
+1. Keep the raw mirror (`pangaea/IESSNS2021/raw/`, about 1 TB) for now; the EchoData was not kept, so it is the only local copy of angles and complex samples (decided 2026-10-25).
+2. Check the 18 kHz offset at the 07-08 switch, now that both complex days are processed.
+3. On 07-16, 55 % of 200 kHz NASC lies at 14–20 m: check whether it is plankton or near-field.

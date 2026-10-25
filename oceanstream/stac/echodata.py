@@ -334,8 +334,13 @@ def build_collection(
     description: Optional[str] = None,
     extra_assets: Optional[dict] = None,
     self_href: Optional[str] = None,
+    metadata: Optional[dict] = None,
 ) -> dict:
-    """Build a Collection from Items; extents are recomputed from the Items."""
+    """Build a Collection from Items; extents are recomputed from the Items.
+
+    ``metadata`` adds or overrides top-level fields (license, providers, keywords, ...);
+    its ``links`` are appended to the item links.
+    """
     bboxes = [i["bbox"] for i in items if i.get("bbox")]
     starts = sorted(i["properties"]["start_datetime"] for i in items if i["properties"].get("start_datetime"))
     ends = sorted(i["properties"]["end_datetime"] for i in items if i["properties"].get("end_datetime"))
@@ -364,6 +369,10 @@ def build_collection(
             for i in sorted(items, key=lambda i: i["properties"]["oceanstream:day"])
         ],
     }
+    if metadata:
+        meta = dict(metadata)
+        coll["links"].extend(meta.pop("links", []))
+        coll.update({k: v for k, v in meta.items() if k not in ("extent", "summaries", "type", "id")})
     if extra_assets:
         coll["assets"] = extra_assets
     if self_href:

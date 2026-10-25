@@ -16,7 +16,8 @@ Usage:
     python scripts/hpc/publish_stac.py --root s3://bucket/hpc/products/SD_X \\
         --cruise-id SD_X --days 2023-10-10 [--run-id R] [--metrics-json m.json]
     python scripts/hpc/publish_stac.py --root s3://bucket/hpc/products/SD_X \\
-        --cruise-id SD_X --collection-only [--asset tiles=https://...pmtiles]
+        --cruise-id SD_X --collection-only [--asset tiles=https://...pmtiles] \\
+        [--metadata-json collection-meta.json]
 
 S3 endpoint comes from --endpoint-url, AWS_S3_ENDPOINT or S3_ENDPOINT_URL.
 ``--public-base`` sets absolute self links (e.g. the bucket's HTTPS URL).
@@ -95,6 +96,8 @@ def main() -> int:
     p.add_argument("--skip-nasc-export", action="store_true")
     p.add_argument("--asset", action="append", default=[], help="Collection asset key=href (repeatable)")
     p.add_argument("--title", default="")
+    p.add_argument("--metadata-json", default="",
+                   help="JSON file of Collection fields (license, providers, keywords, links, ...)")
     p.add_argument("--public-base", default="", help="Public HTTPS URL of --root for absolute self links")
     p.add_argument("--endpoint-url", default="")
     p.add_argument("--colormap", default="ocean_r",
@@ -154,6 +157,7 @@ def main() -> int:
     coll = build_collection(
         items, args.cruise_id, title=args.title or None, extra_assets=extra or None,
         self_href=f"{public}/{COLLECTION_FILENAME}" if public else None,
+        metadata=json.loads(Path(args.metadata_json).read_text()) if args.metadata_json else None,
     )
     write_json(fs, old_path, coll)
     logger.info("%s written: %d item(s), extent %s", COLLECTION_FILENAME, len(items), coll["extent"])
