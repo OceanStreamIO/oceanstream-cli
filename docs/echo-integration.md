@@ -46,9 +46,17 @@ Each channel then covers its own water: NASC at 200 kHz and at 38 kHz describe d
 - **NASC.** Such bins are 0, and `NASC_log` is −inf.
 - **Provenance.** Both stores carry an `integration` attribute stating these rules.
 
+## Filling gaps in MVBS
+
+With `--mvbs-fill-gaps`, an MVBS bin left without data only because its cells were removed as artefacts gets the mean of the bins around it. The window is `--mvbs-fill-window` (default `11x3`): 11 ping-time bins wide by 3 range bins tall, much wider than thick, because backscatter changes far more with depth than along the track. The mean is linear and covers the bins in the window that hold a value: −999 dB counts as zero, other gaps and empty bins are left out. A gap with no such bin nearby stays NaN.
+
+Bins past a channel's range, above the surface exclusion or under the seabed are not gaps: nothing was measured there, and they stay NaN. Bins at −999 dB are measured, so they stay too. The store's `gap_filled` variable marks the filled bins, and its `gap_fill` attribute states the window. NASC is not filled: it integrates the cells, where the rules above already let a bin's other cells stand in for its artefacts. Finding the gaps bins the artefact cells a second time, so MVBS takes about twice as long with filling on.
+
 ## Pruning
 
 Stage 6b removes pings before MVBS and NASC. A ping is dropped when it has no measured water column, or when at least `--prune-artefact-threshold` (default 0.5) of its measured water column was removed as artefacts. Cells below the noise do not count against a ping: a ping of empty water stays, because the averages need its zeros. Among channels pinging together, one good channel keeps the ping; a channel that did not transmit in a ping has no say.
+
+Cross-talk detection then drops pings whose deep reference band (800–1200 m by default) is raised: mean Sv more than 6 dB above the day's median. It reads the Sv as measured, with artefact and seabed cells left out, because background removal leaves the band mostly empty and the mean of the few cells it keeps swings past the threshold. On SD_TPOS2023_v03 (2023-10-10, short pulse) reading the denoised Sv dropped 1,227 of 29,438 pings; reading the measured Sv dropped 64, in the noise bursts.
 
 Stores without per-cell flags (written before stage 5 kept flags) fall back to the older rule: drop pings with at least `--prune-threshold` (0.8) NaN.
 

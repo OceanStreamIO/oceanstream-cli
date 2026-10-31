@@ -31,9 +31,18 @@ def _robust_rmtree(path: Path, max_attempts: int = 5, delay: float = 0.5) -> Non
     exFAT on macOS occasionally reports directory entries that vanish
     between listdir() and unlink() — retry a few times before giving up.
     """
+    def _ignore_enoent(func, fullname, exc):
+        # AppleDouble sidecars (``._<name>``) are listed by the directory scan
+        # but disappear when their companion file is unlinked, so unlinking
+        # them afterwards raises ENOENT on every retry. The entry is already
+        # gone, which is the desired end state.
+        if isinstance(exc, FileNotFoundError):
+            return
+        raise exc
+
     for attempt in range(1, max_attempts + 1):
         try:
-            shutil.rmtree(path)
+            shutil.rmtree(path, onexc=_ignore_enoent)
             return
         except FileNotFoundError:
             # Either the whole path is gone (success) or a nested entry

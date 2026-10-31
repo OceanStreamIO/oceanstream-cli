@@ -195,6 +195,9 @@ class MVBSParams:
 
     range_bin: str = "1m"
     ping_time_bin: str = "10s"
+    #: (ping-time bins, range bins) of the window that fills bins emptied by artefact
+    #: removal; None leaves them empty.
+    fill_window: tuple[int, int] | None = None
 
 
 @dataclass

@@ -537,6 +537,24 @@ def extend_masked(
     return out
 
 
+def noise_floor_sv(resolved: xr.Dataset, opener: Opener) -> xr.DataArray:
+    """Sv as measured, for the pings of *resolved*, without its artefact and seabed cells.
+
+    Background removal leaves empty water mostly empty, so a statistic of the noise
+    floor itself (cross-talk) needs the values it took away: cells removed only as
+    below the noise get their source value back. A dataset that did not come from a
+    masked store has no source to go back to and gives its own Sv.
+    """
+    flags = resolved.get("denoise_flags")
+    if flags is None or PRODUCT_ATTRS_KEY not in flags.attrs:
+        return resolved["Sv"]
+    attrs = json.loads(flags.attrs[PRODUCT_ATTRS_KEY])
+    source = opener(attrs["sv_source_path"], attrs.get("sv_source_container") or None)
+    sv = source["Sv"].sel(ping_time=resolved["ping_time"])
+    removed_otherwise = 0xFF ^ FLAG_BITS["background"]
+    return sv.where((flags & removed_otherwise) == 0)
+
+
 def _resolve_pruned(store: xr.Dataset, opener: Opener) -> xr.Dataset:
     container = store.attrs.get("parent_container") or None
     parent = opener(store.attrs["parent_path"], container)

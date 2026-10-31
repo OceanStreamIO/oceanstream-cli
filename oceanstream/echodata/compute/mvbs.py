@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
-from oceanstream.echodata.products import open_product_uri
+from oceanstream.echodata.products import ARTEFACT_BITS, NO_BACKSCATTER_DB, open_product_uri
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -160,6 +160,73 @@ def compute_mvbs(
         ds_MVBS.to_zarr(output_path, mode="w")
 
     return ds_MVBS
+
+
+#: Default gap-filling window, in MVBS bins: (ping-time bins, range bins). Much wider
+#: than thick, because backscatter varies far more with depth than along the track.
+DEFAULT_FILL_WINDOW = (11, 3)
+
+
+def artefact_marker(sv_dataset: "xr.Dataset") -> "xr.Dataset":
+    """*sv_dataset* with Sv 0 dB on the cells removed as artefacts and NaN elsewhere.
+
+    Its MVBS is finite exactly where a bin held such a cell. That tells a bin the
+    denoisers emptied from one that never held a measurement: past the range, above
+    the surface exclusion or under the seabed (whose cells have no depth to bin by).
+    Needs ``denoise_flags``, as :func:`oceanstream.echodata.products.integration_view`
+    keeps them.
+    """
+    import xarray as xr
+
+    keep = [name for name in ("Sv", "depth", "echo_range") if name in sv_dataset.data_vars]
+    marker = sv_dataset[keep]
+    artefact = (sv_dataset["denoise_flags"] & ARTEFACT_BITS) != 0
+    marker["Sv"] = xr.zeros_like(sv_dataset["Sv"]).where(artefact)
+    return marker
+
+
+def fill_gaps(
+    sv: "xr.DataArray",
+    gaps: "xr.DataArray",
+    window: tuple[int, int] = DEFAULT_FILL_WINDOW,
+) -> tuple["xr.DataArray", "xr.DataArray"]:
+    """MVBS Sv with *gaps* replaced by the mean of the valid bins around them.
+
+    The window is *window* = (ping-time bins, range bins), centred on the gap; both
+    must be odd. The mean is taken in the linear domain over the bins in the window
+    that hold a value: bins at ``NO_BACKSCATTER_DB`` count as zero, NaN bins (other
+    gaps among them) are left out. A gap with no such bin in its window stays NaN, and
+    one whose window holds only zeros gets ``NO_BACKSCATTER_DB``.
+
+    Returns the filled Sv and a boolean mask of the bins that were filled.
+    """
+    import numpy as np
+    from scipy.ndimage import correlate
+
+    ping_bins, range_bins = window
+    if any(size < 1 or size % 2 == 0 for size in window):
+        raise ValueError(f"The fill window must be two odd sizes of at least 1, not {window}.")
+    range_dim = next(d for d in sv.dims if d not in ("channel", "ping_time"))
+    kernel = np.ones(
+        [ping_bins if d == "ping_time" else range_bins if d == range_dim else 1 for d in sv.dims]
+    )
+
+    values = sv.values
+    linear = np.where(values <= NO_BACKSCATTER_DB, 0.0, 10 ** (values / 10))
+    valid = np.isfinite(linear)
+    # A direct sum, not a running one, so a window of zeros sums to exactly zero.
+    total = correlate(np.where(valid, linear, 0.0), kernel, mode="constant")
+    count = correlate(valid.astype(float), kernel, mode="constant")
+
+    # Sums of ones and zeros, so the counts are exact.
+    filled = np.asarray(gaps.transpose(*sv.dims).values, dtype=bool) & (count >= 1)
+    mean = np.divide(total, count, out=np.zeros_like(total), where=filled)
+    with np.errstate(divide="ignore"):
+        mean_db = np.where(mean > 0, 10 * np.log10(mean), NO_BACKSCATTER_DB)
+    out = sv.copy(data=np.where(filled, mean_db, values))
+    mask = sv.copy(data=filled).rename("gap_filled")
+    mask.attrs = {"long_name": "Bin filled from the mean of its neighbours"}
+    return out, mask
 
 
 def compute_mvbs_denoised(

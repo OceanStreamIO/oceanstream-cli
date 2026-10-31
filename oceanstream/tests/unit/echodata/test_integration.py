@@ -165,3 +165,73 @@ class TestIntegrationLayer:
         out = integration_view(_day(), {38000: {"start_depth_m": 15.0}})
         assert json.loads(out.attrs["integration_layers"]) == {"38": {"start_depth_m": 15.0}}
 
+
+class TestMvbsGapFill:
+    @staticmethod
+    def grid(values):
+        """An MVBS-like Sv of one channel: rows are ping-time bins, columns depth bins."""
+        values = np.asarray(values, dtype=float)[None]
+        return xr.DataArray(values, dims=("channel", "ping_time", "depth"))
+
+    @staticmethod
+    def fill(sv, gaps, window):
+        from oceanstream.echodata.compute.mvbs import fill_gaps
+
+        mask = xr.DataArray(np.asarray(gaps, dtype=bool)[None], dims=sv.dims)
+        out, filled = fill_gaps(sv, mask, window)
+        return out.values[0], filled.values[0]
+
+    def test_a_gap_gets_the_linear_mean_of_its_neighbours(self):
+        sv = self.grid([[-60, -60, -60], [-60, np.nan, -70], [-60, -60, -60]])
+        gaps = [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
+        out, filled = self.fill(sv, gaps, (3, 3))
+        linear = (7 * 1e-6 + 1e-7) / 8
+        assert out[1, 1] == pytest.approx(10 * np.log10(linear))
+        assert filled[1, 1] and filled.sum() == 1
+
+    def test_bins_below_the_noise_count_as_zero_and_stay(self):
+        sv = self.grid([[-60, -999], [np.nan, -999], [-60, -999]])
+        out, _ = self.fill(sv, [[0, 0], [1, 0], [0, 0]], (3, 3))
+        assert out[1, 0] == pytest.approx(-60 + 10 * np.log10(2 / 5))  # 2 of 5 hold -60
+        assert (out[:, 1] == -999).all()
+
+    def test_a_gap_among_zeros_reads_as_no_backscatter(self):
+        sv = self.grid([[-999], [np.nan], [-999]])
+        out, _ = self.fill(sv, [[0], [1], [0]], (3, 1))
+        assert out[1, 0] == -999
+
+    def test_only_gaps_are_filled(self):
+        sv = self.grid([[-60, np.nan], [-60, np.nan], [np.nan, np.nan]])
+        # Column 1 is past the range; the last ping bin's gap has no neighbour with data
+        # inside a one-bin-wide window.
+        out, filled = self.fill(sv, [[0, 0], [0, 0], [1, 0]], (1, 1))
+        assert np.isnan(out[:, 1]).all() and np.isnan(out[2, 0])
+        assert not filled.any()
+
+    def test_the_window_is_wider_than_it_is_tall(self):
+        sv = self.grid([[-60, -80], [np.nan, -80], [-60, -80]])
+        out, _ = self.fill(sv, [[0, 0], [1, 0], [0, 0]], (3, 1))
+        assert out[1, 0] == pytest.approx(-60.0)  # the depth bin beside it is out of reach
+
+    def test_the_window_must_be_odd(self):
+        sv = self.grid([[-60]])
+        with pytest.raises(ValueError, match="odd"):
+            self.fill(sv, [[0]], (4, 3))
+
+    def test_only_bins_emptied_by_artefacts_are_gaps(self):
+        from oceanstream.echodata.compute import compute_mvbs
+        from oceanstream.echodata.compute.mvbs import artefact_marker, fill_gaps
+
+        ds = _day(n_pings=30, n_range=20)
+        _remove(ds, (0, slice(10, 20), slice(5, 10)), IMPULSE)  # one whole 10 s x 5 m bin
+        _remove(ds, (0, slice(None), slice(15, 20)), SEABED)
+        view = integration_view(ds)
+
+        mvbs = compute_mvbs(view, range_bin="5m", ping_time_bin="10s")["Sv"]
+        held = compute_mvbs(artefact_marker(view), range_bin="5m", ping_time_bin="10s")["Sv"]
+        gaps = mvbs.isnull() & held.notnull()
+        assert int(gaps.sum()) == 1 and bool(gaps[0, 1, 1])
+
+        out, filled = fill_gaps(mvbs, gaps, (3, 3))
+        assert float(out[0, 1, 1]) == pytest.approx(-60.0)
+        assert int(filled.sum()) == 1

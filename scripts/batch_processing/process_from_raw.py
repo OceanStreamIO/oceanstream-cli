@@ -2395,6 +2395,18 @@ def parse_args() -> PipelineConfig:
     # MVBS/NASC params
     parser.add_argument("--mvbs-range-bin", default="1m")
     parser.add_argument("--mvbs-ping-time-bin", default="10s")
+    parser.add_argument(
+        "--mvbs-fill-gaps",
+        action="store_true",
+        help="Fill MVBS bins emptied only by artefact removal with the mean of the bins "
+             "around them. Bins below the noise (-999 dB) stay as they are.",
+    )
+    parser.add_argument(
+        "--mvbs-fill-window",
+        default="11x3",
+        help="Gap-filling window as PINGxRANGE MVBS bins, both odd: ping-time bins wide, "
+             "range bins tall (default: 11x3).",
+    )
     parser.add_argument("--nasc-range-bin", default="10m")
     parser.add_argument("--nasc-dist-bin", default="0.5nmi")
 
@@ -2669,6 +2681,15 @@ def parse_args() -> PipelineConfig:
     # MVBS / NASC
     cfg.mvbs.range_bin = args.mvbs_range_bin
     cfg.mvbs.ping_time_bin = args.mvbs_ping_time_bin
+    if args.mvbs_fill_gaps:
+        window = args.mvbs_fill_window
+        try:
+            pings, ranges = (int(part) for part in window.lower().split("x"))
+        except ValueError:
+            parser.error(f"--mvbs-fill-window must be PINGxRANGE, e.g. 11x3, not {window!r}.")
+        if min(pings, ranges) < 1 or pings % 2 == 0 or ranges % 2 == 0:
+            parser.error(f"--mvbs-fill-window sizes must be odd and at least 1, not {window}.")
+        cfg.mvbs.fill_window = (pings, ranges)
     cfg.nasc.range_bin = args.nasc_range_bin
     cfg.nasc.dist_bin = args.nasc_dist_bin
 

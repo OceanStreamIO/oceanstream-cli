@@ -1261,6 +1261,7 @@ def prune_day(
     """
     import dask
     import numpy as np
+    from oceanstream.echodata import products
     from oceanstream.echodata.denoise import drop_noisy_pings
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
@@ -1292,7 +1293,16 @@ def prune_day(
             # Build reference-band mask; depth may be (channel, ping_time, range_sample)
             # or a broadcast of the 3D coord.
             ref_mask = (depth >= crosstalk_ref_depth_min) & (depth < crosstalk_ref_depth_max)
-            sv_ref = ds_pruned["Sv"].where(ref_mask)
+            # Measured on the Sv before background removal: after it the band keeps
+            # only the few cells above the noise, and their mean swings past the
+            # threshold from ping to ping.
+            sv_floor = products.noise_floor_sv(
+                ds_pruned,
+                lambda path, container: open_sv_from_azure(
+                    zarr_path=path, container=container or output_container
+                ),
+            )
+            sv_ref = sv_floor.where(ref_mask)
             # Reduce over range_sample: mean in LINEAR space (energy)
             linear = 10 ** (sv_ref / 10.0)
             reduce_dims = [d for d in linear.dims if d not in ("channel", "ping_time")]
@@ -1379,8 +1389,6 @@ def prune_day(
 
     # Pruning only selects pings, so the store records which ones survived
     # over its parent; readers rebuild the pruned Sv from that.
-    from oceanstream.echodata import products
-
     view = products.pruned_view_dataset(
         parent=ds,
         kept_ping_times=ds_pruned["ping_time"].values,
@@ -1484,11 +1492,15 @@ def compute_mvbs_day(
     save_netcdf: bool = False,
     surface_exclusion_depth: float = 0.0,
     integration_layers: dict | None = None,
+    fill_window: tuple[int, int] | None = None,
 ) -> str:
     """Compute MVBS for a day Zarr.
 
     Delegates to oceanstream.echodata.compute.compute_mvbs which uses
     echopype's flox reduction (xarray-2026 compatible).
+
+    With *fill_window* (ping-time bins, range bins), bins emptied only by artefact
+    removal get the mean of the bins around them (``compute.mvbs.fill_gaps``).
 
     Returns MVBS zarr path.
     """
@@ -1496,6 +1508,7 @@ def compute_mvbs_day(
     import numpy as np
     import xarray as xr
     from oceanstream.echodata.compute import compute_mvbs
+    from oceanstream.echodata.compute.mvbs import artefact_marker, fill_gaps
     from oceanstream.echodata.storage import open_sv_from_azure, save_dataset_to_azure
 
     logger.info("Computing MVBS %s/%s", day_key, category)
@@ -1506,6 +1519,13 @@ def compute_mvbs_day(
     ds = _ensure_position_coords(ds)
     # Cells below the noise count as zero, artefacts and the seabed are left out.
     ds = integration_view(ds, integration_layers)
+    # Taken before the surface exclusion, whose .where() turns the flags into floats.
+    marker = None
+    if fill_window is not None:
+        if "denoise_flags" in ds:
+            marker = artefact_marker(ds)
+        else:
+            logger.info("  No denoise flags: no MVBS gaps to fill")
 
     # Snapshot frequency_nominal BEFORE .where() — otherwise it gets broadcast
     # to all masked dims and turns into a NaN-filled 3D array.
@@ -1520,6 +1540,8 @@ def compute_mvbs_day(
     # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
+        if marker is not None:
+            marker = marker.where(marker["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
     with dask.config.set(scheduler="synchronous"):
@@ -1537,6 +1559,22 @@ def compute_mvbs_day(
         ds_mvbs.attrs["integration"] = INTEGRATION_NOTE
         if "integration_layers" in ds.attrs:
             ds_mvbs.attrs["integration_layers"] = ds.attrs["integration_layers"]
+
+    # Before the empty time bins go, so a window never reaches across a recording gap.
+    if marker is not None and "Sv" in ds_mvbs:
+        with dask.config.set(scheduler="synchronous"):
+            held_artefacts = compute_mvbs(marker, range_bin=range_bin, ping_time_bin=ping_time_bin)
+        sv, held = xr.align(ds_mvbs["Sv"], held_artefacts["Sv"], join="exact")
+        gaps = sv.isnull() & held.notnull()
+        ds_mvbs["Sv"], ds_mvbs["gap_filled"] = fill_gaps(sv, gaps, fill_window)
+        n_filled = int(ds_mvbs["gap_filled"].sum())
+        ds_mvbs.attrs["gap_fill"] = (
+            f"Bins emptied only by artefact removal hold the linear mean of the bins with a "
+            f"value in a {fill_window[0]} ping-time x {fill_window[1]} range bin window "
+            f"around them ({NO_BACKSCATTER_DB:g} dB counting as zero); gap_filled marks them."
+        )
+        logger.info("  Filled %d of %d MVBS gap bins from a %d x %d window",
+                    n_filled, int(gaps.sum()), *fill_window)
 
     # Drop fully-empty ping_time bins (0 raw pings fell in the 10s window,
     # typically at raw-file boundaries — visible as white vertical stripes
@@ -1595,6 +1633,7 @@ def run_mvbs_computation(
                 save_netcdf=cfg.save_mvbs_to_netcdf or cfg.save_to_netcdf,
                 surface_exclusion_depth=cfg.surface_exclusion_depth,
                 integration_layers=getattr(cfg, "integration_layers", None),
+                fill_window=cfg.mvbs.fill_window,
             )
             mvbs_zarrs[day_key][category] = mvbs_path
 
@@ -1774,38 +1813,22 @@ MAX_ECHOGRAM_PINGS = int(os.environ.get("OCEANSTREAM_MAX_ECHOGRAM_PINGS", "6000"
 
 
 def _thin_pings_for_plot(ds: "xr.Dataset", max_pings: int = MAX_ECHOGRAM_PINGS) -> "xr.Dataset":
-    """Average blocks of pings so a panel draws at most *max_pings* columns.
+    """Keep every k-th ping so a panel draws at most *max_pings* columns.
 
-    Sv is averaged in the linear domain, other numbers arithmetically; flags and masks
-    keep a cell set if any ping in the block had it. Display only: products are untouched.
+    A panel shows about one ping per pixel column either way. Picking pings keeps
+    each ping's own values and the pings the filters removed; a block mean would
+    smooth the speckle and fill removed pings from their neighbours. Display only:
+    products are untouched.
     """
     import numpy as np
-
-    import xarray as xr
 
     n = ds.sizes.get("ping_time", 0)
     if not max_pings or n <= max_pings:
         return ds
-    factor = int(np.ceil(n / max_pings))
-    # Whole windows per chunk, so each block averages within one chunk.
-    ds = ds.chunk({"ping_time": factor * max(1, 2000 // factor)})
-
-    def blocks(var):
-        return var.coarsen(ping_time=factor, boundary="trim", coord_func="min")
-
-    out = {}
-    for name, var in ds.data_vars.items():
-        if "ping_time" not in var.dims:
-            out[name] = var
-        elif name == "Sv":
-            out[name] = (10 * np.log10(blocks(10 ** (var / 10)).mean())).assign_attrs(var.attrs)
-        elif var.dtype.kind in "biu":
-            out[name] = blocks(var).max().astype(var.dtype).assign_attrs(var.attrs)
-        elif var.dtype.kind == "f":
-            out[name] = blocks(var).mean().assign_attrs(var.attrs)
-    thinned = xr.Dataset(out, attrs=ds.attrs)
-    logger.info("  Echogram drawn from %d pings in blocks of %d (%d columns)",
-                n, factor, thinned.sizes["ping_time"])
+    step = int(np.ceil(n / max_pings))
+    thinned = ds.isel(ping_time=slice(None, None, step))
+    logger.info("  Echogram drawn from 1 in %d of %d pings (%d columns)",
+                step, n, thinned.sizes["ping_time"])
     return thinned
 
 

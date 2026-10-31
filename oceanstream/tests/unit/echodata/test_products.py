@@ -274,6 +274,34 @@ class TestExtendMasked:
         assert products.extend_masked(source, steps, store_container="x") is None
 
 
+class TestNoiseFloorSv:
+    def test_below_noise_cells_get_their_source_value_back(self, layout, source):
+        root, _ = layout
+        opener = _local_opener(root)
+        denoised = opener("2023-10-10/2023-10-10--short_pulse--denoised.zarr", "preset-a")
+        floor = products.noise_floor_sv(denoised, opener)
+
+        flags = denoised["denoise_flags"].values
+        measured = source["Sv"].transpose(*floor.dims).values
+        background_only = flags == products.FLAG_BITS["background"]
+        assert background_only.any()
+        np.testing.assert_array_equal(floor.values[background_only], measured[background_only])
+        # Kept cells come back as measured too, not noise-subtracted.
+        np.testing.assert_array_equal(floor.values[flags == 0], measured[flags == 0])
+        assert np.isnan(floor.values[(flags & products.ARTEFACT_BITS) != 0]).all()
+
+    def test_follows_the_pings_left_after_pruning(self, layout):
+        root, _ = layout
+        opener = _local_opener(root)
+        denoised = opener("2023-10-10/2023-10-10--short_pulse--denoised.zarr", "preset-a")
+        kept = denoised.isel(ping_time=slice(5, 20))
+        floor = products.noise_floor_sv(kept, opener)
+        np.testing.assert_array_equal(floor["ping_time"].values, kept["ping_time"].values)
+
+    def test_a_plain_dataset_gives_its_own_sv(self, source):
+        assert products.noise_floor_sv(source, opener=None).identical(source["Sv"])
+
+
 def test_absolute_sources_need_no_container(tmp_path, source):
     """A writer that addresses stores by URL records no container at all."""
     sv_uri = str(tmp_path / "anywhere/sv.zarr")
