@@ -657,6 +657,16 @@ if typer:
                     typer.echo(f"  - {sensor.get('name', sensor.get('id', 'unknown'))}")
                 if len(metadata["sensors"]) > 5:
                     typer.echo(f"  ... and {len(metadata['sensors']) - 5} more")
+
+            # Auxiliary Argo profiles (from 'oceanstream campaign argo')
+            if metadata.get("argo_dataset"):
+                argo = metadata["argo_dataset"]
+                typer.echo()
+                typer.echo(
+                    f"Argo Profiles:      {argo.get('n_profiles', '?')} from "
+                    f"{argo.get('n_floats', '?')} floats (retrieved {argo.get('retrieved_at', '?')})"
+                )
+                typer.echo(f"                    {argo.get('path')}")
             
             typer.echo()
             
@@ -955,6 +965,218 @@ if typer:
                 traceback.print_exc()
             raise typer.Exit(code=1)
     
+    @campaign_app.command("argo")
+    def campaign_argo_command(
+        campaign_id: str = typer.Argument(
+            ..., help="Campaign identifier. Its bbox and dates bound the query unless overridden."
+        ),
+        output: Path = typer.Option(
+            None, "--output", "-o",
+            help="GeoParquet file to write (default: ./<campaign_id>_argo_<layout>.parquet)",
+        ),
+        bbox: str = typer.Option(
+            None, help="Bounding box 'minlon,minlat,maxlon,maxlat' (overrides the campaign's)"
+        ),
+        start_date: str = typer.Option(None, help="Start, ISO 8601 (overrides the campaign's)"),
+        end_date: str = typer.Option(
+            None,
+            help="End, ISO 8601; a date alone includes that whole day (overrides the campaign's)",
+        ),
+        buffer_km: float = typer.Option(0.0, help="Grow the bbox by this many km on every side"),
+        buffer_days: float = typer.Option(
+            0.0, help="Extend the time window by this many days at both ends"
+        ),
+        track: Path = typer.Option(
+            None,
+            help="Vessel track to match profiles against: GeoParquet file or dataset "
+                 "(e.g. geotrack output) or CSV with latitude, longitude and time",
+            exists=True,
+        ),
+        max_track_km: float = typer.Option(
+            None, help="Keep only profiles within this distance of the track (needs --track)"
+        ),
+        layout: str = typer.Option(
+            "profiles",
+            help="'profiles': one row per profile, variables as list columns; "
+                 "'levels': one row per depth level",
+        ),
+        qc: str = typer.Option(
+            "raw",
+            help="'raw': values as published, with QC flag columns; "
+                 "'good': values whose Argo QC flag is not 1, 2, 5 or 8 are null",
+        ),
+        chunk_days: float = typer.Option(10, help="Days per Argovis request"),
+        argovis_url: str = typer.Option(None, help="Argovis API base URL"),
+        argovis_key: str = typer.Option(
+            None, envvar="ARGOVIS_API_KEY", help="Argovis API key (raises the rate limit)"
+        ),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Query and summarise, write nothing"),
+        verbose: bool = typer.Option(False, "-v", help="Show each Argovis request"),
+    ) -> None:
+        """Collect the Argo float profiles inside a campaign's extent into GeoParquet.
+
+        Queries Argovis for every Argo profile within the campaign bbox and
+        dates, keeps all measured variables with their Argo QC flags and data
+        modes, and writes one GeoParquet file (EPSG:4326 points). With --track,
+        each profile also gets its distance and time offset to the closest
+        vessel position. Provenance, citation and licence go into the file
+        metadata (key "oceanstream:argo").
+
+        Example:
+
+            oceanstream campaign argo FK161229
+
+        Example (wider net, matched to the vessel track):
+
+            oceanstream campaign argo FK161229 --buffer-km 50 --buffer-days 5 \\
+                --track out/geoparquet/FK161229 --max-track-km 150
+
+        Example (no stored campaign; one row per depth level):
+
+            oceanstream campaign argo IESSNS2021 --bbox=-31.01,62.69,-6.47,69.32 \\
+                --start-date 2021-07-05 --end-date 2021-07-26 --layout levels
+        """
+        import urllib.error
+        from datetime import UTC, datetime, timedelta
+
+        from .argo import LAYOUTS, QC_MODES, build_argo_dataset, load_track
+        from .geotrack.campaign import load_campaign_metadata, update_campaign_metadata
+        from .sources.argovis import ArgovisClient
+
+        tag = "[campaign argo]"
+
+        def fail(message: str) -> None:
+            typer.echo(f"{tag} ERROR: {message}", err=True)
+            raise typer.Exit(code=1)
+
+        def parse_bound(value: str, *, end: bool = False) -> datetime:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(UTC).replace(tzinfo=None)
+            if end and len(str(value)) == 10:  # a bare date includes that whole day
+                dt += timedelta(days=1)
+            return dt
+
+        if layout not in LAYOUTS:
+            fail(f"--layout must be one of {', '.join(LAYOUTS)}")
+        if qc not in QC_MODES:
+            fail(f"--qc must be one of {', '.join(QC_MODES)}")
+        if max_track_km is not None and track is None:
+            fail("--max-track-km needs --track")
+
+        metadata = load_campaign_metadata(campaign_id) or {}
+        bbox_vals = metadata.get("bbox")
+        if bbox:
+            try:
+                bbox_vals = [float(x) for x in bbox.split(",")]
+            except ValueError:
+                fail(f"invalid --bbox {bbox!r}")
+            if len(bbox_vals) != 4:
+                fail("--bbox needs 4 values: minlon,minlat,maxlon,maxlat")
+        start_raw = start_date or metadata.get("start_date")
+        end_raw = end_date or metadata.get("end_date")
+        if not bbox_vals or not start_raw:
+            missing = " and ".join(
+                name for name, v in (("--bbox", bbox_vals), ("--start-date", start_raw)) if not v
+            )
+            if not metadata:
+                fail(
+                    f"campaign '{campaign_id}' not found. Pass {missing} (and --end-date), "
+                    "or create it with 'oceanstream campaign create'."
+                )
+            fail(f"campaign '{campaign_id}' has no extent; pass {missing}")
+        try:
+            start = parse_bound(start_raw)
+            end = (
+                parse_bound(end_raw, end=True) if end_raw
+                else datetime.now(UTC).replace(tzinfo=None)
+            )
+        except ValueError as e:
+            fail(f"invalid date: {e}")
+        if end <= start:
+            fail(f"end ({end:%Y-%m-%dT%H:%M:%SZ}) is not after start ({start:%Y-%m-%dT%H:%M:%SZ})")
+
+        track_obj = None
+        if track is not None:
+            try:
+                track_obj = load_track(track)
+            except (OSError, ValueError) as e:
+                fail(f"could not read track: {e}")
+            typer.echo(f"{tag} Track: {len(track_obj):,} positions from {track}")
+
+        typer.echo(
+            f"{tag} Querying Argovis: bbox {bbox_vals}, "
+            f"{start:%Y-%m-%dT%H:%M:%SZ} to {end:%Y-%m-%dT%H:%M:%SZ}"
+            + (f", +{buffer_km:g} km" if buffer_km else "")
+            + (f", ±{buffer_days:g} d" if buffer_days else "")
+        )
+
+        def progress(w0: datetime, w1: datetime, n: int) -> None:
+            if verbose:
+                typer.echo(f"{tag}   {w0:%Y-%m-%d %H:%M} to {w1:%Y-%m-%d %H:%M}: {n} profiles")
+
+        try:
+            ds = build_argo_dataset(
+                bbox_vals, start, end,
+                buffer_km=buffer_km,
+                buffer_days=buffer_days,
+                track=track_obj,
+                max_track_km=max_track_km,
+                chunk_days=chunk_days,
+                client=ArgovisClient(base_url=argovis_url, api_key=argovis_key),
+                campaign_id=campaign_id,
+                progress=progress,
+            )
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            fail(f"Argovis query failed: {e}")
+
+        pv = ds.provenance
+        if not ds.profiles:
+            typer.echo(f"{tag} No Argo profiles in this extent. Try --buffer-km or --buffer-days.")
+        else:
+            networks = ", ".join(f"{k} {v}" for k, v in sorted(pv["networks"].items()))
+            modes = ", ".join(f"{k} {v}" for k, v in sorted(pv["data_modes"].items()))
+            typer.echo(
+                f"{tag} ✓ {pv['n_profiles']} profiles from {pv['n_floats']} floats "
+                f"({networks}; data modes {modes})"
+            )
+            typer.echo(f"{tag}   Variables: {', '.join(pv['variables'])}")
+            if pv["nearest_track_km"]:
+                km = pv["nearest_track_km"]
+                typer.echo(
+                    f"{tag}   Distance to track: {km['min']}-{km['max']} km (median {km['median']})"
+                )
+            if pv["abs_time_offset_hours"]:
+                hrs = pv["abs_time_offset_hours"]
+                typer.echo(
+                    f"{tag}   Time from vessel passage: {hrs['min']}-{hrs['max']} h "
+                    f"(median {hrs['median']})"
+                )
+
+        if dry_run:
+            typer.echo(f"{tag} Dry run: nothing written")
+            return
+
+        output = output or Path(f"{campaign_id}_argo_{layout}.parquet")
+        ds.to_geoparquet(output, layout=layout, qc=qc)
+        size_kb = output.stat().st_size / 1024
+        typer.echo(f"{tag}   Wrote {output} ({layout} layout, qc={qc}, {size_kb:,.0f} KB)")
+
+        if metadata:
+            update_campaign_metadata(campaign_id, {"argo_dataset": {
+                "path": str(output.resolve()),
+                "layout": layout,
+                "qc": qc,
+                "n_profiles": pv["n_profiles"],
+                "n_floats": pv["n_floats"],
+                "bbox": pv["bbox"],
+                "time_start": pv["time_start"],
+                "time_end": pv["time_end"],
+                "retrieved_at": pv["retrieved_at"],
+            }})
+            typer.echo(f"{tag}   Recorded in campaign metadata (argo_dataset)")
+        typer.echo(f"{tag} Argo data are {pv['license']}; cite https://doi.org/{pv['doi']}")
+
     @process_app.callback()
     def process_callback(
         provider: str = typer.Option(None, help="Data provider type (applies to all subcommands). Auto-detected if not specified."),

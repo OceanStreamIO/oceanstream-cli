@@ -128,6 +128,15 @@ oceanstream process geotrack --input-dir raw_data --list-columns
 
 The CLI reads CSVs, auto-derives coarse 5° bins, and writes a partitioned GeoParquet dataset with metadata. Use `-v` for progress logs.
 
+### Argo profiles for a campaign
+
+```bash
+# Argo float profiles inside the campaign's bbox and dates, matched to the vessel track
+oceanstream campaign argo FK161229 --track out/geoparquet/FK161229
+```
+
+Writes one GeoParquet file of profiles with their QC flags, data modes, distance to the track and the Argo citation. See [docs/argo.md](../docs/argo.md) for the schema, layouts and loading into PostGIS.
+
 ### Processing Modules
 
 Oceanstream is organized into separate processing modules:
