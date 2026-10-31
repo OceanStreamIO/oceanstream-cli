@@ -63,6 +63,8 @@ def _lin2db(x: np.ndarray) -> np.ndarray:
 def _mov_nanmedian_1d(y: np.ndarray, win: int) -> np.ndarray:
     """Centered moving NaN-median on 1-D array (length T).
 
+    A window's median is that of its finite values, so a NaN ping (removed by an
+    earlier filter under the cascade) does not blank the medians around it.
     Uses ``bottleneck`` when available for speed, falls back to
     ``numpy.lib.stride_tricks.sliding_window_view``.
     """
@@ -73,7 +75,7 @@ def _mov_nanmedian_1d(y: np.ndarray, win: int) -> np.ndarray:
 
         if win <= 1 or y.size == 0:
             return y.copy()
-        out = bn.move_median(y, window=win, min_count=win)
+        out = bn.move_median(y, window=win, min_count=1)
         pre = win // 2
         post = win - 1 - pre
         core = out[win - 1:]
@@ -100,7 +102,8 @@ def _mov_nanmedian_1d(y: np.ndarray, win: int) -> np.ndarray:
 
 
 def _mov_nanmedian_rows(Y: np.ndarray, win: int) -> np.ndarray:
-    """Centered moving NaN-median along axis=1 for 2-D (S, T)."""
+    """Centered moving NaN-median along axis=1 for 2-D (S, T), NaN-tolerant like
+    :func:`_mov_nanmedian_1d`."""
     from numpy.lib.stride_tricks import sliding_window_view
 
     try:
@@ -112,7 +115,7 @@ def _mov_nanmedian_rows(Y: np.ndarray, win: int) -> np.ndarray:
         out = np.empty_like(Y)
         for i in range(S):
             row = Y[i]
-            tmp = bn.move_median(row, window=win, min_count=win)
+            tmp = bn.move_median(row, window=win, min_count=1)
             pre = win // 2
             post = win - 1 - pre
             core = tmp[win - 1:]

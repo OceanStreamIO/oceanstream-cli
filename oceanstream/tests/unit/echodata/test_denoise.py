@@ -1,5 +1,6 @@
 """Unit tests for oceanstream.echodata.denoise module."""
 
+import sys
 from pathlib import Path
 import pytest
 import numpy as np
@@ -1111,6 +1112,49 @@ class TestFieldingMetres:
         flagged = mask.isel(ping_time=30).values
         top = np.flatnonzero(flagged)[0] * 0.2
         assert 290.0 <= top < 300.0
+
+
+class TestFieldingNearRemovedPings:
+    """Under the cascade, pings removed by an earlier filter are NaN; they must not
+    blank the block medians of the pings around them."""
+
+    def test_raised_ping_next_to_a_removed_ping_is_masked(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _raised_ping_sv()
+        ds["Sv"][27] = np.nan
+        mask, _ = transient_noise_mask(ds, FIELDING)
+        flagged = mask.isel(ping_time=30).values
+        metres = np.arange(flagged.size) * 0.2
+        assert flagged[metres >= 100.0].all()
+        assert not flagged[metres < 99.0].any()
+
+    def test_step_up_stops_next_to_a_removed_ping(self):
+        from oceanstream.echodata.denoise.transient_noise import transient_noise_mask
+
+        ds = _raised_ping_sv(raise_db=0.0)
+        ds["Sv"][30, 1500:] += 10.0
+        ds["Sv"][33] = np.nan
+        mask, _ = transient_noise_mask(ds, FIELDING)
+        top = np.flatnonzero(mask.isel(ping_time=30).values)[0] * 0.2
+        assert 290.0 <= top < 300.0
+
+    def test_bottleneck_and_numpy_medians_agree(self, monkeypatch):
+        pytest.importorskip("bottleneck")
+        from oceanstream.echodata.denoise.transient_noise import (
+            _mov_nanmedian_1d,
+            _mov_nanmedian_rows,
+        )
+
+        rows = np.random.default_rng(3).exponential(1.0, (4, 200))
+        rows[:, 40:43] = np.nan
+        rows[1, 100:160] = np.nan   # a run longer than the window
+        fast = _mov_nanmedian_1d(rows[0], 11), _mov_nanmedian_rows(rows, 11)
+        monkeypatch.setitem(sys.modules, "bottleneck", None)
+        slow = _mov_nanmedian_1d(rows[0], 11), _mov_nanmedian_rows(rows, 11)
+        np.testing.assert_array_equal(fast[0], slow[0])
+        np.testing.assert_array_equal(fast[1], slow[1])
+        assert np.isfinite(fast[0][5:-5]).all()
 
 
 RYAN_2015 = {"exclude_above": 250.0, "block_pings": 50, "block_height": 20.0, "percentile": 15,
