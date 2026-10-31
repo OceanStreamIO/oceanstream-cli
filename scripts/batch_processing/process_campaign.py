@@ -179,8 +179,9 @@ def setup_dask_client(cfg: PipelineConfig):
         client = Client(cfg.dask.scheduler_address)
     else:
         logger.info(
-            "Starting LocalCluster with %d workers, %s memory each",
+            "Starting LocalCluster with %d workers x %d threads, %s memory each",
             cfg.dask.n_workers,
+            cfg.dask.threads_per_worker,
             cfg.dask.memory_limit,
         )
         cluster = LocalCluster(
@@ -706,7 +707,8 @@ def denoise_day(
                 )
 
         logger.info("  Loading dataset into memory (%s/%s)", day_key, category)
-        ds = ds.load()
+        # The read and decompression do parallelise: threads, still in this process.
+        ds = ds.load(scheduler="threads")
 
         # Filter chunks to only include dimensions present in the dataset
         valid_chunks = {k: v for k, v in chunks.items() if k in ds.dims}
@@ -1544,8 +1546,11 @@ def compute_mvbs_day(
             marker = marker.where(marker["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    with dask.config.set(scheduler="synchronous"):
-        ds_mvbs = compute_mvbs(ds, range_bin=range_bin, ping_time_bin=ping_time_bin)
+    # Threads in this process: nothing is shipped to the Dask worker, and the
+    # MVBS is held once computed, so the gap fill, the empty-bin check and both
+    # saves reuse it instead of each re-reading the day from storage.
+    with dask.config.set(scheduler="threads"):
+        ds_mvbs = compute_mvbs(ds, range_bin=range_bin, ping_time_bin=ping_time_bin).load()
 
     # Re-attach the clean 1D (channel,) frequency_nominal so plot code can label
     # channels correctly. compute_mvbs otherwise drops it; the pre-.where()
@@ -1562,8 +1567,10 @@ def compute_mvbs_day(
 
     # Before the empty time bins go, so a window never reaches across a recording gap.
     if marker is not None and "Sv" in ds_mvbs:
-        with dask.config.set(scheduler="synchronous"):
-            held_artefacts = compute_mvbs(marker, range_bin=range_bin, ping_time_bin=ping_time_bin)
+        with dask.config.set(scheduler="threads"):
+            held_artefacts = compute_mvbs(
+                marker, range_bin=range_bin, ping_time_bin=ping_time_bin
+            ).load()
         sv, held = xr.align(ds_mvbs["Sv"], held_artefacts["Sv"], join="exact")
         gaps = sv.isnull() & held.notnull()
         ds_mvbs["Sv"], ds_mvbs["gap_filled"] = fill_gaps(sv, gaps, fill_window)
@@ -1706,8 +1713,10 @@ def compute_nasc_day(
         ds = ds.where(ds["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    with dask.config.set(scheduler="synchronous"):
-        ds_nasc = compute_nasc(ds, range_bin=range_bin, dist_bin=dist_bin)
+    # compute_nasc returns a lazy result: held here, the empty-bin check and both
+    # saves no longer recompute it from the Sv stores three times over.
+    with dask.config.set(scheduler="threads"):
+        ds_nasc = compute_nasc(ds, range_bin=range_bin, dist_bin=dist_bin).load()
 
     # Re-attach the clean 1D (channel,) frequency_nominal.
     if freq_nominal is not None and "frequency_nominal" not in ds_nasc:
@@ -1843,8 +1852,105 @@ def _load_zarr_to_memory(zarr_path: str, container: str) -> "xr.Dataset":
 
     ds = open_sv_from_azure(zarr_path=zarr_path, container=container)
     ds = _thin_pings_for_plot(ds)
-    ds = ds.load()  # materialise all dask arrays → numpy
+    # Threads in this process: through the Dask worker the day would be read on one
+    # thread and pickled back.
+    ds = ds.load(scheduler="threads")  # materialise all dask arrays → numpy
     return ds
+
+
+# Agg rasterising a day's mesh is most of a panel's time and holds the GIL, so a
+# product's colormaps are drawn side by side in spawned processes: 4 panels took
+# 10.6 s that way against 36.5 s one after another. Only the drawing goes there;
+# uploads stay in this process, where the storage backend is patched in.
+_paint_pool = None
+_paint_pool_broken = False
+
+
+def _paint_executor(n_colormaps: int):
+    """The drawing processes, or None to draw here (one colormap, or a pool that died)."""
+    global _paint_pool
+    if n_colormaps < 2 or _paint_pool_broken:
+        return None
+    if _paint_pool is None:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        _paint_pool = ProcessPoolExecutor(
+            max_workers=n_colormaps, mp_context=mp.get_context("spawn")
+        )
+    return _paint_pool
+
+
+def _shutdown_paint_pool() -> None:
+    global _paint_pool
+    if _paint_pool is not None:
+        _paint_pool.shutdown(cancel_futures=True)
+        _paint_pool = None
+
+
+def _plot_colormaps(
+    ds: "xr.Dataset",
+    cmap_variants: list,
+    *,
+    file_base,
+    title,
+    upload_path: str,
+    output_container: str,
+    cruise_id: str,
+    qc_windows: list | None,
+    label: str,
+) -> list[str]:
+    """Draw one product in each colormap and upload the panels.
+
+    *file_base* and *title* map a colormap name to the file base name and the
+    title template. Returns the same names ``plot_and_upload_echograms`` does.
+    """
+    import shutil
+    from concurrent.futures.process import BrokenProcessPool
+
+    from oceanstream.echodata.plot.echogram import plot_sv_data
+    from oceanstream.echodata.storage import upload_file_to_blob
+
+    global _paint_pool_broken
+    pool = _paint_executor(len(cmap_variants))
+    jobs = []
+    try:
+        for cmap_name, cmap in cmap_variants:
+            kwargs = dict(
+                file_base_name=file_base(cmap_name),
+                output_path=tempfile.mkdtemp(prefix="echograms-"),
+                plot_var="Sv",
+                cmap=cmap,
+                title_template=title(cmap_name),
+                qc_windows=qc_windows,
+            )
+            jobs.append((cmap_name, kwargs, pool.submit(plot_sv_data, ds, **kwargs) if pool else None))
+
+        all_files = []
+        for cmap_name, kwargs, fut in jobs:
+            if fut is None:
+                paths = plot_sv_data(ds, **kwargs)
+            else:
+                try:
+                    paths = fut.result()
+                except BrokenProcessPool:
+                    if not _paint_pool_broken:
+                        logger.warning("  An echogram process died; drawing the rest in this one")
+                    _paint_pool_broken = True
+                    paths = plot_sv_data(ds, **kwargs)
+            files = []
+            for path in paths:
+                name = Path(path).name
+                upload_file_to_blob(str(path), f"{upload_path}/{name}", output_container)
+                files.append(f"{cruise_id}/{kwargs['file_base_name']}/{name}")
+            all_files.extend(files)
+            logger.info("  %s echograms [%s]: %d files", label, cmap_name, len(files))
+        return all_files
+    finally:
+        for _, kwargs, fut in jobs:
+            if fut is not None:
+                fut.cancel()
+            shutil.rmtree(kwargs["output_path"], ignore_errors=True)
 
 
 def generate_echograms_day(
@@ -1901,8 +2007,6 @@ def generate_echograms_day(
     """
     import gc
 
-    from oceanstream.echodata.plot.echogram import plot_and_upload_echograms
-
     read_container = source_container or output_container
 
     # Build the (name, cmap_value) list. Suffix only when multiple cmaps.
@@ -1916,6 +2020,9 @@ def generate_echograms_day(
         return f"{base}--{cmap_name}" if include_cmap_suffix else base
 
     all_files = []
+    common = dict(
+        output_container=output_container, cruise_id=cruise_id, qc_windows=qc_windows
+    )
 
     # Source Sv echograms — the pre-denoise reference panel. This is calibrated
     # Sv, not raw power, so it is labelled "source Sv (pre-denoise)".
@@ -1928,25 +2035,18 @@ def generate_echograms_day(
         try:
             logger.info("  Loading source zarr into memory: %s/%s", read_container, source_zarr)
             ds = _load_zarr_to_memory(source_zarr, read_container)
-            for cmap_name, cmap in cmap_variants:
-                files = plot_and_upload_echograms(
-                    ds,
-                    cruise_id=cruise_id,
-                    file_base_name=_fname(f"{day_key}--{category}", cmap_name),
-                    save_to_blobstorage=True,
-                    upload_path=f"{day_key}/raw",
-                    container_name=output_container,
-                    create_interactive_pages=False,
-                    cmap=cmap,
-                    plot_var="Sv",
-                    title_template=(
-                        f"{day_key} ({category}, source Sv (pre-denoise), cmap: {cmap_name})"
-                        " | {channel_label}"
-                    ),
-                    qc_windows=qc_windows,
-                )
-                all_files.extend(files)
-                logger.info("  Source echograms [%s]: %d files", cmap_name, len(files))
+            all_files += _plot_colormaps(
+                ds,
+                cmap_variants,
+                file_base=lambda c: _fname(f"{day_key}--{category}", c),
+                title=lambda c: (
+                    f"{day_key} ({category}, source Sv (pre-denoise), cmap: {c})"
+                    " | {channel_label}"
+                ),
+                upload_path=f"{day_key}/raw",
+                label="Source",
+                **common,
+            )
             ds.close()
             del ds
             gc.collect()
@@ -1960,22 +2060,15 @@ def generate_echograms_day(
             ds = _load_zarr_to_memory(denoised_zarr, output_container)
 
             # --- denoised echograms ---
-            for cmap_name, cmap in cmap_variants:
-                files = plot_and_upload_echograms(
-                    ds,
-                    cruise_id=cruise_id,
-                    file_base_name=_fname(f"{day_key}--{category}--denoised", cmap_name),
-                    save_to_blobstorage=True,
-                    upload_path=f"{day_key}/denoised",
-                    container_name=output_container,
-                    create_interactive_pages=False,
-                    cmap=cmap,
-                    plot_var="Sv",
-                    title_template=f"{day_key} ({category}, denoised, cmap: {cmap_name})" + " | {channel_label}",
-                    qc_windows=qc_windows,
-                )
-                all_files.extend(files)
-                logger.info("  Denoised echograms [%s]: %d files", cmap_name, len(files))
+            all_files += _plot_colormaps(
+                ds,
+                cmap_variants,
+                file_base=lambda c: _fname(f"{day_key}--{category}--denoised", c),
+                title=lambda c: f"{day_key} ({category}, denoised, cmap: {c})" + " | {channel_label}",
+                upload_path=f"{day_key}/denoised",
+                label="Denoised",
+                **common,
+            )
 
             ds.close()
             del ds
@@ -1991,22 +2084,15 @@ def generate_echograms_day(
             if ds_pruned.sizes.get("ping_time", 0) == 0:
                 logger.info("  Pruned zarr has no pings — skipping echogram")
             else:
-                for cmap_name, cmap in cmap_variants:
-                    files = plot_and_upload_echograms(
-                        ds_pruned,
-                        cruise_id=cruise_id,
-                        file_base_name=_fname(f"{day_key}--{category}--denoised-pruned", cmap_name),
-                        save_to_blobstorage=True,
-                        upload_path=f"{day_key}/pruned",
-                        container_name=output_container,
-                        create_interactive_pages=False,
-                        cmap=cmap,
-                        plot_var="Sv",
-                        title_template=f"{day_key} ({category}, pruned, cmap: {cmap_name})" + " | {channel_label}",
-                        qc_windows=qc_windows,
-                    )
-                    all_files.extend(files)
-                    logger.info("  Pruned echograms [%s]: %d files", cmap_name, len(files))
+                all_files += _plot_colormaps(
+                    ds_pruned,
+                    cmap_variants,
+                    file_base=lambda c: _fname(f"{day_key}--{category}--denoised-pruned", c),
+                    title=lambda c: f"{day_key} ({category}, pruned, cmap: {c})" + " | {channel_label}",
+                    upload_path=f"{day_key}/pruned",
+                    label="Pruned",
+                    **common,
+                )
             ds_pruned.close()
             del ds_pruned
             gc.collect()
@@ -2018,22 +2104,15 @@ def generate_echograms_day(
         try:
             logger.info("  Loading MVBS zarr into memory: %s", mvbs_zarr)
             ds = _load_zarr_to_memory(mvbs_zarr, output_container)
-            for cmap_name, cmap in cmap_variants:
-                files = plot_and_upload_echograms(
-                    ds,
-                    cruise_id=cruise_id,
-                    file_base_name=_fname(f"{day_key}--{category}--mvbs", cmap_name),
-                    save_to_blobstorage=True,
-                    upload_path=f"{day_key}/mvbs",
-                    container_name=output_container,
-                    create_interactive_pages=False,
-                    cmap=cmap,
-                    plot_var="Sv",
-                    title_template=f"{day_key} ({category}, cmap: {cmap_name})" + " | MVBS | {channel_label}",
-                    qc_windows=qc_windows,
-                )
-                all_files.extend(files)
-                logger.info("  MVBS echograms [%s]: %d files", cmap_name, len(files))
+            all_files += _plot_colormaps(
+                ds,
+                cmap_variants,
+                file_base=lambda c: _fname(f"{day_key}--{category}--mvbs", c),
+                title=lambda c: f"{day_key} ({category}, cmap: {c})" + " | MVBS | {channel_label}",
+                upload_path=f"{day_key}/mvbs",
+                label="MVBS",
+                **common,
+            )
             ds.close()
             del ds
             gc.collect()
@@ -2529,6 +2608,7 @@ def run_echogram_generation(
                 echogram_failures.append(f"{day_key}/{category}: {e}")
                 logger.warning("  Echogram failed for %s/%s: %s", day_key, category, e)
 
+    _shutdown_paint_pool()
     if echogram_failures and cfg.strict:
         raise StrictModeError("Echogram generation failed: " + "; ".join(echogram_failures))
 

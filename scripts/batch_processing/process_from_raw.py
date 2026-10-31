@@ -2253,6 +2253,11 @@ def parse_args() -> PipelineConfig:
     parser.add_argument("--n-workers", type=int, default=2)
     parser.add_argument("--memory-limit", default="6GB")
     parser.add_argument(
+        "--threads-per-worker", type=int, default=1,
+        help="Threads in each local Dask worker. Reads and decompression of a store's "
+             "chunks run in parallel across them (default: 1).",
+    )
+    parser.add_argument(
         "--parallel-workers", type=int, default=0,
         help="Max parallel stage workers (denoise, NASC, echograms). "
              "0 = auto-detect from available RAM (default: 0).",
@@ -2643,6 +2648,7 @@ def parse_args() -> PipelineConfig:
         cfg.dask.memory_limit = args.memory_limit
 
     # Common overrides
+    cfg.dask.threads_per_worker = max(1, args.threads_per_worker)
     cfg.resume_stage = args.resume_stage
     cfg.output_container = args.output_container or cfg.output_container
     cfg.sv_source_container = args.sv_source_container
@@ -2920,7 +2926,8 @@ def main():
     )
     logger.info("Depth offset: %.1fm", cfg.raw.depth_offset)
     logger.info(
-        "Dask: %d workers, %s each", cfg.dask.n_workers, cfg.dask.memory_limit
+        "Dask: %d workers x %d threads, %s each",
+        cfg.dask.n_workers, cfg.dask.threads_per_worker, cfg.dask.memory_limit,
     )
     logger.info(
         "Parallel stage workers: %d (0=auto → %d)",
