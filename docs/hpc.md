@@ -138,8 +138,22 @@ rebuilding Sv from them needs `oceanstream.echodata.products` (`open_product_uri
 
 ## Prefect
 
-`scripts/hpc/flows.py` defines `process-day-hpc` (sync, stage, submit, push,
-publish, and optionally tiles and cleanup) and `publish-campaign`. The flows
-run on a small process worker (`deploy/edito/Dockerfile.hpc-submitter`) that
-only drives the scripts over SSH. Register them with
-`python scripts/hpc/deploy_flows.py`.
+`scripts/hpc/flows.py` defines four flows. They run on a small process worker (`deploy/edito/Dockerfile.hpc-submitter`, pool `oceanstream-hpc`) that only drives the scripts over SSH. Register them with `python scripts/hpc/deploy_flows.py`. The pure logic (day selection, batching, guards) lives in `scripts/hpc/flowlib.py`, which has unit tests.
+
+| Flow | What it does |
+|---|---|
+| `process-day-hpc` | One day: sync, stage, submit, push, publish, and optionally tiles and cleanup. |
+| `process-batch-hpc` | Many days as one Slurm job array, then push, publish, tiles and the web app import; frees the batch's products and raw from scratch. |
+| `process-campaign-hpc` | A whole campaign as a sequence of `process-batch-hpc` batches (`batch_size`, default 40), so scratch holds one batch at a time. Before each batch it compares the batch's raw size in S3 (times two) with the free scratch quota from `bsc_quota` and stops cleanly if it is short. |
+| `publish-campaign` | Rebuilds a campaign's Collection and track tiles. |
+
+Parameters shared by the batch and campaign flows:
+
+- `cruise_id`, and `days` or `start_date`/`end_date` (inclusive). Days without raw data under `hpc/raw/<cruise_id>/` are skipped.
+- `reprocess`: without it, days that already have an `item.json` are skipped. With it, every day is redone; add `reprocess_since` (an ISO time, UTC if no zone is given) and a day whose `item.json` was written after that time counts as redone. That is how an in-place reprocess resumes: re-run with the same `reprocess_since`.
+- `preset`: a library key, or, with `preset_toml`, the key under which that TOML text is shipped to the cluster (`$HPC_ROOT/presets/<preset>.toml`). The cluster keeps one file per name, so the key must change with the text; the web app sends Denoise Lab presets as `denoise-lab.<key>.<sha8>`.
+- `pipeline_args`: processing flags for `process_from_raw.py`. The run mechanics in `flowlib.HPC_RUN_ARGS` always come first; with no `pipeline_args` the TPOS reference flags follow.
+- `campaign_slug`, `campaign_name`, `provider`: import the Collection into the web app after each batch. `web_url` names the web app; it must be `OCEANSTREAM_WEB_URL` or listed in `OCEANSTREAM_WEB_URLS`, because the worker sends its ingest key there.
+- `dry_run`: stage and submit nothing; the campaign flow returns the rendered batch script of its first batch.
+
+Raw on scratch is a copy of S3: `stage-raw.sh --cleanup` removes staged days, and `quota.sh` prints `bsc_quota` from the transfer host.

@@ -13,10 +13,16 @@ process_day_hpc legs:
   6. cleanup             free the day's scratch
 
 process_batch_hpc runs the same legs for many days as one Slurm job array and
-then imports the Collection into the web app.
+then imports the Collection into the web app. process_campaign_hpc runs a whole
+campaign as a sequence of such batches, so scratch only holds one batch at a
+time.
+
+A preset comes from the library by key, or inline as TOML (preset_toml): the
+web app sends Denoise Lab presets that way.
 
 Site settings come from the environment (see scripts/hpc/site.env.example).
-The web app import needs OCEANSTREAM_WEB_URL and OCEANSTREAM_INGEST_API_KEY.
+The web app import needs OCEANSTREAM_WEB_URL and OCEANSTREAM_INGEST_API_KEY;
+a run may name another web app only if OCEANSTREAM_WEB_URLS lists it.
 """
 
 from __future__ import annotations
@@ -27,9 +33,14 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from prefect import flow, get_run_logger, task
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import flowlib  # noqa: E402
+from flowlib import DAY_RE, NAME_RE  # noqa: E402
 
 APP = Path(os.environ.get("OCEANSTREAM_SOURCE_PATH", Path(__file__).resolve().parents[2]))
 SCRIPTS = APP / "scripts" / "hpc"
@@ -42,25 +53,11 @@ JOB_TIMEOUT_S = 36 * 60 * 60
 PUSH_TIMEOUT_S = 3 * 60 * 60
 PUBLISH_TIMEOUT_S = 30 * 60
 
-DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+# Scratch a batch needs per GB of its raw input: the raw itself, the per-job
+# work stores and the products until they are pushed.
+SCRATCH_PER_RAW_GB = 2.0
 
-# Flags of the SD_TPOS2023_v03 reference runs (denoise-lab preset tpos-sd-2023).
-DEFAULT_PIPELINE_ARGS = [
-    "--expected-categories", "short_pulse,long_pulse", "--force",
-    "--colormaps", "ocean_r,jet",
-    "--surface-exclusion-depth", "1.9", "--sv-clip-max-db", "-10.0", "--prune-threshold", "0.8",
-    "--mvbs-range-bin", "1m", "--mvbs-ping-time-bin", "10s",
-    "--nasc-range-bin", "10m", "--nasc-dist-bin", "0.5nmi",
-    "--skip-combined-echograms", "--save-mvbs-netcdf", "--save-nasc-netcdf",
-    "--skip-pmtiles", "--skip-campaign-echograms",
-]
-
-
-def _check(value: str, pattern: re.Pattern, what: str) -> str:
-    if not pattern.match(value):
-        raise ValueError(f"Invalid {what}: {value!r}")
-    return value
+_check = flowlib.check
 
 
 def _run(cmd: list[str], timeout: int, check: bool = True) -> str:
@@ -95,6 +92,22 @@ def _products_root(container: str) -> str:
     return f"s3://{bucket}/{prefix}/{container}"
 
 
+@contextmanager
+def _preset_config(preset: str, preset_toml: str):
+    """Path of the preset file to ship: the library's, or *preset_toml* written out."""
+    if not preset_toml:
+        path = PRESETS / f"{preset}.toml"
+        if not path.is_file():
+            raise ValueError(f"No preset {preset!r} in {PRESETS}; give preset_toml for a preset "
+                             "that is not in the library.")
+        yield str(path)
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / flowlib.preset_file_name(preset)
+        path.write_text(preset_toml, encoding="utf-8")
+        yield str(path)
+
+
 @task(name="hpc-sync-code", retries=1, retry_delay_seconds=30)
 def sync_code() -> None:
     """Ship the pipeline source to the cluster, when this host has it.
@@ -118,15 +131,29 @@ def stage(cruise_id: str, days: list[str], gps: bool) -> None:
         _sh("stage-raw.sh", "--cruise", cruise_id, "--gps", timeout=STAGE_TIMEOUT_S)
 
 
+@task(name="hpc-unstage", retries=1, retry_delay_seconds=60)
+def unstage(cruise_id: str, days: list[str]) -> None:
+    """Remove the days' raw input from scratch; S3 keeps the original."""
+    _sh("stage-raw.sh", "--cruise", cruise_id, "--days", ",".join(days), "--cleanup",
+        timeout=SYNC_TIMEOUT_S)
+
+
+@task(name="hpc-scratch-free", retries=2, retry_delay_seconds=60)
+def scratch_free_gb() -> float:
+    used, quota = flowlib.parse_bsc_quota(_sh("quota.sh", timeout=300))
+    return quota - used
+
+
 @task(name="hpc-submit-day")
 def submit_day(cruise_id: str, day: str, container: str, cpus: int, constraint: str,
-               qos: str, walltime: str, preset: str, gps: bool, pipeline_args: list[str]) -> str:
+               qos: str, walltime: str, preset: str, config: str, gps: bool,
+               pipeline_args: list[str]) -> str:
     args = ["--cruise", cruise_id, "--day", day, "--output-container", container,
             "--cpus", str(cpus), "--constraint", constraint, "--time", walltime,
-            "--denoise-config", str(PRESETS / f"{preset}.toml"), "--preset-key", preset]
+            "--denoise-config", config, "--preset-key", preset]
     if qos:
         args += ["--qos", qos]
-    extra = list(pipeline_args)
+    extra = flowlib.pipeline_args(pipeline_args)
     if gps:
         # Same default as lib.sh: $HPC_SCRATCH/oceanstream/gps/<cruise>.
         gps_root = os.environ.get("HPC_GPS_DIR") or f"{os.environ['HPC_SCRATCH']}/oceanstream/gps"
@@ -216,8 +243,9 @@ def process_day_hpc(
     sync_code()
     if not skip_stage:
         stage(cruise_id, [day], gps)
-    jobid = submit_day(cruise_id, day, container, cpus, constraint, qos, walltime, preset, gps,
-                       pipeline_args if pipeline_args is not None else DEFAULT_PIPELINE_ARGS)
+    with _preset_config(preset, "") as config:
+        jobid = submit_day(cruise_id, day, container, cpus, constraint, qos, walltime, preset,
+                           config, gps, pipeline_args)
     metrics = job_metrics(jobid)
     result = {"jobid": jobid, "metrics": metrics}
     if skip_push:
@@ -232,7 +260,7 @@ def process_day_hpc(
 
 
 def _pipeline_extra(cruise_id: str, gps: bool, pipeline_args: list[str] | None) -> list[str]:
-    extra = list(pipeline_args if pipeline_args is not None else DEFAULT_PIPELINE_ARGS)
+    extra = flowlib.pipeline_args(pipeline_args)
     if gps:
         # Same default as lib.sh: $HPC_SCRATCH/oceanstream/gps/<cruise>.
         gps_root = os.environ.get("HPC_GPS_DIR") or f"{os.environ['HPC_SCRATCH']}/oceanstream/gps"
@@ -242,21 +270,26 @@ def _pipeline_extra(cruise_id: str, gps: bool, pipeline_args: list[str] | None) 
 
 @task(name="hpc-submit-array")
 def submit_array(cruise_id: str, days: list[str], container: str, cpus: int, constraint: str,
-                 qos: str, walltime: str, preset: str, gps: bool, pipeline_args: list[str] | None,
-                 array_limit: int) -> str:
+                 qos: str, walltime: str, preset: str, config: str, gps: bool,
+                 pipeline_args: list[str] | None, array_limit: int,
+                 render_only: bool = False) -> str:
     """One Slurm job array, one day per task. Returns the array job id.
 
     Failed tasks do not raise here: the caller reads per-task states and
-    carries on with the days that completed.
+    carries on with the days that completed. With *render_only*, nothing is
+    copied or submitted and the rendered batch script is returned instead.
     """
     args = ["--cruise", cruise_id, "--days", ",".join(days), "--array-limit", str(array_limit),
             "--output-container", container, "--cpus", str(cpus), "--constraint", constraint,
-            "--time", walltime, "--denoise-config", str(PRESETS / f"{preset}.toml"),
-            "--preset-key", preset]
+            "--time", walltime, "--denoise-config", config, "--preset-key", preset]
     if qos:
         args += ["--qos", qos]
+    if render_only:
+        args.append("--render-only")
     out = _sh("submit-day.sh", *args, "--", *_pipeline_extra(cruise_id, gps, pipeline_args),
-              timeout=JOB_TIMEOUT_S, check=False)
+              timeout=JOB_TIMEOUT_S, check=render_only)
+    if render_only:
+        return out
     m = re.search(r"^jobid=(\d+)$", out, re.M)
     if not m:
         raise RuntimeError("submit-day.sh reported no job id")
@@ -283,19 +316,43 @@ def available_days(cruise_id: str) -> set[str]:
 
 
 @task(name="published-days", retries=2, retry_delay_seconds=30)
-def published_days(dest_container: str) -> set[str]:
-    """Days that already have an item.json, i.e. were pushed and published."""
+def published_days(dest_container: str) -> dict:
+    """Days that already have an item.json (pushed and published), with its write time."""
+    from datetime import UTC
+
     url_to_fs, so = _s3fs()
     fs, root = url_to_fs(_products_root(dest_container), **so)
-    return {p.rstrip("/").split("/")[-2] for p in fs.glob(f"{root}/*/item.json")}
+    out = {}
+    for path, info in fs.glob(f"{root}/*/item.json", detail=True).items():
+        t = info.get("LastModified") or info.get("mtime")
+        if t is not None and t.tzinfo is None:
+            t = t.replace(tzinfo=UTC)
+        out[path.rstrip("/").split("/")[-2]] = t
+    return out
+
+
+@task(name="raw-size-gb", retries=2, retry_delay_seconds=30)
+def raw_size_gb(cruise_id: str, days: list[str]) -> float:
+    """Size of the days' raw input in S3."""
+    url_to_fs, so = _s3fs()
+    bucket = os.environ["OCEANSTREAM_S3_BUCKET"]
+    prefix = os.environ.get("OCEANSTREAM_S3_RAW_PREFIX", "hpc/raw")
+    fs, root = url_to_fs(f"s3://{bucket}/{prefix}/{cruise_id}", **so)
+    return sum(fs.du(f"{root}/{d}") for d in days) / 1024 ** 3
+
+
+def _web_url(requested: str) -> str:
+    return flowlib.web_url(requested, os.environ.get("OCEANSTREAM_WEB_URLS", ""),
+                           os.environ.get("OCEANSTREAM_WEB_URL", ""))
 
 
 @task(name="import-webapp", retries=2, retry_delay_seconds=60)
-def import_webapp(dest_container: str, campaign_slug: str, name: str, provider: str) -> dict:
+def import_webapp(dest_container: str, campaign_slug: str, name: str, provider: str,
+                  web_url: str = "") -> dict:
     """Register the Collection with the web app (idempotent upsert)."""
     import httpx
 
-    base = os.environ.get("OCEANSTREAM_WEB_URL", "").rstrip("/")
+    base = _web_url(web_url)
     key = os.environ.get("OCEANSTREAM_INGEST_API_KEY", "")
     if not base or not key:
         raise RuntimeError("OCEANSTREAM_WEB_URL and OCEANSTREAM_INGEST_API_KEY must be set")
@@ -318,27 +375,36 @@ def process_batch_hpc(
     start_date: str = "",
     end_date: str = "",
     reprocess: bool = False,
+    reprocess_since: str = "",
     array_limit: int = 20,
     cpus: int = 8,
     constraint: str = "highmem",
     qos: str = "",
     walltime: str = "02:00:00",
     preset: str = "tpos-sd-2023",
+    preset_toml: str = "",
     gps: bool = True,
     pipeline_args: list[str] | None = None,
     campaign_slug: str = "",
     campaign_name: str = "",
     provider: str = "saildrone",
+    web_url: str = "",
     cleanup_scratch: bool = True,
+    dry_run: bool = False,
 ) -> dict:
     """Process many days as one Slurm job array, then publish and import them.
 
     Give *days*, or *start_date*/*end_date* (inclusive). Days that already
     have a published item.json are skipped unless *reprocess* is set, so a
-    re-run resumes. Raw input must be mirrored to S3 first (mirror_raw_to_s3.py).
-    """
-    from datetime import date, timedelta
+    re-run resumes; with *reprocess_since* (ISO time) a day published after it
+    counts as redone, so an in-place reprocess resumes too. Raw input must be
+    mirrored to S3 first (mirror_raw_to_s3.py).
 
+    *preset_toml* ships that text as the preset, under the key *preset*; the
+    key must change whenever the text does. *web_url* picks the web app to
+    import into from OCEANSTREAM_WEB_URLS. *dry_run* stages and submits
+    nothing and returns the rendered batch script.
+    """
     from prefect.runtime import flow_run
 
     log = get_run_logger()
@@ -346,12 +412,9 @@ def process_batch_hpc(
     _check(preset, NAME_RE, "preset")
     if campaign_slug:
         _check(campaign_slug, NAME_RE, "campaign_slug")
-    if days is None:
-        if not (start_date and end_date):
-            raise ValueError("Give days, or start_date and end_date.")
-        d0, d1 = date.fromisoformat(start_date), date.fromisoformat(end_date)
-        days = [(d0 + timedelta(n)).isoformat() for n in range((d1 - d0).days + 1)]
-    days = sorted({_check(d, DAY_RE, "day") for d in days})
+    if campaign_slug and not dry_run:
+        _web_url(web_url)  # refuse a bad target before hours of cluster time
+    days = flowlib.expand_days(days, start_date, end_date)
     # A cruise has gaps: keep only days whose raw data is mirrored to S3,
     # otherwise the cluster has nothing to process and the array is refused.
     have = available_days(cruise_id)
@@ -363,19 +426,25 @@ def process_batch_hpc(
     dest = f"{os.environ.get('OCEANSTREAM_S3_PRODUCTS_PREFIX', 'hpc/products')}/{cruise_id}"
     run_id = str(flow_run.get_id() or "manual")
 
-    if not reprocess:
-        done = published_days(cruise_id)
-        skipped = [d for d in days if d in done]
-        days = [d for d in days if d not in done]
+    if not reprocess or reprocess_since:
+        days, skipped = flowlib.select_days(days, published_days(cruise_id), reprocess,
+                                            reprocess_since)
         if skipped:
             log.info("Already published, skipped: %s", ", ".join(skipped))
     if not days:
         return {"processed": [], "failed": [], "note": "nothing to do"}
 
-    sync_code()
-    stage(cruise_id, days, gps)
-    jobid = submit_array(cruise_id, days, container, cpus, constraint, qos or os.environ.get("HPC_QOS", ""),
-                         walltime, preset, gps, pipeline_args, array_limit)
+    with _preset_config(preset, preset_toml) as config:
+        if dry_run:
+            script = submit_array(cruise_id, days, container, cpus, constraint,
+                                  qos or os.environ.get("HPC_QOS", ""), walltime, preset, config,
+                                  gps, pipeline_args, array_limit, render_only=True)
+            return {"dry_run": True, "days": days, "script": script}
+        sync_code()
+        stage(cruise_id, days, gps)
+        jobid = submit_array(cruise_id, days, container, cpus, constraint,
+                             qos or os.environ.get("HPC_QOS", ""), walltime, preset, config, gps,
+                             pipeline_args, array_limit)
     tasks = job_metrics(jobid)  # {"<task index>": {...}}
     ok, failed, metrics = [], [], {}
     for i, day in enumerate(days):
@@ -389,17 +458,102 @@ def process_batch_hpc(
 
     result: dict = {"jobid": jobid, "processed": ok, "failed": failed}
     if not ok:
+        if cleanup_scratch:
+            unstage(cruise_id, days)
         raise RuntimeError(f"No day of array {jobid} completed")
     push_products(container, ok, dest, replace=True)
     publish_stac(cruise_id, cruise_id, ok, run_id, metrics)
     if campaign_slug:
         result["tiles"] = build_tiles(cruise_id, campaign_slug)
-        result["import"] = import_webapp(cruise_id, campaign_slug, campaign_name, provider)
+        result["import"] = import_webapp(cruise_id, campaign_slug, campaign_name, provider, web_url)
     if cleanup_scratch:
         cleanup(container, ok, dest)
+        # Failed days are restaged by the re-run, which skips files already there.
+        unstage(cruise_id, days)
     if failed:
         log.warning("Re-run for the failed days: %s", ",".join(failed))
     return result
+
+
+@flow(name="process-campaign-hpc", log_prints=True)
+def process_campaign_hpc(
+    cruise_id: str,
+    days: list[str] | None = None,
+    start_date: str = "",
+    end_date: str = "",
+    reprocess: bool = False,
+    reprocess_since: str = "",
+    batch_size: int = 40,
+    array_limit: int = 20,
+    cpus: int = 8,
+    constraint: str = "highmem",
+    qos: str = "",
+    walltime: str = "02:00:00",
+    preset: str = "tpos-sd-2023",
+    preset_toml: str = "",
+    gps: bool = True,
+    pipeline_args: list[str] | None = None,
+    campaign_slug: str = "",
+    campaign_name: str = "",
+    provider: str = "saildrone",
+    web_url: str = "",
+    dry_run: bool = False,
+) -> dict:
+    """Process a whole campaign as a sequence of batches (see process_batch_hpc).
+
+    Each batch is staged, run as one job array, pushed, published, imported
+    into the web app and removed from scratch before the next one starts, so
+    scratch holds one batch at a time. Before each batch the scratch quota is
+    checked against the batch's raw size; the run stops cleanly if it is short.
+    A failed day does not stop the campaign; the days are listed at the end.
+    Re-running with the same arguments resumes (see *reprocess_since*).
+    """
+    log = get_run_logger()
+    _check(cruise_id, NAME_RE, "cruise_id")
+    _check(preset, NAME_RE, "preset")
+    if campaign_slug and not dry_run:
+        _web_url(web_url)
+    days = flowlib.expand_days(days, start_date, end_date)
+    have = available_days(cruise_id)
+    days = [d for d in days if d in have]
+    if not reprocess or reprocess_since:
+        days, skipped = flowlib.select_days(days, published_days(cruise_id), reprocess,
+                                            reprocess_since)
+        if skipped:
+            log.info("%d day(s) already published, skipped", len(skipped))
+    groups = flowlib.batches(days, batch_size) if days else []
+    log.info("%d day(s) in %d batch(es) of up to %d", len(days), len(groups), batch_size)
+    if dry_run:
+        groups = groups[:1]  # one rendered script shows what every batch runs
+
+    done: list[str] = []
+    failed: list[str] = []
+    runs: list[dict] = []
+    for n, group in enumerate(groups, 1):
+        if not dry_run:
+            need = raw_size_gb(cruise_id, group) * SCRATCH_PER_RAW_GB
+            free = scratch_free_gb()
+            if free < need:
+                raise RuntimeError(
+                    f"Batch {n}/{len(groups)} needs about {need:.0f} GB of scratch and "
+                    f"{free:.0f} GB is free. Free scratch (cleanup-staging) or lower "
+                    "batch_size, then re-run with the same arguments to resume."
+                )
+            log.info("Batch %d/%d: %d day(s), %s to %s (scratch: %.0f GB needed, %.0f GB free)",
+                     n, len(groups), len(group), group[0], group[-1], need, free)
+        result = process_batch_hpc(
+            cruise_id=cruise_id, days=group, reprocess=True, array_limit=array_limit, cpus=cpus,
+            constraint=constraint, qos=qos, walltime=walltime, preset=preset,
+            preset_toml=preset_toml, gps=gps, pipeline_args=pipeline_args,
+            campaign_slug=campaign_slug, campaign_name=campaign_name, provider=provider,
+            web_url=web_url, cleanup_scratch=True, dry_run=dry_run,
+        )
+        runs.append(result)
+        done += result.get("processed", [])
+        failed += result.get("failed", [])
+    if failed:
+        log.warning("%d day(s) failed; re-run for: %s", len(failed), ",".join(failed))
+    return {"batches": len(groups), "processed": done, "failed": failed, "runs": runs}
 
 
 @flow(name="publish-campaign", log_prints=True)

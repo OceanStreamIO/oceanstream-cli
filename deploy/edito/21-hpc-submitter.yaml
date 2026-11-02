@@ -37,7 +37,7 @@ spec:
           emptyDir: {sizeLimit: 2Gi}
       containers:
         - name: submitter
-          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:0.2.4
+          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:0.3.0
           imagePullPolicy: Always
           command: ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
           env:
@@ -52,7 +52,7 @@ spec:
             - name: OCEANSTREAM_INGEST_API_KEY
               valueFrom: {secretKeyRef: {name: oceanstream-app, key: OCEANSTREAM_INGEST_API_KEY, optional: true}}
           envFrom:
-            - configMapRef: {name: oceanstream-hpc-site}   # includes OCEANSTREAM_WEB_URL
+            - configMapRef: {name: oceanstream-hpc-site}   # includes OCEANSTREAM_WEB_URL(S)
             - secretRef: {name: oceanstream-s3}
           volumeMounts:
             - {name: hpc-ssh, mountPath: /etc/ssh-hpc, readOnly: true}

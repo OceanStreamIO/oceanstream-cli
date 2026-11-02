@@ -7,24 +7,27 @@
 # Streamed from object storage through this machine and over SSH: the cluster
 # may not connect out itself. Nothing at the destination is deleted, and a
 # re-run resumes, skipping files already there at their full size.
+# --cleanup removes staged days instead: scratch only ever holds a copy of S3.
 #
 # Usage:
 #   ./scripts/hpc/stage-raw.sh --cruise SD_X --day 2023-10-10
 #   ./scripts/hpc/stage-raw.sh --cruise SD_X --days 2023-10-10,2023-10-11
 #   ./scripts/hpc/stage-raw.sh --cruise SD_X --gps     # the cruise's GPS GeoParquet
+#   ./scripts/hpc/stage-raw.sh --cruise SD_X --days d1,d2 --cleanup   # free their scratch
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/hpc/lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-CRUISE=""; DAYS=""; GPS=0
+CRUISE=""; DAYS=""; GPS=0; CLEANUP=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --cruise)     CRUISE="${2:?}"; shift ;;
         --day|--days) DAYS="${2:?}"; shift ;;
         --gps)        GPS=1 ;;
-        -h|--help)    sed -n '2,13p' "$0" >&2; exit 0 ;;
+        --cleanup)    CLEANUP=1 ;;
+        -h|--help)    sed -n '2,15p' "$0" >&2; exit 0 ;;
         *)            fail "Unknown argument: $1" ;;
     esac
     shift
@@ -44,6 +47,15 @@ fi
 
 SRC_ROOT="${OCEANSTREAM_S3_RAW_PREFIX}/${CRUISE}"
 DST_ROOT="${HPC_RAW_DIR}/${CRUISE}"
+
+if [ "$CLEANUP" = "1" ]; then
+    for d in $(printf '%s' "$DAYS" | tr ',' ' '); do
+        case "$d" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) fail "Bad day: $d" ;; esac
+        case "$DST_ROOT/$d" in */raw/?*/????-??-??) ;; *) fail "Refusing to remove unexpected path: $DST_ROOT/$d" ;; esac
+        hpc_ssh_xfer "rm -rf '$DST_ROOT/$d'" && ok "$d: raw removed from scratch"
+    done
+    exit 0
+fi
 
 # One pull for all days: --include filters keep the other days out.
 INCLUDES=()

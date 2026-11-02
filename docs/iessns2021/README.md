@@ -1,6 +1,6 @@
 # IESSNS 2021, Icelandic part
 
-The Icelandic part of the International Ecosystem Summer Survey in Nordic Seas, R/V Árni Friðriksson, 5–26 July 2021. The EK80 data are on PANGAEA as dataset [975782](https://doi.org/10.1594/PANGAEA.975782) (CC-BY-4.0). This page records what the data hold, the pipeline changes they needed, and the checks made so far. The dataset was chosen in [../datasets/next-candidates.md](../datasets/next-candidates.md).
+The Icelandic part of the International Ecosystem Summer Survey in Nordic Seas, R/V Árni Friðriksson, 5–26 July 2021. The EK80 data are on PANGAEA as dataset [975782](https://doi.org/10.1594/PANGAEA.975782) (CC-BY-4.0). This page records what the data hold, the pipeline changes they needed, and the checks made so far.
 
 ## The data
 

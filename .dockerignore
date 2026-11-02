@@ -58,6 +58,8 @@ _echodata-legacy-code/
 # Secrets and VCS
 .env
 .env.*
+# Local HPC site settings: lib.sh would source them over the pod's ConfigMap.
+scripts/hpc/site.env
 .git/
 .github/
 
