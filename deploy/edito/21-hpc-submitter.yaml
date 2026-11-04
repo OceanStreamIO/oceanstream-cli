@@ -27,7 +27,7 @@ spec:
       # Service-link env vars (OCEANSTREAM_PREFECT_*) collide with app settings.
       enableServiceLinks: false
       imagePullSecrets:
-        - name: acr-pull-secret
+        - name: ghcr-pull-secret
       volumes:
         - name: hpc-ssh
           secret: {secretName: oceanstream-hpc-ssh, defaultMode: 0400}
@@ -37,7 +37,8 @@ spec:
           emptyDir: {sizeLimit: 2Gi}
       containers:
         - name: submitter
-          image: oceanstreamdevacr.azurecr.io/oceanstream-hpc-submitter:0.3.0
+          # From .github/workflows/images.yml (publish run on main at 18ea69d).
+          image: ghcr.io/oceanstreamio/oceanstream-cli/hpc-submitter:sha-18ea69d
           imagePullPolicy: Always
           command: ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
           env:
