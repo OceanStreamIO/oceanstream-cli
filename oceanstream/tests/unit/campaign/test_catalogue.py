@@ -206,9 +206,10 @@ def test_mirror_files_unpacks_zips() -> None:
         zf.writestr("day1/log.txt", b"l")
     s3 = FakeS3()
     data = buf.getvalue()
-    r = mirror.mirror_files({"2022-05-01.zip": "https://z/2022-05-01.zip",
+    # Zenodo serves files at .../files/<name>/content: the type comes from the name.
+    r = mirror.mirror_files({"2022-05-01.zip": "https://z/files/2022-05-01.zip/content",
                              "calibration.xml": "https://z/calibration.xml"}, "b", "z/raw",
-                            opener=lambda u: io.BytesIO(data if u.endswith(".zip") else b"<x/>"),
+                            opener=lambda u: io.BytesIO(data if ".zip" in u else b"<x/>"),
                             s3=s3, workers=1)
     assert r.failed == 0
     assert sorted(s3.objects) == ["z/raw/calibration.xml", "z/raw/x-D20220501-T000000.raw"]

@@ -132,12 +132,13 @@ def zip_members(stream: IO[bytes]) -> Iterator[tuple[str, int, IO[bytes]]]:
 def mirror_archive(  # noqa: PLR0913
     url: str, bucket: str, prefix: str, *, patterns: Iterable[str] = RAW_PATTERNS,
     flatten: bool = True, opener: Callable[[str], IO[bytes]] = _open_url, s3: Any = None,
-    dry_run: bool = False,
+    dry_run: bool = False, kind: str = "",
 ) -> MirrorResult:
     """Stream an archive from *url* and upload its raw members under ``s3://bucket/prefix/``.
 
     The archive is read once, front to back, with nothing written locally except
-    a zip, which must be spooled because its index is at the end. *flatten* keeps
+    a zip, which must be spooled because its index is at the end. *kind* is ``zip`` or
+    ``tar`` when the URL does not end in the archive's name. *flatten* keeps
     only base names (R2R BagIt nests files under ``data/…``). Members already in
     the bucket at their size are read past, not uploaded again.
     """
@@ -146,8 +147,8 @@ def mirror_archive(  # noqa: PLR0913
     have = existing_sizes(s3, bucket, prefix + "/")
     result = MirrorResult()
     stream = opener(url)
-    members = zip_members(stream) if url.lower().split("?")[0].endswith(".zip") else (
-        tar_members(stream))
+    is_zip = kind == "zip" or (not kind and url.lower().split("?")[0].endswith(".zip"))
+    members = zip_members(stream) if is_zip else tar_members(stream)
     for name, size, fh in members:
         if not wanted(name, patterns):
             continue
@@ -192,7 +193,8 @@ def mirror_files(  # noqa: PLR0913
 
     def one(name: str, url: str) -> MirrorResult:
         if name.lower().endswith(".zip"):
-            return mirror_archive(url, bucket, prefix, opener=opener, s3=s3, dry_run=dry_run)
+            return mirror_archive(url, bucket, prefix, opener=opener, s3=s3, dry_run=dry_run,
+                                  kind="zip")
         key = f"{prefix}/{name}"
         if key in have and (name not in sizes or have[key] == sizes[name]):
             return MirrorResult(skipped=1)
