@@ -1,6 +1,6 @@
 # =============================================================================
 # oceanstream-hpc-submitter — Prefect process worker for the `oceanstream-hpc`
-# pool. It drives Slurm jobs over SSH (scripts/hpc/*), publishes STAC and
+# pool. It drives Slurm jobs over SSH (oceanstream.hpc), publishes STAC and
 # builds track tiles; the heavy processing happens on the cluster.
 #
 # No values in this file: site settings come from the ConfigMap

@@ -1,23 +1,16 @@
-"""Day selection, batching and guards of the HPC Prefect flows (scripts/hpc/flowlib.py)."""
+"""Day selection, batching and guards of the HPC Prefect flows (oceanstream.hpc.flowlib)."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
-HPC = Path(__file__).resolve().parents[3] / "scripts" / "hpc"
+from oceanstream.hpc import flowlib as _flowlib_module
 
 
 def _flowlib():
-    spec = importlib.util.spec_from_file_location("flowlib", HPC / "flowlib.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["flowlib"] = module
-    spec.loader.exec_module(module)
-    return module
+    return _flowlib_module
 
 
 fl = _flowlib()

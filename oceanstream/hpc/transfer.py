@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: PLR0913, PLR0915, PLC0415, PLR2004, PLW1510
 """Move files between object storage and the cluster, over SSH, from this side.
 
 The site does not allow its machines to open connections to external hosts.
@@ -56,9 +57,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import IO, Any
 
 CHUNK = 8 << 20
 PART = 64 << 20
@@ -138,10 +141,10 @@ class Remote:
         return ["ssh", "-F", self.config, "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={slot}", "-o", "ControlPersist=120", self.target]
 
-    def run(self, command: str, **kw) -> subprocess.CompletedProcess:
+    def run(self, command: str, **kw: Any) -> subprocess.CompletedProcess[Any]:
         return subprocess.run([*self._args(), command], **kw)
 
-    def popen(self, command: str, **kw) -> subprocess.Popen:
+    def popen(self, command: str, **kw: Any) -> subprocess.Popen[Any]:
         return subprocess.Popen([*self._args(), command], **kw)
 
     def delete(self, root: str, rels: list[str]) -> None:
@@ -228,11 +231,11 @@ class Store:
     def size(self, uri: str) -> int | None:
         bucket, key = split_s3(uri)
         try:
-            return self.client.head_object(Bucket=bucket, Key=key)["ContentLength"]
+            return int(self.client.head_object(Bucket=bucket, Key=key)["ContentLength"])
         except Exception:                                  # noqa: BLE001
             return None
 
-    def upload(self, stream, uri: str, part: int = PART) -> None:
+    def upload(self, stream: IO[bytes], uri: str, part: int = PART) -> None:
         """Upload a non-seekable stream, in parts once it outgrows one."""
         bucket, key = split_s3(uri)
         chunk = _read_full(stream, part)
@@ -266,7 +269,7 @@ class Store:
                     "Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True})
 
 
-def _read_full(stream, size: int) -> bytes:
+def _read_full(stream: IO[bytes], size: int) -> bytes:
     """Up to *size* bytes: a pipe returns what it has, not what was asked for."""
     out = bytearray()
     while len(out) < size:
@@ -290,6 +293,7 @@ def pull_one(store: Store, remote: Remote, item: Item) -> None:
                f"|| {{ rm -f {part}; exit 3; }}")
     body = store.client.get_object(Bucket=bucket, Key=key)["Body"]
     proc = remote.popen(receive, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdin is not None and proc.stderr is not None
     try:
         for chunk in iter(lambda: body.read(CHUNK), b""):
             proc.stdin.write(chunk)
@@ -307,6 +311,7 @@ def push_one(store: Store, remote: Remote, item: Item) -> None:
     """Cluster file -> S3 object, uploaded in parts, then checked by size."""
     proc = remote.popen(f"cat {shlex.quote(item.source)}", stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE)
+    assert proc.stdout is not None and proc.stderr is not None
     try:
         store.upload(proc.stdout, item.dest)
     finally:
@@ -353,12 +358,14 @@ def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
         proc = remote.popen(f"tar -C {shlex.quote(root)} -cf - --null -T -",
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        stdin = proc.stdin
 
         def feed() -> None:
             try:
-                proc.stdin.write(b"\0".join(n.encode() for n in by_name) + b"\0")
+                stdin.write(b"\0".join(n.encode() for n in by_name) + b"\0")
             finally:
-                proc.stdin.close()
+                stdin.close()
 
         threading.Thread(target=feed, daemon=True).start()
         # At most SMALL * 16 bytes waiting to upload per stream: small members go
@@ -396,6 +403,8 @@ def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
                         continue
                     seen.add(name)
                     fh = tar.extractfile(member)
+                    if fh is None:
+                        continue
                     if member.size <= SMALL:
                         gate.acquire()
                         futures.append(uploads.submit(put, item, fh.read()))
@@ -430,7 +439,7 @@ def push_tar(store: Store, remote: Remote, items: list[Item], src_root: str,
 
 # --- running a batch ----------------------------------------------------------------
 
-def run_batch(items: list[Item], move, streams: int, label: str) -> int:
+def run_batch(items: list[Item], move: Callable[[Item], None], streams: int, label: str) -> int:
     """Move every item with *streams* workers, retrying each. Returns failures."""
     if not items:
         print(f"  {label}: nothing to move", flush=True)
@@ -487,7 +496,7 @@ def _remote() -> Remote:
     return Remote(config, target)
 
 
-def cmd_pull(args) -> int:
+def cmd_pull(args: argparse.Namespace) -> int:
     store, remote = Store(opendata=args.opendata), _remote()
     if args.files_from:
         wanted_keys = {line.strip() for line in open(args.files_from) if line.strip()}
@@ -520,7 +529,7 @@ def cmd_pull(args) -> int:
     return failed
 
 
-def cmd_push(args) -> int:
+def cmd_push(args: argparse.Namespace) -> int:
     store, remote = Store(), _remote()
     present: dict[str, int] = {}
     if args.file:
@@ -581,7 +590,7 @@ def stale(present: dict[str, int], source: dict[str, int],
     return sorted(rel for rel in present if rel not in source and wanted(rel, include, exclude))
 
 
-def cmd_check(args) -> int:
+def cmd_check(args: argparse.Namespace) -> int:
     """Every cluster file under --src has an object of the same size under --dest."""
     store, remote = Store(), _remote()
     source = {k: v for k, v in remote.listing(args.src).items()

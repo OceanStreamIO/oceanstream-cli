@@ -2,7 +2,7 @@
 # =============================================================================
 # Create/refresh the submitter's ConfigMap and SSH Secret from local files.
 # =============================================================================
-#   oceanstream-hpc-site  (ConfigMap) <- scripts/hpc/site.env, minus local-only keys
+#   oceanstream-hpc-site  (ConfigMap) <- the site file (oceanstream.hpc.site), minus local-only keys
 #   oceanstream-hpc-ssh   (Secret)    <- $HPC_SSH_KEY + known_hosts entries for the hosts
 #
 # Values are never printed. Usage:
@@ -10,8 +10,9 @@
 # =============================================================================
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=scripts/hpc/lib.sh
-. "$ROOT/scripts/hpc/lib.sh"
+SITE_ENV="${HPC_SITE_FILE:-$ROOT/scripts/hpc/site.env}"
+ok()   { printf '  ✓ %s\n' "$*" >&2; }
+fail() { printf '  ✗ %s\n' "$*" >&2; exit 1; }
 
 NS=""
 while [ $# -gt 0 ]; do
@@ -22,15 +23,16 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -n "$NS" ] || fail "Specify -n <namespace>"
-require_cmd kubectl ssh-keygen
-require_hpc_key
-[ -f "$HPC_LIB_DIR/site.env" ] || fail "scripts/hpc/site.env not found"
+command -v kubectl >/dev/null && command -v ssh-keygen >/dev/null || fail "Needs kubectl and ssh-keygen"
+[ -f "$SITE_ENV" ] || fail "$SITE_ENV not found (see scripts/hpc/site.env.example)"
+set -a; . "$SITE_ENV"; set +a
+[ -f "${HPC_SSH_KEY:-}" ] || fail "No SSH key at ${HPC_SSH_KEY:-<unset>} (HPC_SSH_KEY)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 chmod 700 "$TMP"
 
 # Site ConfigMap: drop local paths that differ inside the pod.
-grep -E '^[A-Z_]+=' "$HPC_LIB_DIR/site.env" | grep -vE '^(HPC_SSH_KEY|HPC_KNOWN_HOSTS)=' \
+grep -E '^[A-Z_]+=' "$SITE_ENV" | grep -vE '^(HPC_SSH_KEY|HPC_KNOWN_HOSTS)=' \
     | sed -E 's/^([A-Z_]+)="(.*)"$/\1=\2/' > "$TMP/site.env"
 kubectl -n "$NS" create configmap oceanstream-hpc-site --from-env-file="$TMP/site.env" \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null

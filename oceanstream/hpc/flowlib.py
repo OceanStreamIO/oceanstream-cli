@@ -1,6 +1,6 @@
 """Pure helpers for the HPC flows: no Prefect, no SSH, so they can be unit tested.
 
-flows.py imports these; keep anything that talks to the cluster or S3 there.
+oceanstream.hpc.flows imports these; keep anything that talks to the cluster or S3 there.
 """
 
 from __future__ import annotations

@@ -1,16 +1,18 @@
+# Prefect flow parameters are the deployment's form fields: one per option.
+# ruff: noqa: PLR0912, PLR0913, PLR0915, PLR0917
 """Prefect flows that process echosounder days on a Slurm cluster.
 
-The heavy work runs on the cluster. These flows only drive ``scripts/hpc/*``
-over SSH and publish small JSON documents, so they fit a small worker pod —
-never import the pipeline here.
+The heavy work runs on the cluster. These flows drive it through
+:mod:`oceanstream.hpc` over SSH and publish small JSON documents, so they fit a
+small worker pod; never import the pipeline here.
 
 process_day_hpc legs:
-  1. sync-code.sh        ship the pipeline source to the cluster
-  2. stage-raw.sh        S3 -> cluster scratch (streamed over SSH from here)
-  3. submit-day.sh       sbatch, poll to exit
-  4. push-products.sh    cluster scratch -> S3 over SSH from here, verified
-  5. publish_stac.py     item.json (last) + collection.json
-  6. cleanup             free the day's scratch
+  1. sync code       ship the pipeline source to the cluster (when this host has it)
+  2. stage           S3 -> cluster scratch (streamed over SSH from here)
+  3. submit          sbatch, poll to exit
+  4. push            cluster scratch -> S3 over SSH from here, verified
+  5. publish STAC    item.json (last) + collection.json
+  6. cleanup         free the day's scratch
 
 process_batch_hpc runs the same legs for many days as one Slurm job array and
 then imports the Collection into the web app. process_campaign_hpc runs a whole
@@ -20,70 +22,40 @@ time.
 A preset comes from the library by key, or inline as TOML (preset_toml): the
 web app sends Denoise Lab presets that way.
 
-Site settings come from the environment (see scripts/hpc/site.env.example).
-The web app import needs OCEANSTREAM_WEB_URL and OCEANSTREAM_INGEST_API_KEY;
-a run may name another web app only if OCEANSTREAM_WEB_URLS lists it.
+Site settings come from the environment (see oceanstream.hpc.site). The web app
+import needs OCEANSTREAM_WEB_URL and OCEANSTREAM_INGEST_API_KEY; a run may name
+another web app only if OCEANSTREAM_WEB_URLS lists it.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import re
-import subprocess
-import sys
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from prefect import flow, get_run_logger, task
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import flowlib  # noqa: E402
-from flowlib import DAY_RE, NAME_RE  # noqa: E402
+from . import cluster as cluster_ops
+from . import flowlib, slurm, staging
+from .flowlib import DAY_RE, NAME_RE
+from .remote import Cluster
+from .site import PROJECT_DIR, HpcSite
 
-APP = Path(os.environ.get("OCEANSTREAM_SOURCE_PATH", Path(__file__).resolve().parents[2]))
-SCRIPTS = APP / "scripts" / "hpc"
-PRESETS = APP / "oceanstream" / "echodata" / "presets" / "library"
-
-# Queue wait dominates and is priority-driven; the work itself is ~30 min/day.
-SYNC_TIMEOUT_S = 30 * 60
-STAGE_TIMEOUT_S = 3 * 60 * 60
-JOB_TIMEOUT_S = 36 * 60 * 60
-PUSH_TIMEOUT_S = 3 * 60 * 60
-PUBLISH_TIMEOUT_S = 30 * 60
+PRESETS = Path(__file__).resolve().parents[1] / "echodata" / "presets" / "library"
 
 # Scratch a batch needs per GB of its raw input: the raw itself, the per-job
 # work stores and the products until they are pushed.
 SCRATCH_PER_RAW_GB = 2.0
 
+
+def _cluster() -> Cluster:
+    return Cluster(HpcSite.load())
+
+
 _check = flowlib.check
-
-
-def _run(cmd: list[str], timeout: int, check: bool = True) -> str:
-    """Run a helper without a shell, stream its output, return it."""
-    log = get_run_logger()
-    env = {**os.environ, "HPC_ASSUME_YES": "1", "PYTHONPATH": str(APP)}
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1, env=env, cwd=str(APP))
-    assert proc.stdout is not None
-    lines: list[str] = []
-    try:
-        for line in proc.stdout:
-            line = line.rstrip()
-            lines.append(line)
-            log.info(line)
-        rc = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise RuntimeError(f"{Path(cmd[0]).name} exceeded {timeout}s")
-    if rc != 0 and check:
-        raise RuntimeError(f"{Path(cmd[0]).name} failed with exit {rc}")
-    return "\n".join(lines)
-
-
-def _sh(script: str, *args: str, timeout: int, check: bool = True) -> str:
-    return _run([str(SCRIPTS / script), *args], timeout, check)
 
 
 def _products_root(container: str) -> str:
@@ -93,7 +65,7 @@ def _products_root(container: str) -> str:
 
 
 @contextmanager
-def _preset_config(preset: str, preset_toml: str):
+def _preset_config(preset: str, preset_toml: str) -> Iterator[str]:
     """Path of the preset file to ship: the library's, or *preset_toml* written out."""
     if not preset_toml:
         path = PRESETS / f"{preset}.toml"
@@ -112,101 +84,99 @@ def _preset_config(preset: str, preset_toml: str):
 def sync_code() -> None:
     """Ship the pipeline source to the cluster, when this host has it.
 
-    The submitter image carries only scripts/hpc, so there is nothing to sync
-    from it: the cluster keeps whatever revision was last synced from a full
-    checkout. `cat $HPC_CODE_DIR/.revision` on the cluster shows which.
+    The submitter image carries only the oceanstream package, so there is
+    nothing to sync from it: the cluster keeps whatever revision was last synced
+    from a full checkout. `cat $HPC_CODE_DIR/.revision` on the cluster shows which.
     """
-    if not (APP / "scripts" / "batch_processing").is_dir():
-        get_run_logger().info(
-            "No pipeline source at %s — skipping the code sync; the cluster keeps its current revision.", APP,
-        )
+    if not (PROJECT_DIR / "scripts" / "batch_processing").is_dir():
+        get_run_logger().info("No pipeline source at %s: skipping the code sync; the cluster "
+                              "keeps its current revision.", PROJECT_DIR)
         return
-    _sh("sync-code.sh", timeout=SYNC_TIMEOUT_S)
+    cluster_ops.sync_code(_cluster())
 
 
 @task(name="hpc-stage", retries=1, retry_delay_seconds=300)
 def stage(cruise_id: str, days: list[str], gps: bool) -> None:
-    _sh("stage-raw.sh", "--cruise", cruise_id, "--days", ",".join(days), timeout=STAGE_TIMEOUT_S)
+    c = _cluster()
+    staged = staging.stage_days(c, cruise_id, days)
+    if not all(staged.values()):
+        raise RuntimeError(f"Staging failed for {[d for d, ok in staged.items() if not ok]}")
     if gps:
-        _sh("stage-raw.sh", "--cruise", cruise_id, "--gps", timeout=STAGE_TIMEOUT_S)
+        staging.stage_gps(c, cruise_id)
 
 
 @task(name="hpc-unstage", retries=1, retry_delay_seconds=60)
 def unstage(cruise_id: str, days: list[str]) -> None:
     """Remove the days' raw input from scratch; S3 keeps the original."""
-    _sh("stage-raw.sh", "--cruise", cruise_id, "--days", ",".join(days), "--cleanup",
-        timeout=SYNC_TIMEOUT_S)
+    staging.unstage(_cluster(), cruise_id, days)
 
 
 @task(name="hpc-scratch-free", retries=2, retry_delay_seconds=60)
 def scratch_free_gb() -> float:
-    used, quota = flowlib.parse_bsc_quota(_sh("quota.sh", timeout=300))
-    return quota - used
+    return cluster_ops.scratch_free_gb(_cluster())
+
+
+def _submit(spec: slurm.JobSpec, config: str, render_only: bool = False) -> str:
+    """Ship the preset, submit *spec* and wait for it; returns the job id (or the script)."""
+    c = _cluster()
+    if render_only:
+        spec.preset_config = config
+        return slurm.build(c.site, spec).script
+    spec.preset_config = slurm.ship_preset(c, config, Path(config).read_text(encoding="utf-8"))
+    job = slurm.build(c.site, spec)
+    jobid = slurm.submit(c, job)
+    get_run_logger().info("Submitted %s as job %s", job.name, jobid)
+    slurm.wait(c, jobid)
+    return jobid
 
 
 @task(name="hpc-submit-day")
 def submit_day(cruise_id: str, day: str, container: str, cpus: int, constraint: str,
                qos: str, walltime: str, preset: str, config: str, gps: bool,
-               pipeline_args: list[str]) -> str:
-    args = ["--cruise", cruise_id, "--day", day, "--output-container", container,
-            "--cpus", str(cpus), "--constraint", constraint, "--time", walltime,
-            "--denoise-config", config, "--preset-key", preset]
-    if qos:
-        args += ["--qos", qos]
-    extra = flowlib.pipeline_args(pipeline_args)
-    if gps:
-        # Same default as lib.sh: $HPC_SCRATCH/oceanstream/gps/<cruise>.
-        gps_root = os.environ.get("HPC_GPS_DIR") or f"{os.environ['HPC_SCRATCH']}/oceanstream/gps"
-        extra += ["--gps-dir", f"{gps_root}/{cruise_id}"]
-    out = _sh("submit-day.sh", *args, "--", *extra, timeout=JOB_TIMEOUT_S)
-    m = re.search(r"^jobid=(\d+)$", out, re.M)
-    if not m:
-        raise RuntimeError("submit-day.sh reported no job id")
-    return m.group(1)
+               pipeline_args: list[str] | None) -> str:
+    spec = slurm.JobSpec(cruise=cruise_id, days=[day], mode="day", container=container,
+                         cpus=cpus, constraint=constraint, qos=qos, walltime=walltime,
+                         preset_key=preset,
+                         pipeline_args=_pipeline_extra(cruise_id, gps, pipeline_args))
+    return _submit(spec, config)
 
 
 @task(name="hpc-job-metrics", retries=2, retry_delay_seconds=30)
-def job_metrics(jobid: str) -> dict:
-    out = _sh("job-metrics.sh", jobid, timeout=300)
-    return json.loads(out.strip().splitlines()[-1])
+def job_metrics(jobid: str) -> dict[str, Any]:
+    return slurm.metrics(slurm.sacct(_cluster(), jobid))
 
 
 @task(name="hpc-push-products", retries=1, retry_delay_seconds=300)
 def push_products(container: str, days: list[str], dest: str, replace: bool = False) -> None:
-    args = ["--container", container, "--dest", dest, "--days", ",".join(days)]
-    if replace:
-        args.append("--replace")  # a reprocessed day must not keep stale chunks
-    _sh("push-products.sh", *args, timeout=PUSH_TIMEOUT_S)
+    # With replace, a reprocessed day does not keep stale chunks.
+    if not staging.push_products(_cluster(), container, days, dest=dest, replace=replace):
+        raise RuntimeError(f"Push of {container} {days} did not verify")
 
 
 @task(name="publish-stac", retries=2, retry_delay_seconds=60)
 def publish_stac(cruise_id: str, dest_container: str, days: list[str], run_id: str,
-                 metrics: dict) -> None:
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump(metrics, f)
-    try:
-        _run([sys.executable, str(SCRIPTS / "publish_stac.py"),
-              "--root", _products_root(dest_container), "--cruise-id", cruise_id,
-              "--days", ",".join(days), "--run-id", run_id, "--metrics-json", f.name,
-              "--skip-nasc-export"], PUBLISH_TIMEOUT_S)
-    finally:
-        os.unlink(f.name)
+                 metrics: dict[str, Any]) -> None:
+    from oceanstream.stac.publish import publish  # noqa: PLC0415 - needs fsspec
+
+    # The Collection keeps the campaign metadata published before (licence, DOI, ...).
+    publish(_products_root(dest_container), cruise_id, days, run_id=run_id, metrics=metrics,
+            nasc_export=False)
 
 
 @task(name="build-tiles", retries=1, retry_delay_seconds=60)
 def build_tiles(dest_container: str, campaign_slug: str) -> str:
+    from oceanstream.stac.tracks import build_track_tiles  # noqa: PLC0415 - needs fsspec
+
     bucket = os.environ["OCEANSTREAM_S3_BUCKET"]
     out = f"s3://{bucket}/tiles/{campaign_slug}_echodata.pmtiles"
-    _run([sys.executable, str(SCRIPTS / "build_campaign_tiles.py"),
-          "--collection", f"{_products_root(dest_container)}/collection.json",
-          "--campaign-slug", campaign_slug, "--out", out], PUBLISH_TIMEOUT_S)
+    build_track_tiles(f"{_products_root(dest_container)}/collection.json", campaign_slug, out)
     return out
 
 
 @task(name="hpc-cleanup")
 def cleanup(container: str, days: list[str], dest: str) -> None:
-    _sh("push-products.sh", "--container", container, "--dest", dest,
-        "--days", ",".join(days), "--verify", "--cleanup", timeout=PUSH_TIMEOUT_S)
+    staging.push_products(_cluster(), container, days, dest=dest, verify_only=True,
+                          cleanup=True)
 
 
 @flow(name="process-day-hpc", log_prints=True)
@@ -227,7 +197,7 @@ def process_day_hpc(
     cleanup_scratch: bool = False,
 ) -> dict:
     """Process one day on the cluster and publish it (Item, Collection, tiles)."""
-    from prefect.runtime import flow_run
+    from prefect.runtime import flow_run  # noqa: PLC0415
 
     _check(cruise_id, NAME_RE, "cruise_id")
     _check(day, DAY_RE, "day")
@@ -269,8 +239,8 @@ def _pipeline_extra(cruise_id: str, gps: bool, pipeline_args: list[str] | None) 
 
 
 @task(name="hpc-submit-array")
-def submit_array(cruise_id: str, days: list[str], container: str, cpus: int, constraint: str,
-                 qos: str, walltime: str, preset: str, config: str, gps: bool,
+def submit_array(cruise_id: str, days: list[str], container: str, cpus: int,
+                 constraint: str, qos: str, walltime: str, preset: str, config: str, gps: bool,
                  pipeline_args: list[str] | None, array_limit: int,
                  render_only: bool = False) -> str:
     """One Slurm job array, one day per task. Returns the array job id.
@@ -279,25 +249,15 @@ def submit_array(cruise_id: str, days: list[str], container: str, cpus: int, con
     carries on with the days that completed. With *render_only*, nothing is
     copied or submitted and the rendered batch script is returned instead.
     """
-    args = ["--cruise", cruise_id, "--days", ",".join(days), "--array-limit", str(array_limit),
-            "--output-container", container, "--cpus", str(cpus), "--constraint", constraint,
-            "--time", walltime, "--denoise-config", config, "--preset-key", preset]
-    if qos:
-        args += ["--qos", qos]
-    if render_only:
-        args.append("--render-only")
-    out = _sh("submit-day.sh", *args, "--", *_pipeline_extra(cruise_id, gps, pipeline_args),
-              timeout=JOB_TIMEOUT_S, check=render_only)
-    if render_only:
-        return out
-    m = re.search(r"^jobid=(\d+)$", out, re.M)
-    if not m:
-        raise RuntimeError("submit-day.sh reported no job id")
-    return m.group(1)
+    spec = slurm.JobSpec(cruise=cruise_id, days=days, mode="array", container=container,
+                         cpus=cpus, constraint=constraint, qos=qos, walltime=walltime,
+                         array_limit=array_limit, preset_key=preset,
+                         pipeline_args=_pipeline_extra(cruise_id, gps, pipeline_args))
+    return _submit(spec, config, render_only=render_only)
 
 
-def _s3fs():
-    import fsspec
+def _s3fs() -> tuple[Any, dict[str, str]]:
+    import fsspec  # noqa: PLC0415 - optional dependency
 
     ep = os.environ.get("AWS_S3_ENDPOINT") or os.environ.get("S3_ENDPOINT_URL") or ""
     if ep and not ep.startswith(("http://", "https://")):
@@ -318,7 +278,7 @@ def available_days(cruise_id: str) -> set[str]:
 @task(name="published-days", retries=2, retry_delay_seconds=30)
 def published_days(dest_container: str) -> dict:
     """Days that already have an item.json (pushed and published), with its write time."""
-    from datetime import UTC
+    from datetime import UTC  # noqa: PLC0415
 
     url_to_fs, so = _s3fs()
     fs, root = url_to_fs(_products_root(dest_container), **so)
@@ -338,7 +298,7 @@ def raw_size_gb(cruise_id: str, days: list[str]) -> float:
     bucket = os.environ["OCEANSTREAM_S3_BUCKET"]
     prefix = os.environ.get("OCEANSTREAM_S3_RAW_PREFIX", "hpc/raw")
     fs, root = url_to_fs(f"s3://{bucket}/{prefix}/{cruise_id}", **so)
-    return sum(fs.du(f"{root}/{d}") for d in days) / 1024 ** 3
+    return float(sum(fs.du(f"{root}/{d}") for d in days)) / 1024 ** 3
 
 
 def _web_url(requested: str) -> str:
@@ -350,7 +310,7 @@ def _web_url(requested: str) -> str:
 def import_webapp(dest_container: str, campaign_slug: str, name: str, provider: str,
                   web_url: str = "") -> dict:
     """Register the Collection with the web app (idempotent upsert)."""
-    import httpx
+    import httpx  # noqa: PLC0415 - optional dependency
 
     base = _web_url(web_url)
     key = os.environ.get("OCEANSTREAM_INGEST_API_KEY", "")
@@ -365,7 +325,7 @@ def import_webapp(dest_container: str, campaign_slug: str, name: str, provider: 
     )
     r.raise_for_status()
     get_run_logger().info("web app import: %s", r.json())
-    return r.json()
+    return dict(r.json())
 
 
 @flow(name="process-batch-hpc", log_prints=True)
@@ -405,7 +365,7 @@ def process_batch_hpc(
     import into from OCEANSTREAM_WEB_URLS. *dry_run* stages and submits
     nothing and returns the rendered batch script.
     """
-    from prefect.runtime import flow_run
+    from prefect.runtime import flow_run  # noqa: PLC0415
 
     log = get_run_logger()
     _check(cruise_id, NAME_RE, "cruise_id")
@@ -560,8 +520,9 @@ def process_campaign_hpc(
 def publish_campaign(cruise_id: str = "SD_TPOS2023_v03", campaign_slug: str = "") -> dict:
     """Rebuild the Collection and (optionally) the campaign's track tiles."""
     _check(cruise_id, NAME_RE, "cruise_id")
-    _run([sys.executable, str(SCRIPTS / "publish_stac.py"), "--root", _products_root(cruise_id),
-          "--cruise-id", cruise_id, "--collection-only"], PUBLISH_TIMEOUT_S)
+    from oceanstream.stac.publish import publish  # noqa: PLC0415 - needs fsspec
+
+    publish(_products_root(cruise_id), cruise_id)
     out = {"collection": f"{_products_root(cruise_id)}/collection.json"}
     if campaign_slug:
         out["tiles"] = build_tiles(cruise_id, _check(campaign_slug, NAME_RE, "campaign_slug"))

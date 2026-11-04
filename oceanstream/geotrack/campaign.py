@@ -5,18 +5,24 @@ This is separate from the output data directory which users can delete/recreate.
 """
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
 
 def get_campaigns_dir() -> Path:
-    """Get the campaigns directory in the user's home directory.
-    
+    """Get the campaigns directory.
+
+    ``OCEANSTREAM_CAMPAIGNS_DIR`` (or the CLI's ``--campaigns-dir``) puts the
+    campaigns somewhere else, e.g. next to the runs that process them.
+
     Returns:
-        Path to ~/.oceanstream/campaigns/
+        Path to $OCEANSTREAM_CAMPAIGNS_DIR, else ~/.oceanstream/campaigns/
     """
-    campaigns_dir = Path.home() / ".oceanstream" / "campaigns"
+    override = os.environ.get("OCEANSTREAM_CAMPAIGNS_DIR", "").strip()
+    campaigns_dir = Path(override).expanduser() if override else (
+        Path.home() / ".oceanstream" / "campaigns")
     campaigns_dir.mkdir(parents=True, exist_ok=True)
     return campaigns_dir
 

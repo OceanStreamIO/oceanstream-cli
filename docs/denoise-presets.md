@@ -27,7 +27,7 @@ The RR2205 trials behind the `research-vessel-open-ocean` family, with figures, 
 ```bash
 oceanstream process echodata presets show tpos-sd-2023        # conditions, validations, changes against its parent
 python scripts/batch_processing/process_from_raw.py --preset tpos-sd-2023 ...
-./scripts/hpc/submit-day.sh --cruise C --day D --preset tpos-sd-2023 -- ...
+oceanstream hpc submit C --days D        # pipeline.preset in the campaign's hpc-run.toml
 ```
 
 `--preset` sets `--denoise-config` to the library file and `--preset-key` to the key, so the run manifest records both. A preset file is an ordinary denoise config, so `--denoise-config <file>` and the Denoise Lab's TOML import also read it.

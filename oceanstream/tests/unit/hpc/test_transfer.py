@@ -1,28 +1,24 @@
-"""The HPC scripts move data over SSH from this side; the cluster never connects out."""
+"""Transfers move data over SSH from this side; the cluster never connects out."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
-HPC = Path(__file__).resolve().parents[3] / "scripts" / "hpc"
+from oceanstream.hpc import transfer
+
+ROOT = Path(__file__).resolve().parents[4]
 
 
 def _xfer():
-    spec = importlib.util.spec_from_file_location("xfer", HPC / "xfer.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["xfer"] = module
-    spec.loader.exec_module(module)
-    return module
+    return transfer
 
 
-def test_no_script_uses_the_queued_rclone_path():
-    for script in sorted(HPC.glob("*.sh")):
+def test_no_shell_script_left_with_transfer_logic():
+    """Transfers live in oceanstream.hpc.transfer; no script reimplements them."""
+    for script in sorted((ROOT / "scripts").rglob("*.sh")):
         text = script.read_text()
         for word in ("hpc_xfer_rclone", "HPC_XFER_RCLONE_CMD", "dtrclone", "s3_remote"):
             assert word not in text, f"{script.name} still uses {word}"
-    assert "xfer.py" in (HPC / "lib.sh").read_text()
 
 
 def test_day_filters_select_whole_days():

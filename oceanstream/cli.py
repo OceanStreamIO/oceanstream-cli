@@ -90,6 +90,10 @@ if typer:
     app.add_typer(process_app, name="process")
     app.add_typer(campaign_app, name="campaign")
     app.add_typer(mcp_app, name="mcp")
+
+    from .hpc.cli import app as hpc_app
+
+    app.add_typer(hpc_app, name="hpc")
     
     @app.command("providers")
     def providers_command() -> None:
