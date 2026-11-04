@@ -1,12 +1,12 @@
 # Mirror a campaign's raw files into the project bucket on EDITO:
 # `oceanstream campaign mirror` in a Job, so a long copy does not tie up the workspace pod.
 #
-#   ID=FKt260112; DIR=~/work/hpc-runs/$ID; KEY=code/oceanstream-cli-$(git rev-parse --short HEAD).tar.gz
+#   ID=FKt260112; KEY=code/oceanstream-cli-$(git rev-parse --short HEAD).tar.gz
 #   git archive --format=tar.gz HEAD | aws s3 cp - s3://oceanstream-bucket/$KEY
-#   kubectl create configmap campaign-$(echo $ID | tr A-Z_ a-z-) --from-file=$DIR/campaign.json \
-#       --from-file=$DIR/hpc-run.toml --dry-run=client -o yaml | kubectl apply -f -
 #   sed -e "s|@ID@|$ID|g" -e "s|@NAME@|$(echo $ID | tr A-Z_ a-z-)|g" -e "s|@CODE@|$KEY|g" \
-#       -e "s|@FROM@|<tarball URL, zenodo:<record> or azure>|" deploy/edito/mirror/job.yaml | kubectl apply -f -
+#       -e "s|@FROM@|<tarball URL or zenodo:<record>>|" \
+#       -e "s|@DEST@|<source.uri of the campaign's hpc-run.toml>|" \
+#       deploy/edito/mirror/job.yaml | kubectl apply -f -
 #
 # Network-bound: a standard node, no GPU. Rerunning skips files already copied.
 apiVersion: batch/v1
@@ -33,10 +33,9 @@ spec:
             - |
               set -euo pipefail
               python -c "import os, boto3; boto3.client('s3', endpoint_url=os.environ['AWS_ENDPOINT_URL']).download_file(os.environ['OCEANSTREAM_S3_BUCKET'], '@CODE@', '/work/src.tar.gz')"
-              mkdir -p /work/src /work/campaigns/@ID@ && tar -xzf /work/src.tar.gz -C /work/src
-              cp /campaign/* /work/campaigns/@ID@/
+              mkdir -p /work/src && tar -xzf /work/src.tar.gz -C /work/src
               cd /work/src && exec python -u -m oceanstream campaign mirror @ID@ \
-                  --campaigns-dir /work/campaigns --from "@FROM@" --workers 8
+                  --from "@FROM@" --dest "@DEST@" --workers 4
           env:
             - {name: OCEANSTREAM_NO_MCP_PROMPT, value: "1"}
             - {name: HOME, value: /work}
@@ -47,10 +46,7 @@ spec:
             requests: {cpu: "2", memory: 3Gi}
             limits: {cpu: "4", memory: 6Gi}
           volumeMounts:
-            - {name: campaign, mountPath: /campaign}
             - {name: work, mountPath: /work}
       volumes:
-        - name: campaign
-          configMap: {name: campaign-@NAME@}
         - name: work
           emptyDir: {sizeLimit: 20Gi}

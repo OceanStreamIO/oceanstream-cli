@@ -190,8 +190,13 @@ def mirror_command(
     """Copy the campaign's raw files into the project bucket (resumable)."""
     from oceanstream.sources import mirror  # noqa: PLC0415
 
-    path, meta = load_campaign(campaign_id, campaigns_dir)
-    if not dest:
+    # With --dest an archive or Zenodo mirror needs nothing from the campaign directory,
+    # so it can run in a Job that has only the code.
+    path: Path | None = None
+    meta: dict[str, Any] = {}
+    if source == "azure" or not dest:
+        path, meta = load_campaign(campaign_id, campaigns_dir)
+    if not dest and path is not None:
         import tomllib  # noqa: PLC0415
 
         cfg = tomllib.loads((path / "hpc-run.toml").read_text())
@@ -213,9 +218,9 @@ def mirror_command(
         else:
             result = mirror.mirror_archive(source, bucket, prefix, dry_run=dry_run)
     typer.echo(json.dumps(result.__dict__))
-    log = path / "mirror.log"
-    with log.open("a") as f:
-        f.write(json.dumps({"source": source, "dest": dest, **result.__dict__}) + "\n")
+    if path is not None:
+        with (path / "mirror.log").open("a") as f:
+            f.write(json.dumps({"source": source, "dest": dest, **result.__dict__}) + "\n")
     if result.failed:
         raise typer.Exit(1)
 
