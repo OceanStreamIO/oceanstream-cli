@@ -25,17 +25,30 @@ class DayFiles:
     bytes: int = 0
 
 
-def s3_listing(uri: str, *, anonymous: bool = False, region: str = "") -> dict[str, int]:
-    """Key name (relative to *uri*) -> size for every object under an ``s3://`` URI."""
+def public_client(region: str = "") -> Any:
+    """An anonymous client for a public AWS bucket (NCEI's is in us-east-1).
+
+    The endpoint is explicit: botocore applies ``AWS_ENDPOINT_URL`` to every client
+    it makes, which would send this one to the project's own store (NoSuchBucket).
+    """
     import botocore.session  # noqa: PLC0415 - optional dependency
     from botocore import UNSIGNED  # noqa: PLC0415
     from botocore.config import Config  # noqa: PLC0415
 
+    region = region or "us-east-1"
+    return botocore.session.get_session().create_client(
+        "s3", region_name=region, endpoint_url=f"https://s3.{region}.amazonaws.com",
+        config=Config(signature_version=UNSIGNED, retries={"max_attempts": 10}))
+
+
+def s3_listing(uri: str, *, anonymous: bool = False, region: str = "") -> dict[str, int]:
+    """Key name (relative to *uri*) -> size for every object under an ``s3://`` URI."""
+    import botocore.session  # noqa: PLC0415 - optional dependency
+
     bucket, _, prefix = uri.removeprefix("s3://").partition("/")
     session = botocore.session.get_session()
     if anonymous:
-        client = session.create_client("s3", region_name=region or "us-east-1",
-                                       config=Config(signature_version=UNSIGNED))
+        client = public_client(region)
     else:
         ep = (os.environ.get("OCEANSTREAM_S3_ENDPOINT") or os.environ.get("AWS_S3_ENDPOINT")
               or os.environ.get("S3_ENDPOINT_URL") or "")

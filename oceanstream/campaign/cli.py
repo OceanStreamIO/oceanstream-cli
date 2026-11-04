@@ -233,21 +233,20 @@ def _open_sources(source: str) -> list[Any]:
     if source.startswith("s3://noaa-wcsd-pds/"):
         from oceanstream.sources import ncei  # noqa: PLC0415
 
-        files = [k for k in ncei.s3_listing(source, anonymous=True) if k.endswith(".csv")]
+        # A prefix of CSV files, or one CSV object (listed under its own key as "").
+        files = [k for k in ncei.s3_listing(source, anonymous=True)
+                 if k.endswith(".csv") or (k == "" and source.endswith(".csv"))]
         out = []
         tmp = Path(tempfile.mkdtemp(prefix="gps-"))
-        import botocore.session  # noqa: PLC0415
-        from botocore import UNSIGNED  # noqa: PLC0415
-        from botocore.config import Config  # noqa: PLC0415
-
-        client = botocore.session.get_session().create_client(
-            "s3", region_name="us-east-1", config=Config(signature_version=UNSIGNED))
+        client = ncei.public_client()
         bucket, _, prefix = source.removeprefix("s3://").partition("/")
         for rel in files:
-            local = tmp / rel.replace("/", "_")
+            key = f"{prefix.rstrip('/')}/{rel}" if rel else prefix
+            local = tmp / (rel or Path(prefix).name).replace("/", "_")
+            body = client.get_object(Bucket=bucket, Key=key)["Body"]
             with local.open("wb") as f:
-                f.write(client.get_object(Bucket=bucket, Key=f"{prefix.rstrip('/')}/{rel}")
-                        ["Body"].read())
+                while chunk := body.read(8 << 20):
+                    f.write(chunk)
             out.append(local)
         return out
     if source.startswith(("http://", "https://")):
