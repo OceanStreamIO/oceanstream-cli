@@ -188,7 +188,13 @@ def mirror_command(
     campaigns_dir: Path | None = CAMPAIGNS_DIR,
 ) -> None:
     """Copy the campaign's raw files into the project bucket (resumable)."""
+    import logging  # noqa: PLC0415
+
     from oceanstream.sources import mirror  # noqa: PLC0415
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    for noisy in ("botocore", "boto3", "urllib3", "s3transfer"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # With --dest an archive or Zenodo mirror needs nothing from the campaign directory,
     # so it can run in a Job that has only the code.
