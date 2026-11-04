@@ -9,6 +9,7 @@
 #       deploy/edito/mirror/job.yaml | kubectl apply -f -
 #
 # Network-bound: a standard node, no GPU. Rerunning skips files already copied.
+# A public Python image: the Job installs the package (core dependencies) at start.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -27,14 +28,16 @@ spec:
       imagePullSecrets: [{name: acr-pull-secret}]
       containers:
         - name: mirror
-          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          image: python:3.12-slim
           command: ["bash", "-c"]
           args:
             - |
               set -euo pipefail
+              pip install -q --no-cache-dir boto3 requests
               python -c "import os, boto3; boto3.client('s3', endpoint_url=os.environ['AWS_ENDPOINT_URL']).download_file(os.environ['OCEANSTREAM_S3_BUCKET'], '@CODE@', '/work/src.tar.gz')"
               mkdir -p /work/src && tar -xzf /work/src.tar.gz -C /work/src
-              cd /work/src && exec python -u -m oceanstream campaign mirror @ID@ \
+              pip install -q --no-cache-dir /work/src
+              cd /work && exec python -u -m oceanstream campaign mirror @ID@ \
                   --from "@FROM@" --dest "@DEST@" --workers 4
           env:
             - {name: OCEANSTREAM_NO_MCP_PROMPT, value: "1"}

@@ -38,11 +38,17 @@ spec:
                   - {key: nvidia.com/gpu.product, operator: Exists}
       containers:
         - name: test
-          image: oceanstreamdevacr.azurecr.io/denoise-lab-worker:5d99f65
+          image: python:3.12
           command: ["bash", "-c"]
           args:
             - |
               set -u
+              # A public Python image: install the frozen cluster environment (the same
+              # requirements-hpc.txt as the MareNostrum 5 venv) from the code tarball.
+              pip install -q --no-cache-dir boto3 || exit 1
+              python -c "import os, boto3; boto3.client('s3', endpoint_url=os.environ['AWS_ENDPOINT_URL']).download_file(os.environ['OCEANSTREAM_S3_BUCKET'], os.environ['CODE_S3_KEY'], '/work/deps.tar.gz')" || exit 1
+              mkdir -p /work/deps && tar -xzf /work/deps.tar.gz -C /work/deps requirements-hpc.txt || exit 1
+              pip install -q --no-cache-dir -r /work/deps/requirements-hpc.txt || exit 1
               MODE=sv PIPELINE_ARGS="$SV_ARGS" /scripts/run.sh || exit 1
               MODE=denoise WITH_NASC=1 PIPELINE_ARGS="$DENOISE_ARGS" /scripts/run.sh || exit 1
               MODE=report REPORT_RUNS="denoised=denoised-$PRESET" REPORT_MVBS="denoised-$PRESET" \
