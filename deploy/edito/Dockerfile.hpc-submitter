@@ -2,9 +2,8 @@
 # oceanstream HPC submitter: Prefect process worker that drives Slurm jobs
 # over SSH, publishes STAC metadata and builds track tiles.
 # =============================================================================
-# Build (from the repo root):
-#   az acr build -r <registry> -t oceanstream-hpc-submitter:<tag> \
-#     -f "$PWD/deploy/edito/Dockerfile.hpc-submitter" .
+# Built and published by .github/workflows/images.yml (run it with "publish") as
+#   ghcr.io/oceanstreamio/oceanstream-cli/hpc-submitter:sha-<commit>
 # =============================================================================
 
 FROM debian:bookworm-slim AS tippecanoe
