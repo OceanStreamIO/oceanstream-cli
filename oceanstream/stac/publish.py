@@ -127,7 +127,12 @@ def publish(  # noqa: PLR0913
         if not fs.exists(f"{root}/{day}"):
             raise FileNotFoundError(f"{day}: no products at {root}/{day}")
         if nasc_export:
-            export_nasc(fs, root, day, cruise_id)
+            try:
+                export_nasc(fs, root, day, cruise_id)
+            except ImportError as e:
+                # The export needs geopandas; the Items do not.
+                logger.warning("%s: NASC GeoParquet export skipped (%s)", day, e)
+                nasc_export = False
         props: dict[str, Any] = {}
         if run_id:
             props["oceanstream:run_id"] = run_id
