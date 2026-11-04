@@ -194,7 +194,10 @@ def submit_command(
             cfg.mode = "node" if mode == "node" else "array"
         c = _cluster()
         wanted = _days(days) if days else cfg.days
-        preset = ("<preset>", cfg.preset) if render_only else preset_spec(c, cfg)
+        if render_only:
+            preset = (f"<{cfg.preset}.toml>", cfg.preset) if cfg.preset else ("", "")
+        else:
+            preset = preset_spec(c, cfg)
         spec = job_spec(c, cfg, wanted, preset)
         if mode == "day":
             spec.mode = "day"

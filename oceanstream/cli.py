@@ -91,7 +91,10 @@ if typer:
     app.add_typer(campaign_app, name="campaign")
     app.add_typer(mcp_app, name="mcp")
 
+    from .campaign.cli import register as register_campaign_commands
     from .hpc.cli import app as hpc_app
+
+    register_campaign_commands(campaign_app)
 
     app.add_typer(hpc_app, name="hpc")
     
@@ -232,6 +235,14 @@ if typer:
         project: str = typer.Option(None, help="Project name"),
         funding: str = typer.Option(None, help="Funding information"),
         verbose: bool = typer.Option(False, "-v", help="Emit detailed information"),
+        from_catalogue: Path = typer.Option(None, "--from-catalogue", exists=True, dir_okay=False,
+                                            help="Take the metadata from this cruise catalogue CSV "
+                                                 "and write the STAC, web-app and run files."),
+        catalogue_id: str = typer.Option(None, help="The cruise_id in the catalogue "
+                                                    "(default: the campaign id)."),
+        campaigns_dir: Path = typer.Option(None, "--campaigns-dir",
+                                           envvar="OCEANSTREAM_CAMPAIGNS_DIR",
+                                           help="Where campaign directories live."),
     ) -> None:
         """Create a new campaign with optional metadata.
         
@@ -266,6 +277,21 @@ if typer:
                 --description "TPOS 2023 multi-platform deployment"
         """
         from .geotrack.campaign import create_campaign
+
+        if from_catalogue:
+            if not campaign_id:
+                typer.echo("Give the campaign id with --from-catalogue.", err=True)
+                raise typer.Exit(1)
+            from .campaign.cli import create_from_catalogue
+
+            try:
+                path = create_from_catalogue(campaign_id, from_catalogue, catalogue_id or "",
+                                             campaigns_dir, verbose)
+            except (KeyError, ValueError, FileExistsError) as e:
+                typer.echo(f"[campaign create] {e}", err=True)
+                raise typer.Exit(1)
+            typer.echo(f"[campaign create] ✓ {campaign_id} at {path}")
+            return
         
         # Initialize platform variables (used in interactive mode, but need to exist for CLI mode too)
         platform_id = None

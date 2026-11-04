@@ -31,6 +31,7 @@ def create_campaign(
     campaign_id: str,
     metadata: dict[str, Any],
     verbose: bool = False,
+    campaigns_dir: Path | None = None,
 ) -> Path:
     """Create a new campaign with metadata.
     
@@ -58,6 +59,7 @@ def create_campaign(
             - project: Project name
             - funding: Funding information
         verbose: Print detailed information
+        campaigns_dir: Where to create it (default: get_campaigns_dir())
         
     Returns:
         Path to created campaign directory (~/.oceanstream/campaigns/{campaign_id})
@@ -66,7 +68,8 @@ def create_campaign(
         ValueError: If campaign already exists or invalid parameters
         OSError: If directory creation fails
     """
-    campaigns_dir = get_campaigns_dir()
+    campaigns_dir = campaigns_dir or get_campaigns_dir()
+    campaigns_dir.mkdir(parents=True, exist_ok=True)
     campaign_dir = campaigns_dir / campaign_id
     metadata_file = campaign_dir / "campaign.json"
     

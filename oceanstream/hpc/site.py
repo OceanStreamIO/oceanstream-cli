@@ -3,7 +3,8 @@
 Nothing site-specific lives in the repository. Each value comes from the
 environment first, then from a site file of ``KEY=value`` lines: the file named
 by ``HPC_SITE_FILE`` (only that one), else ``scripts/hpc/site.env`` in the source
-tree (gitignored), else ``~/.oceanstream/hpc/site.env``. ``scripts/hpc/site.env.example`` lists the keys.
+tree (gitignored), else ``~/.oceanstream/hpc/site.env``.
+``scripts/hpc/site.env.example`` lists the keys.
 
 Assumed cluster shape (docs/hpc.md): a login node that accepts ``sbatch``,
 compute nodes without outbound internet, and a transfer node reachable over SSH.

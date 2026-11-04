@@ -297,7 +297,8 @@ def run_cruise(cluster: Cluster, campaign_dir: Path, *, dry_run: bool = False,
     log(f"{cfg.cruise}: {len(pending)} of {len(cfg.days)} days to process ({cfg.mode} mode); "
         f"state in {state.path}")
     if dry_run:
-        spec = job_spec(cluster, cfg, pending or cfg.days, ("<preset>", cfg.preset))
+        preset = (f"<{cfg.preset}.toml>", cfg.preset) if cfg.preset else ("", "")
+        spec = job_spec(cluster, cfg, pending or cfg.days, preset)
         return {"days": pending, "script": slurm.build(cluster.site, spec).script}
     run = _Run(cluster, cfg, state)
     if pending:
