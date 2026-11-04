@@ -38,7 +38,7 @@ spec:
       containers:
         - name: submitter
           # From .github/workflows/images.yml (publish run on main at 18ea69d).
-          image: ghcr.io/oceanstreamio/oceanstream-cli/hpc-submitter:sha-18ea69d
+          image: ghcr.io/oceanstreamio/oceanstream-cli/hpc-submitter:sha-9703e52
           imagePullPolicy: Always
           command: ["prefect", "worker", "start", "--pool", "oceanstream-hpc", "--type", "process"]
           env:
