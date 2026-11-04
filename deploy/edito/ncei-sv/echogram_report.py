@@ -217,8 +217,13 @@ def render_differences(fs, so, args, out: Path, index: list) -> None:
     step = float(np.median(np.diff(mvbs["ping_time"].values)) / np.timedelta64(1, "s"))
     for high, low, depth_max, above, below in DIFF_PAIRS:
         sub = cells.sel(depth=slice(0, depth_max))
-        result = db_difference(sub, freq_low=f"ES{high}", freq_high=f"ES{low}",
-                               thr=(FLAT_DB, 60.0))
+        try:
+            result = db_difference(sub, freq_low=f"ES{high}", freq_high=f"ES{low}",
+                                   thr=(FLAT_DB, 60.0))
+        except ValueError as e:  # the cruise lacks one of the two frequencies
+            print(json.dumps({"day": args.day, "dsv": f"{high}-{low}", "skipped": str(e)}),
+                  flush=True)
+            continue
         diff = result.difference.transpose("ping_time", "depth").values
         dmax = float(sub["depth"].values[-1])
         cell_txt = (f"cells of {DIFF_CELL[0]} × {step:g} s by {DIFF_CELL[1]} m, from MVBS of "
