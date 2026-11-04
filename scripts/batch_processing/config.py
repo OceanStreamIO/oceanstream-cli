@@ -284,6 +284,10 @@ class RawConversionConfig:
     # Depth
     depth_offset: float = 1.9  # Saildrone transducer depth below waterline (metres)
 
+    # Seconds added to every timestamp of a raw file (file name and data) when the
+    # recorder clock was wrong, e.g. -25200 for a clock 7 h fast. 0 = trust the clock.
+    ping_time_offset_s: float = 0.0
+
     # Crop every channel to this range (metres) at conversion. 0 = keep the full
     # recorded range. Use it when the recording range reaches far past the seabed.
     max_range_m: float = 0.0

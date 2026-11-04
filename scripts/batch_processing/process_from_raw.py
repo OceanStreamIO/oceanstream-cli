@@ -55,6 +55,8 @@ from typing import Optional
 import pandas as pd
 from dotenv import load_dotenv
 
+from oceanstream.echodata.time_correction import shift_datetime, shift_echodata_times
+
 load_dotenv()
 
 logging.basicConfig(
@@ -170,7 +172,7 @@ def _discover_local_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
     for path in root.rglob("*.raw"):
         if not path.is_file():
             continue
-        dt = _parse_raw_datetime(path.name)
+        dt = shift_datetime(_parse_raw_datetime(path.name), cfg.raw.ping_time_offset_s)
         if not _within_date_range(dt, cfg):
             continue
         rel = str(path.relative_to(root))
@@ -236,7 +238,7 @@ def discover_raw_files(cfg: PipelineConfig) -> list[tuple[str, dict]]:
     files_list: list[tuple[str, dict]] = []
     for item in raw_files:
         fname = item["name"]
-        dt = _parse_raw_datetime(fname)
+        dt = shift_datetime(_parse_raw_datetime(fname), cfg.raw.ping_time_offset_s)
 
         if not _within_date_range(dt, cfg):
             continue
@@ -410,6 +412,10 @@ def convert_and_save_echodata(
     # Step 1: Convert to EchoData
     logger.info("  Converting %s → EchoData", file_name)
     echodata = open_raw(str(local_raw_path), sonar_model=cfg.raw.sonar_model)
+    if cfg.raw.ping_time_offset_s:
+        logger.info("  Shifting every timestamp by %+.0f s (recorder clock)",
+                    cfg.raw.ping_time_offset_s)
+        echodata = shift_echodata_times(echodata, cfg.raw.ping_time_offset_s)
 
     if echodata.beam is None:
         logger.warning("  No beam data in %s — skipping", file_name)
@@ -2537,6 +2543,14 @@ def parse_args() -> PipelineConfig:
         default=1.9,
         help="Transducer depth below waterline in metres (default: 1.9 for Saildrone)",
     )
+    parser.add_argument(
+        "--ping-time-offset",
+        type=float,
+        default=0.0,
+        help="Seconds added to every timestamp of the raw files, for a recorder clock that was "
+             "wrong (e.g. -25200 for a clock 7 h fast). File dates are corrected before the "
+             "date filter, so --start-date/--end-date select corrected UTC days.",
+    )
 
     # Storage mode
     parser.add_argument(
@@ -2706,6 +2720,7 @@ def parse_args() -> PipelineConfig:
     cfg.raw.waveform_mode = args.waveform_mode
     cfg.raw.encode_mode = args.encode_mode
     cfg.raw.depth_offset = args.depth_offset
+    cfg.raw.ping_time_offset_s = args.ping_time_offset
     cfg.raw.max_range_m = args.max_range_m
     cfg.raw.sv_float32 = args.sv_float32
     cfg.raw.keep_intermediate = args.keep_intermediate
