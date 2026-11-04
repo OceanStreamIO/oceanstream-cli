@@ -34,13 +34,15 @@ set -uo pipefail
 MODE="${MODE:-sv}"
 : "${CRUISE:?}" "${DAYS:?}"
 # RAW_S3_PREFIX (MODE=sv): read the raw files from this prefix of the project bucket (e.g.
-# a PANGAEA mirror) instead of NCEI; SHIP and NAV_URL are then optional, and without
-# NAV_URL positions come from the NMEA in the raw files. ENCODE_MODE: complex (default),
+# a PANGAEA mirror) instead of NCEI; SHIP is then optional. Positions come from NAV_URL
+# (an R2R nav geoCSV), from NAV_S3_KEY (a GPS parquet prefix in the project bucket, as
+# `oceanstream campaign gps` writes), or else from the NMEA in the raw files.
+# WAVEFORM_MODE: CW (default) or BB for FM pulses. ENCODE_MODE: complex (default),
 # power or auto. CAL_S3_KEY: a calibration XML in the project bucket (--cal-params-file).
 # CODE_S3_KEY: an oceanstream-cli source tarball in the project bucket, used instead of
 # downloading $BRANCH from GitHub. RAW_INCLUDE: only raw files whose names match this regex.
 if [ "$MODE" = sv ] && [ -n "${RAW_S3_PREFIX:-}" ]; then :
-elif [ "$MODE" = sv ]; then : "${SHIP:?}" "${NAV_URL:?}"
+elif [ "$MODE" = sv ]; then : "${SHIP:?}"
 elif [ "$MODE" = report ]; then : "${REPORT_RUNS:?}"
 else : "${PRESET:?}"; fi
 # MODE=report renders echogram_report.py for each day: the stored Sv and each
@@ -185,6 +187,20 @@ if [ "$MODE" = sv ] && [ -n "${NAV_URL:-}" ]; then
         || { log "navigation failed"; exit 4; }
     fetch put "$W/gps/$CRUISE" --bucket "$OCEANSTREAM_S3_BUCKET" --key "$PREFIX/nav" || exit 4
 fi
+if [ "$MODE" = sv ] && [ -n "${NAV_S3_KEY:-}" ]; then
+    GPS_ARGS=(--gps-dir "$W/gps/$CRUISE")
+    log "navigation from s3://$OCEANSTREAM_S3_BUCKET/$NAV_S3_KEY"
+    python - "$OCEANSTREAM_S3_BUCKET" "$NAV_S3_KEY" "$W/gps/$CRUISE" <<'PY' || { log "GPS download failed"; exit 4; }
+import os, sys, boto3
+bucket, prefix, dest = sys.argv[1:4]
+s3 = boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT_URL"])
+for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+    for obj in page.get("Contents", []):
+        if obj["Key"].endswith((".parquet", ".geoparquet")):
+            s3.download_file(bucket, obj["Key"], os.path.join(dest, os.path.basename(obj["Key"])))
+            print(obj["Key"], obj["Size"])
+PY
+fi
 CTD_ARGS=()
 if [ "$MODE" = sv ] && [ -n "${CTD_URL:-}" ]; then
     log "CTD casts"
@@ -218,7 +234,7 @@ run_sv() {
         --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
         --output-container "$container" --stop-after-stage 4 \
-        --waveform-mode CW --encode-mode "${ENCODE_MODE:-complex}" --sv-float32 \
+        --waveform-mode "${WAVEFORM_MODE:-CW}" --encode-mode "${ENCODE_MODE:-complex}" --sv-float32 \
         --sv-range-bin-m "${SV_RANGE_BIN_M:-0.18}" --chunk-ping-time "${CHUNK_PING_TIME:-100}" \
         --n-workers "${DASK_WORKERS:-2}" --memory-limit "${DASK_MEMORY:-20GB}" \
         "${GPS_ARGS[@]+"${GPS_ARGS[@]}"}" "$@" > "$LOGS/$day-$tag.log" 2>&1
@@ -301,6 +317,7 @@ fi
 for day in ${DAYS//,/ }; do
     log "== $day: download"
     if ! fetch raw --ship "${SHIP:-}" --cruise "$CRUISE" --day "$day" --dest "$W/raw/$day" \
+            ${INSTRUMENT:+--instrument "$INSTRUMENT"} \
             ${RAW_S3_PREFIX:+--from-prefix "$RAW_S3_PREFIX"} ${RAW_INCLUDE:+--include "$RAW_INCLUDE"} \
             | tee "$LOGS/$day-raw.json"; then
         FAILED=1; continue
