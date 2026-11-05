@@ -2,7 +2,7 @@
 # oceanstream HPC submitter: Prefect process worker that drives Slurm jobs
 # over SSH, publishes STAC metadata and builds track tiles.
 # =============================================================================
-# Built and published by .github/workflows/images.yml (run it with "publish") as
+# Built and published by .github/workflows/images.yml on every push to main as
 #   ghcr.io/oceanstreamio/oceanstream-cli/hpc-submitter:sha-<commit>
 # =============================================================================
 

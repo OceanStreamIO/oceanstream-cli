@@ -5,7 +5,7 @@
 # scripts/batch_processing/ import, and the scripts themselves. It runs nothing
 # by itself; downstream images (denoise-lab-worker) add their own entrypoint.
 #
-# Built and published by .github/workflows/images.yml (run it with "publish") as
+# Built and published by .github/workflows/images.yml on every push to main as
 #   ghcr.io/oceanstreamio/oceanstream-cli/echodata:sha-<commit>
 # Locally: docker build -f deploy/Dockerfile.echodata .
 # =============================================================================
