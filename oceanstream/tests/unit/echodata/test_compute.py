@@ -625,3 +625,50 @@ class TestChannelSelection:
         beam = ed["Sonar/Beam_group1"]
         assert dict(beam.sizes) == {"channel": 1, "ping_time": 2, "range_sample": 3}
         assert beam["ping_time"].values.tolist() == [1, 3]
+
+
+class TestHoldEnvironment:
+    """Sound speed is held, not extrapolated, past the Environment records."""
+
+    @staticmethod
+    def _echodata():
+        import numpy as np
+        import pandas as pd
+        import xarray as xr
+
+        pings = pd.date_range("2024-06-04T23:00", "2024-06-05T00:47", freq="1min").values
+        beam = xr.Dataset(coords={"channel": ["ch38"], "ping_time": pings})
+        # HB2403 2024-06-04: two records seconds apart, then none for the last hour.
+        env = xr.Dataset(
+            {"sound_speed_indicative": ("time1", [1501.3, 1502.8])},
+            coords={"time1": np.array(["2024-06-04T23:52:20", "2024-06-04T23:52:25"],
+                                      dtype="datetime64[ns]")},
+        )
+        ed = _FakeEchoData(beam)
+        ed["Environment"] = env
+        return ed, pings
+
+    def test_echopype_interpolation_stays_within_the_records(self):
+        from echopype.calibrate.env_params import harmonize_env_param_time
+
+        from oceanstream.echodata.compute.sv import hold_environment
+
+        ed, pings = self._echodata()
+        assert hold_environment(ed)
+        import xarray as xr
+
+        c = harmonize_env_param_time(ed["Environment"]["sound_speed_indicative"],
+                                     ping_time=xr.DataArray(pings, dims="ping_time",
+                                                            coords={"ping_time": pings}))
+        assert float(c.min()) == pytest.approx(1501.3)
+        assert float(c.max()) == pytest.approx(1502.8)
+
+    def test_records_covering_the_pings_are_left_alone(self):
+        import numpy as np
+
+        from oceanstream.echodata.compute.sv import hold_environment
+
+        ed, pings = self._echodata()
+        env = ed["Environment"].assign_coords(time1=np.array([pings[0], pings[-1]]))
+        ed["Environment"] = env
+        assert not hold_environment(ed)

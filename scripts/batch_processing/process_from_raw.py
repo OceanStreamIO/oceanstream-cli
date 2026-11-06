@@ -1203,13 +1203,14 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
     import echopype as ep
     import xarray as xr
 
-    from oceanstream.echodata.compute.sv import fill_transmit_type, select_channel
+    from oceanstream.echodata.compute.sv import fill_transmit_type, hold_environment, select_channel
 
     parts = []
     for channel, pings in by_channel.items():
         ed_ch = ep.open_converted(ed_zarr_path, chunks={})
         n_samples = select_channel(ed_ch, channel, pings)
         fill_transmit_type(ed_ch)
+        hold_environment(ed_ch)
         ed_ch = ed_ch.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
         logger.info("  %s: %d pings, %d range samples", channel, int(pings.sum()), n_samples)
         kwargs, used = compute_kwargs, None
@@ -1356,6 +1357,9 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
     ed = ep.open_converted(ed_zarr_path, chunks={})
     ed = ed.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
     encode_mode = _encode_mode_of(ed) if cfg.raw.encode_mode == "auto" else cfg.raw.encode_mode
+    from oceanstream.echodata.compute.sv import hold_environment
+
+    hold_environment(ed)
 
     # Compute Sv
     compute_kwargs = {}

@@ -73,6 +73,44 @@ def fill_transmit_type(echodata: "EchoData") -> list[str]:
     return changed
 
 
+def hold_environment(echodata: "EchoData") -> bool:
+    """Extend the Environment records to the first and last ping, holding their values.
+
+    echopype interpolates the Environment group's time-varying parameters (sound speed,
+    absorption) onto the pings linearly and extrapolates past its records. Two records
+    seconds apart with slightly different sound speeds then set the trend for every ping
+    after them: on HB2403 2024-06-04 the sound speed fell from 1502 to -494 m/s over the
+    last hour of the day, and with it the range of every sample. Here the records nearest
+    the day's first and last pings are repeated at those pings, so echopype interpolates
+    between records and holds the end values beyond them.
+
+    Returns True when the Environment group was changed.
+    """
+    import numpy as np
+
+    if "Environment" not in echodata.group_paths:
+        return False
+    env = echodata["Environment"]
+    if env is None or "time1" not in env.dims or env.sizes["time1"] < 2:
+        return False
+    times = [echodata[g]["ping_time"].values for g in echodata.group_paths
+             if g.startswith("Sonar/Beam_group") and echodata[g] is not None
+             and "ping_time" in echodata[g].coords]
+    if not times:
+        return False
+    pings = np.concatenate(times)
+    recorded = env["time1"].values
+    ends = [t for t in (pings.min(), pings.max()) if t < recorded.min() or t > recorded.max()]
+    if not ends:
+        return False
+    echodata["Environment"] = env.reindex(
+        time1=np.unique(np.concatenate([recorded, np.asarray(ends, dtype=recorded.dtype)])),
+        method="nearest",
+    )
+    logger.info("Environment records held to the first and last ping")
+    return True
+
+
 def channel_pings(
     echodata: "EchoData", group: str = "Sonar/Beam_group1"
 ) -> dict[str, "np.ndarray"] | None:
