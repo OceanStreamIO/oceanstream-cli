@@ -1,0 +1,60 @@
+# tpos-sd-2023 moved onto the shelf: noise caps, reference bands and integration limits for a seabed in range.
+
+[preset]
+key = "saildrone-shelf"
+name = "Saildrone, shelf and slope"
+status = "draft"
+summary = "tpos-sd-2023 with background noise caps, attenuation and transient bands and integration limits for a seabed at 30-800 m."
+description = """
+Starting point for the Saildrone surveys on shelves and slopes: AFSC in the Chukchi (2018) and Bering (2020) seas, SWFSC off the US West Coast (2019 and 2022). tpos-sd-2023 was built for 4500 m of water, where the seabed is never in range.
+
+Over a shelf the range below the seabed fills with multiple echoes, so no part of a ping is noise only and the background estimate rises to the cap. With tpos-sd-2023 the 38 kHz estimate sat at its -125 dB cap all day on SD1022 2018-07-06 and 2018-09-12 (seabed 63 and 41 m), and reached -135.5 dB on SD1076 2022-07-20 (seabed 106 m). Where the seabed was out of range (SD1076 2022-08-25, seabed 600-800 m) it was -147.5 dB at 38 kHz and -140.7 dB at 200 kHz, and SD1047 2019 measured -150 to -152 dB and -141 dB. The caps here are those levels plus about 6 dB, as in research-vessel-nordic-shelf.
+
+The attenuation and transient reference bands of tpos-sd-2023 (400-500 m and below 100-200 m at 38 kHz) lie below the seabed on the shelf; here they are 10-28 m and from 15 m, above the seabed on all but the shallowest stretches. Integration starts at 5 m, below the transducers (1.9 m) and their ring-down, which with tpos-sd-2023 made up more than half of the 38 kHz NASC (SD1076 2022-07-20 and 2022-08-25). It stops where a channel's noise as Sv exceeds -85 dB at 200 kHz (about 130 m; on SD1076 2022-08-25 the 130-400 m band was about 97 % of the 200 kHz NASC, all noise) and -80 dB at 38 kHz (about 750 m), so the deep scattering layer at 500-800 m, some 20 dB above the noise, is kept; at -85 dB it was cut at 610 m.
+"""
+derived_from = "tpos-sd-2023"
+
+[preset.applies_to]
+platforms = ["usv"]
+regimes = ["shelf", "slope"]
+water_depth_m = [20.0, 1000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT Mini"]
+
+[[preset.validations]]
+cruise = "SD1076-2022-06"
+days = ["2022-07-20", "2022-08-25"]
+outcome = "pending"
+notes = "EDITO rounds 1-2, 2026-11-05, on the stored Sv against tpos-sd-2023 with --seabed-mask. 38 kHz clean on both days. Mean column NASC on 2022-08-25: 0-5 m (ring-down) 52,949 -> 1,219 at 38 kHz; 200 kHz integrated to 130 m instead of 400 m (153,967 -> 4,110, the rest noise); with -80 dB at 38 kHz the deep scattering layer is integrated to 740 m (500-610 m: 7,081; 610-750 m: 3,778). Chosen for all nine Saildrone runs on MareNostrum 5."
+reference = "s3://oceanstream-bucket/edito-tests/SD1076-2022-06/"
+
+[[preset.validations]]
+cruise = "SD1022-201801"
+days = ["2018-07-06", "2018-09-12"]
+outcome = "pending"
+notes = "EDITO round 1, 2026-11-05, on the stored Sv against tpos-sd-2023 with --seabed-mask. Background removal takes 2.3 % of water-column cells at 38 kHz and 0.9 % at 200 kHz on 2018-07-06 (tpos-sd-2023: 44.2 % and 39.9 %, its estimate pinned at the cap), 0.1 % and 0.0 % on 2018-09-12 (11.1 % and 30.6 %); the weak water column at about -85 dB is kept and the vertical streaks are fainter."
+reference = "s3://oceanstream-bucket/edito-tests/SD1022-201801/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 10.0, lower_limit_sl = 28.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 15.0, depth_bin = 10.0, n_pings = 50, thr_dB = 15.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "5.0dB", background_noise_max = "-141.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 10.0, lower_limit_sl = 28.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 15.0, depth_bin = 10.0, n_pings = 30, thr_dB = 9.0, maxts = -35.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-135.0dB" }
+
+[echodata.integration.38000]
+start_depth_m = 5.0
+max_noise_sv_db = -80.0
+
+[echodata.integration.200000]
+start_depth_m = 5.0
+max_noise_sv_db = -85.0

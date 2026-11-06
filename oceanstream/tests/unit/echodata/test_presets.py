@@ -232,13 +232,16 @@ class TestMatch:
         matches = match_presets([18, 38, 70, 120, 200], platform="research-vessel",
                                 regime="open-ocean", water_depth_m=(3000, 5500))
         family = {m.preset.key for m in matches if not m.missing_khz}
-        # The rejected -scaled, -sensitive and -perping trials are deprecated and never match.
+        # The rejected -scaled, -sensitive, -perping and -snr10-pw20 trials are deprecated
+        # and never match.
         open_ocean = {"research-vessel-open-ocean", "research-vessel-open-ocean-ryan-tn",
                       "research-vessel-open-ocean-ryan-short",
+                      "research-vessel-open-ocean-ryan-short-snr10",
+                      "research-vessel-open-ocean-ryan-short-snr10-int",
                       "research-vessel-open-ocean-ryan-margin"}
         assert family == open_ocean | {"research-vessel-nordic-shelf"}
         # The shelf preset covers the frequencies but ranks below the open-ocean ones.
-        assert {m.preset.key for m in matches[:4]} == open_ocean
+        assert {m.preset.key for m in matches[:len(open_ocean)]} == open_ocean
 
     def test_saildrone_survey_prefers_the_adopted_preset(self):
         matches = match_presets([38, 200], platform="usv", regime="open-ocean",
@@ -276,7 +279,9 @@ class TestCli:
         result = self._run("match", "-f", "18,38,70,120,200", "--platform", "research-vessel",
                            "--regime", "open-ocean")
         assert result.exit_code == 0, result.output
-        assert result.output.splitlines()[0].endswith("research-vessel-open-ocean [draft]")
+        # The production preset (adopted on SE2204) ranks above the drafts.
+        assert result.output.splitlines()[0].endswith(
+            "research-vessel-open-ocean-ryan-short-snr10 [production]")
 
     def test_check_coverage(self):
         assert self._run("check", "tpos-sd-2023", "-f", "38,200").exit_code == 0
@@ -307,6 +312,15 @@ class TestIntegrationSection:
         preset = self._with(
             "[echodata.integration.38000]\nstart_depth_m = 15\nmax_noise_sv_db = -85\n")
         assert preset.integration == {38000: {"start_depth_m": 15.0, "max_noise_sv_db": -85.0}}
+
+    def test_max_depth_is_read_and_must_be_below_the_start(self):
+        from oceanstream.echodata.presets import PresetError
+
+        preset = self._with(
+            "[echodata.integration.38000]\nstart_depth_m = 15\nmax_depth_m = 1000\n")
+        assert preset.integration == {38000: {"start_depth_m": 15.0, "max_depth_m": 1000.0}}
+        with pytest.raises(PresetError, match="deeper than start_depth_m"):
+            self._with("[echodata.integration.38000]\nstart_depth_m = 15\nmax_depth_m = 10\n")
 
     def test_unknown_key_is_an_error(self):
         from oceanstream.echodata.presets import PresetError

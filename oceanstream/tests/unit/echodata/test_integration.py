@@ -153,6 +153,15 @@ class TestIntegrationLayer:
         assert np.isnan(sv[7:]).all()
         assert np.isnan(out["depth"].values[0, 0, 7:]).all()
 
+    def test_cells_below_the_max_depth_are_left_out(self):
+        # 18 kHz on EX2506 records past the 38 kHz range, so the seabed it sees there is
+        # never masked, and its noise is too low for a noise limit to stop it in time.
+        ds = _day()
+        out = integration_view(ds, {38000: {"start_depth_m": 2.0, "max_depth_m": 12.0}})
+        sv, depth = out["Sv"].values[0, 0], out["depth"].values[0, 0]
+        assert np.isnan(sv[:2]).all() and (sv[2:13] == -60.0).all()
+        assert np.isnan(sv[13:]).all() and np.isnan(depth[13:]).all()
+
     def test_a_channel_without_an_entry_is_not_limited(self):
         ds = self.with_noise(_day())
         out = integration_view(ds, {120000: {"start_depth_m": 5.0, "max_noise_sv_db": -120.0}})

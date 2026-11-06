@@ -1,0 +1,94 @@
+# research-vessel-open-ocean-ryan-short-snr10 with echo-integration limits for MVBS and NASC.
+
+[preset]
+key = "research-vessel-open-ocean-ryan-short-snr10-int"
+name = "Research vessel, open ocean, Ryan detector, short block, SNR 10 dB, integration limits"
+status = "draft"
+summary = "-snr10's filters; MVBS and NASC from 15 m down to 1500, 1000, 600, 300 and 150 m at 18-200 kHz, or where the noise as Sv reaches -75 dB (18, 38 kHz) or -80 dB (70-200 kHz)."
+description = """
+research-vessel-open-ocean-ryan-short-snr10 integrates every channel over its whole recorded range. On EX2506 2025-08-26 the mean column NASC was 3.0 million m2 nmi-2 at 18 kHz in the first 10 m (the transducers' ring-down) against 197 from 10 to 1000 m, and below 1000 m, where only noise samples that clear the SNR test by chance remain, 678,000 at 38 kHz and 729,000 at 70 kHz against 423 and 9,860 above. On SE2204 2022-07-05, 38 kHz below 1000 m added 1,459 to 1,853 above, and 200 kHz integrated to 500 m.
+
+Integration here starts at 15 m depth, below the transducers (5-8 m on these ships) and their ring-down. It stops at a fixed depth per channel, 1500 m at 18 kHz, 1000 m at 38 kHz (below the deep scattering layer, which reaches about 950 m on SE2204), 600 m at 70 kHz, 300 m at 120 kHz and 150 m at 200 kHz, or where the channel's noise as Sv exceeds -75 dB (18, 38 kHz) or -80 dB (70-200 kHz), whichever is shallower. A noise limit alone is not enough: the deep speckle is spiky noise above the mean level, and at 18 kHz the noise (-168 dB on EX2506) is so low that even -85 dB ends integration only at 3400 m, while 18 kHz records past the 38 kHz range, so the seabed it sees beyond that range (4500-5000 m on EX2506 2025-08-26) is never masked. The Sv stores keep the whole range; the filters are -snr10's, unchanged.
+"""
+derived_from = "research-vessel-open-ocean-ryan-short-snr10"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "SE2204"
+days = ["2022-06-26", "2022-07-05"]
+outcome = "pending"
+notes = "EDITO 2026-11-06 on the stored Sv against -snr10 (code c0f96b6), mean column NASC by depth on 2022-07-05: 38 kHz 1000-1500 m 1,459 -> 0, 500-1000 m 968 -> 879, 15-500 m unchanged; 70 kHz 500-1000 m 1,897 -> 22; 120 kHz 200-500 m 4,418 -> 0; 200 kHz 200-500 m 13,120 -> 0 and 15-200 m 9,192 -> 98 (its noise reaches -80 dB at about 95 m). 2022-06-26 the same way (200 kHz 15-200 m 6,610 -> 64). Chosen to reprocess SE2204."
+reference = "s3://oceanstream-bucket/edito-tests/SE2204/"
+
+[[preset.validations]]
+cruise = "EX2506"
+days = ["2025-08-26", "2025-09-03"]
+outcome = "pending"
+notes = "EDITO 2026-11-06 on the stored Sv against -snr10 (code c0f96b6), mean column NASC by depth: 18 kHz first 15 m (ring-down) 3,015,284 -> 9 and 3,016,394 -> 2, below 1500 m (the seabed beyond the 38 kHz range) 191,857 -> 0 and 273,453 -> 0; 38 kHz below 1500 m 678,408 -> 0 and 111,479 -> 0; 70 kHz 1000-1500 m 728,996 -> 0; 15-1000 m unchanged at 18 and 38 kHz. Chosen to reprocess EX2506."
+reference = "s3://oceanstream-bucket/edito-tests/EX2506/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 35, ping_window = 60, SNR_threshold = "10.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 25, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "10.0dB", background_noise_max = "-110.0dB" }
+
+# Echo integration (MVBS and NASC): from start_depth_m to max_depth_m, or to where the noise as Sv exceeds max_noise_sv_db.
+[echodata.integration.18000]
+start_depth_m = 15.0
+max_depth_m = 1500.0
+max_noise_sv_db = -75.0
+
+[echodata.integration.38000]
+start_depth_m = 15.0
+max_depth_m = 1000.0
+max_noise_sv_db = -75.0
+
+[echodata.integration.70000]
+start_depth_m = 15.0
+max_depth_m = 600.0
+max_noise_sv_db = -80.0
+
+[echodata.integration.120000]
+start_depth_m = 15.0
+max_depth_m = 300.0
+max_noise_sv_db = -80.0
+
+[echodata.integration.200000]
+start_depth_m = 15.0
+max_depth_m = 150.0
+max_noise_sv_db = -80.0

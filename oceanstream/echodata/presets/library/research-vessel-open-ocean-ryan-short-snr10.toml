@@ -1,0 +1,66 @@
+# research-vessel-open-ocean-ryan-short with a 10 dB background SNR threshold on every channel.
+
+[preset]
+key = "research-vessel-open-ocean-ryan-short-snr10"
+name = "Research vessel, open ocean, Ryan detector, short block, SNR 10 dB"
+status = "production"
+summary = "A 10 dB background SNR threshold on every channel."
+description = """
+On SE2204 (R/V Oscar Elton Sette) the transit stretches raise the 38 kHz noise floor, and research-vessel-open-ocean-ryan-short keeps bright speckle below about 600 m there. The noise estimate itself is near the true level (about -140 dB at depth, under the cap), but a sample of pure noise passes a 5 dB SNR test about 1.6 % of the time, and range compensation makes those samples bright at depth. A 10 dB threshold lets pure noise through about 0.002 % of the time, at the cost of weak scatterers less than 10 dB above the noise.
+"""
+derived_from = "research-vessel-open-ocean-ryan-short"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "SE2204"
+days = ["2022-06-26", "2022-07-05"]
+outcome = "adopted"
+notes = "Adopted 2026-11-05 for the whole SE2204 cruise, processed on MareNostrum 5 (job 48571495, 24 days, rerun the same night after a seabed-detector fix) and published; the 2022-07-05 NASC there equals the EDITO run's. Chosen in round 1 (2026-11-05, against research-vessel-open-ocean-ryan-short on the same stored Sv). The background step blanks 31.8 % of 38 kHz cells on 2022-07-05 (ryan-short 20.5 %) and 17.3 % on 2022-06-26 (11.4 %); the speckle below 1000 m in the noisy stretches (00:47-04:08, 10:52-16:30, 21:00-24:00 UTC on 2022-07-05) is gone and the scattering layers down to about 950 m are kept. At 70 kHz the noise speckle below about 600 m is removed (63.8 % of cells blanked, was 49.4 %); the faint layer at 600-700 m, at the 70 kHz range limit, is thinned with it."
+reference = "s3://oceanstream-bucket/hpc/products/SE2204/collection.json"
+
+[[preset.validations]]
+cruise = "EX2506"
+days = ["2025-08-26", "2025-09-03"]
+outcome = "pending"
+notes = "EDITO 2026-11-05: water column clean to about 1000 m at 38 kHz in 2000-4500 m of water; spiky noise leaves 1-5 % of samples below 1000 m in some hours (outside the 10-1000 m NASC band). Chosen for the MareNostrum 5 run."
+reference = "s3://oceanstream-bucket/edito-tests/EX2506/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 35, ping_window = 60, SNR_threshold = "10.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 30, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 25, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 20, ping_window = 50, SNR_threshold = "10.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 15, ping_window = 40, SNR_threshold = "10.0dB", background_noise_max = "-110.0dB" }

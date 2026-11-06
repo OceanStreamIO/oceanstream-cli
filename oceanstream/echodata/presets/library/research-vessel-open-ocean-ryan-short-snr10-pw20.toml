@@ -1,0 +1,59 @@
+# research-vessel-open-ocean-ryan-short with a 10 dB background SNR threshold and 20-ping noise blocks.
+
+[preset]
+key = "research-vessel-open-ocean-ryan-short-snr10-pw20"
+name = "Research vessel, open ocean, Ryan detector, short block, SNR 10 dB, 20-ping noise blocks"
+status = "deprecated"
+summary = "A 10 dB background SNR threshold and 20-ping noise blocks."
+description = """
+research-vessel-open-ocean-ryan-short-snr10 with background noise estimated over blocks of 20 pings instead of 40-60, so the estimate follows the noise floor as it changes during transits (SE2204 pings about every 2 s, so a block is about 40 s).
+"""
+derived_from = "research-vessel-open-ocean-ryan-short"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["open-ocean", "slope"]
+water_depth_m = [1000.0, 6000.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT"]
+
+[[preset.validations]]
+cruise = "SE2204"
+days = ["2022-06-26", "2022-07-05"]
+outcome = "rejected"
+notes = "Rejected 2026-11-05 (round 1, same stored Sv). The 20-ping noise window adds nothing to research-vessel-open-ocean-ryan-short-snr10: 38 kHz cells blanked 28.4 % on 2022-07-05 (snr10 31.8 %) and 17.2 % on 2022-06-26 (17.3 %), other channels within 1 point, and the deep 38 kHz echogram is no cleaner."
+reference = "s3://noaa-wcsd-pds/data/raw/Oscar_Elton_Sette/SE2204/EK80/"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+
+[echodata.denoise.frequency_params.18000]
+impulse     = { vertical_bin_size = "6m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 250.0, lower_limit_sl = 500.0, num_side_pings = 15, threshold = 6.0 }
+transient   = { exclude_above = 300.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 35, ping_window = 20, SNR_threshold = "10.0dB", background_noise_max = "-130.0dB" }
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 500.0, num_side_pings = 100, threshold = 10.0 }
+transient   = { exclude_above = 200.0, depth_bin = 20.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 30, ping_window = 20, SNR_threshold = "10.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "4m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 300.0, num_side_pings = 15, threshold = 5.0 }
+transient   = { exclude_above = 200.0, depth_bin = 8.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 25, ping_window = 20, SNR_threshold = "10.0dB", background_noise_max = "-120.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "3m", ping_lags = [1, 2], threshold_db = 9.0 }
+attenuation = { upper_limit_sl = 150.0, lower_limit_sl = 250.0, num_side_pings = 80, threshold = 7.0 }
+transient   = { exclude_above = 150.0, depth_bin = 15.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 20, ping_window = 20, SNR_threshold = "10.0dB", background_noise_max = "-115.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient   = { exclude_above = 100.0, depth_bin = 10.0, n_pings = 8, thr_dB = 6.0, maxts = -35.0, detector = "ryan", percentile = 15.0 }
+background  = { range_window = 15, ping_window = 20, SNR_threshold = "10.0dB", background_noise_max = "-110.0dB" }

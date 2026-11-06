@@ -91,8 +91,9 @@ class Preset:
     #: Chain the mask filters in ``methods`` order (Ryan et al. 2015) instead of OR-combining
     #: masks each made from the source Sv.
     cascade: bool = False
-    #: {Hz: {"start_depth_m": m, "max_noise_sv_db": dB}}: the layer each channel is
-    #: integrated over in MVBS and NASC (products.integration_view). Empty: the whole range.
+    #: {Hz: {"start_depth_m": m, "max_depth_m": m, "max_noise_sv_db": dB}}: the layer each
+    #: channel is integrated over in MVBS and NASC (products.integration_view). Empty: the
+    #: whole range.
     integration: dict[int, dict[str, float]] = field(default_factory=dict)
 
     @property
@@ -273,12 +274,13 @@ def parse_preset(text: str, *, source: Path | None = None, key: str = "") -> Pre
         raise PresetError(f"{label}: {e}") from e
 
 
-INTEGRATION_KEYS = frozenset({"start_depth_m", "max_noise_sv_db"})
+INTEGRATION_KEYS = frozenset({"start_depth_m", "max_depth_m", "max_noise_sv_db"})
 
 
 def _integration(raw: Any, params: dict[int, Any]) -> dict[int, dict[str, float]]:
     """``[echodata.integration.<Hz>]`` tables: where each channel's integration starts
-    (``start_depth_m``) and the noise level, in Sv, at which it ends (``max_noise_sv_db``)."""
+    (``start_depth_m``), and where it ends: at ``max_depth_m`` or where its noise, in Sv,
+    exceeds ``max_noise_sv_db``, whichever is shallower."""
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -302,6 +304,8 @@ def _integration(raw: Any, params: dict[int, Any]) -> dict[int, dict[str, float]
             if name == "start_depth_m" and value < 0:
                 raise PresetError(f"{where}.start_depth_m must not be negative.")
             entry[name] = float(value)
+        if entry.get("max_depth_m", float("inf")) <= entry.get("start_depth_m", 0.0):
+            raise PresetError(f"{where}.max_depth_m must be deeper than start_depth_m.")
         out[freq] = entry
     return out
 

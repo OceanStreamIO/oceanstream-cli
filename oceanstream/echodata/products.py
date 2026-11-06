@@ -87,9 +87,10 @@ INTEGRATION_NOTE = (
 def _outside_layer(ds: xr.Dataset, layers: Mapping[int, Mapping[str, float]]):
     """Cells outside each channel's integration layer, and the layer per channel label.
 
-    A channel's layer starts at ``start_depth_m`` and ends where its noise, as Sv at
-    that range (the per-ping noise level plus spreading and absorption loss), exceeds
-    ``max_noise_sv_db``. Frequencies without an entry are not limited.
+    A channel's layer starts at ``start_depth_m`` and ends at ``max_depth_m`` or where its
+    noise, as Sv at that range (the per-ping noise level plus spreading and absorption loss),
+    exceeds ``max_noise_sv_db``, whichever comes first. Frequencies without an entry are not
+    limited.
     """
     import xarray as xr
 
@@ -97,15 +98,17 @@ def _outside_layer(ds: xr.Dataset, layers: Mapping[int, Mapping[str, float]]):
     extra = [d for d in freqs.dims if d != "channel"]
     if extra:
         freqs = freqs.isel({d: 0 for d in extra})
-    start, noise_max, used = [], [], {}
+    start, depth_max, noise_max, used = [], [], [], {}
     for label, freq in zip(ds["channel"].values, np.ravel(freqs.values), strict=True):
         entry = next((v for f, v in layers.items() if np.isclose(float(f), float(freq))), {})
         start.append(float(entry.get("start_depth_m", 0.0)))
+        depth_max.append(float(entry.get("max_depth_m", np.inf)))
         noise_max.append(float(entry.get("max_noise_sv_db", np.inf)))
         if entry:
             used[str(label)] = dict(entry)
     channel = {"channel": ds["channel"].values}
-    outside = ds["depth"] < xr.DataArray(start, dims=["channel"], coords=channel)
+    outside = (ds["depth"] < xr.DataArray(start, dims=["channel"], coords=channel)) | (
+        ds["depth"] > xr.DataArray(depth_max, dims=["channel"], coords=channel))
     limited = np.isfinite(noise_max)
     if limited.any() and {"background_noise", "echo_range", "sound_absorption"} <= set(ds.variables):
         spreading_loss, absorption_loss = _range_terms(ds)
