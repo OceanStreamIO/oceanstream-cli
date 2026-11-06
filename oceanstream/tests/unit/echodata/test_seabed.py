@@ -690,6 +690,18 @@ class TestInterleavedSeabed:
         np.testing.assert_allclose(out[:5], 430.0, atol=0.2)
         assert np.isnan(out[5])  # too far from a line, and no echo
 
+    def test_a_carried_line_moves_up_to_the_echo_under_it(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        # HB2403 2024-06-07 11:28: a line carried at 470 m, the ping's own seabed echo
+        # (-26 dB, too weak for the -25 dB rule) starting at 430 m.
+        range_m = np.arange(0, 500, 0.2)
+        sv = np.full((3, range_m.size), -80.0)
+        sv[:, (range_m >= 430.0) & (range_m < 440.0)] = -26.0
+        line = np.full(3, 470.0)
+        out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, line)
+        np.testing.assert_allclose(out, 430.0, atol=0.2)
+
     def test_a_layer_on_a_flat_seabed_is_not_taken_for_seabed(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 

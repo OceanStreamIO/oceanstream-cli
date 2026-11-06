@@ -1053,6 +1053,8 @@ def _echo_top(
     rate_window_s: float = 30.0,
     max_spread_m: float = 5.0,
     near_s: float = 120.0,
+    backing_sv: float = -35.0,
+    backing_m: float = 10.0,
     smooth_m: float = 1.0,
 ) -> np.ndarray:
     """*line* raised, ping by ping, to the start of a seabed echo found above it.
@@ -1072,7 +1074,10 @@ def _echo_top(
     own edges (*edge*) spread by more than *max_spread_m* (interquartile range) within
     half that window, as where a bridged line lies flat over rough ground. On a flat
     seabed the weaker thresholds never apply, so a fish layer resting on it is not taken
-    for seabed.
+    for seabed. A ping whose own profile holds nothing of *backing_sv* within *backing_m*
+    of the line is searched the same way: its line was carried over from its neighbours
+    (bridged or interpolated), not drawn on its own echo (HB2403 2024-06-07 11:28, a
+    -26 dB seabed echo starting at 430 m under a line carried at 470 m).
 
     A ping without a line within *near_s* of one with a line, as where the seabed comes
     back into range, is searched the same way around the nearest line, down to 20 m below
@@ -1125,6 +1130,10 @@ def _echo_top(
                                   & (range_1d <= ref[p] + below))
             if span.size == 0:
                 continue
+            if kind == 0:
+                near = np.abs(range_1d - ref[p]) <= backing_m
+                if not (row[near] >= backing_sv).any():
+                    kind = 1
             start_sv, step_sv = (slope_sv, slope_step_sv) if kind == 1 else (seabed_sv, seabed_step_sv)
             strong = span[row[span] >= start_sv]
             if strong.size == 0:
