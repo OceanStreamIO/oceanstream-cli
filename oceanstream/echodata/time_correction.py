@@ -41,12 +41,20 @@ def shift_dataset_times(ds: Any, seconds: float) -> Any:
 
 
 def shift_echodata_times(echodata: Any, seconds: float) -> Any:
-    """Move every timestamp in every group of an echopype ``EchoData`` by *seconds*."""
+    """Move every timestamp in every group of an echopype ``EchoData`` by *seconds*.
+
+    Each group's own variables are shifted once, on the DataTree node.
+    ``echodata[group]`` would also return the coordinates a child group inherits
+    (``/Platform/NMEA`` gets ``time1`` from ``/Platform``), which would be shifted
+    a second time and no longer align with the parent's.
+    """
     if not seconds:
         return echodata
+    tree = echodata._tree
     for group in echodata.group_paths:
-        ds = echodata[group]
-        if ds is None or group == "Top-level":
+        if group == "Top-level":
             continue
-        echodata[group] = shift_dataset_times(ds, seconds)
+        node = tree[group]
+        if node.has_data or node.has_attrs:
+            node.dataset = shift_dataset_times(node.to_dataset(inherit=False), seconds)
     return echodata

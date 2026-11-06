@@ -482,11 +482,14 @@ def _crop_echodata_range(echodata, max_range_m: float):
 
 
 def _detect_pulse_category(echodata) -> str:
-    """Detect short_pulse vs long_pulse from transmit_duration_nominal."""
+    """Detect short_pulse vs long_pulse from transmit_duration_nominal; FM pings are broadband."""
     import numpy as np
 
     try:
-        td = echodata["Sonar/Beam_group1"].transmit_duration_nominal
+        beam = echodata["Sonar/Beam_group1"]
+        if "transmit_type" in beam and np.isin(beam.transmit_type.values, ["LFM", "FMD"]).any():
+            return "broadband"
+        td = beam.transmit_duration_nominal
         first_ping = td.isel(ping_time=0).values.astype(float)
         # If any channel has 200 kHz, it's short pulse
         freqs = echodata["Sonar/Beam_group1"].frequency_nominal.values
@@ -646,6 +649,59 @@ def _encode_mode_of(ed) -> str:
     return "complex" if beam is not None and "backscatter_i" in beam.data_vars else "power"
 
 
+def _recording_order(path: str) -> tuple[str, str]:
+    """Sort key: the file's D<date>-T<time> stamp, then its name.
+
+    Sorting by name alone breaks when the file prefix changes during a day (HB2401
+    2024-02-15: HB-D20240215-T145956 ... then D20240215-T183215 ...), and echopype
+    refuses to combine files out of time order.
+    """
+    name = Path(path).name
+    stamp = re.search(r"D(\d{8})-T(\d{6})", name)
+    return (stamp.group(1) + stamp.group(2) if stamp else "", name)
+
+
+def _split_by_vendor_settings(members: list[tuple[str, object]]) -> list[list[tuple[str, object]]]:
+    """Files grouped by identical ``Vendor_specific`` groups (filters, decimation), in order.
+
+    echopype refuses to combine files whose filter settings differ, e.g. when the
+    transceiver settings change during the day.
+    """
+    parts: list[list[tuple[str, object]]] = []
+    for path, ed in members:
+        vendor = ed["Vendor_specific"]
+        for part in parts:
+            ref = part[0][1]["Vendor_specific"]
+            if (vendor is None and ref is None) or (
+                    vendor is not None and ref is not None and vendor.identical(ref)):
+                part.append((path, ed))
+                break
+        else:
+            parts.append([(path, ed)])
+    return parts
+
+
+def _combine_parts(
+    groups: dict[str, list[tuple[str, object]]], day_key: str, category: str,
+) -> list[tuple[str, list[tuple[str, object]]]]:
+    """(Zarr name suffix, files) for each set of files that can be combined together.
+
+    Files whose filter settings differ cannot be combined either: each set of settings
+    is combined on its own, and their Sv joined in stage 4 like the sample types.
+    """
+    parts: list[tuple[str, list[tuple[str, object]]]] = []
+    for mode, members in groups.items():
+        settings = _split_by_vendor_settings(members)
+        if len(settings) > 1:
+            logger.info("  %s/%s %s files change filter settings during the day: %s — "
+                        "combined apart", day_key, category, mode,
+                        ", ".join(str(len(s)) for s in settings))
+        mode_suffix = f"-{mode}" if len(groups) > 1 else ""
+        for i, part in enumerate(settings):
+            parts.append((mode_suffix + (f"-{i + 1}" if len(settings) > 1 else ""), part))
+    return parts
+
+
 def combine_echodata_day(
     ed_zarr_paths: list[str],
     day_key: str,
@@ -654,8 +710,8 @@ def combine_echodata_day(
 ) -> str | list[str]:
     """Combine per-file EchoData Zarrs into one per-day EchoData Zarr.
 
-    A day whose files hold different sample types (complex and power/angle) gives one
-    Zarr per type, returned as a list.
+    A day whose files hold different sample types (complex and power/angle), or whose
+    filter settings change, gives one Zarr per type and set of settings, returned as a list.
 
     Follows echopype's recommended pattern:
     1. Open each EchoData Zarr lazily (chunks={})
@@ -669,7 +725,8 @@ def combine_echodata_day(
     logger.info("Combining %d EchoData files for %s/%s", len(ed_zarr_paths), day_key, category)
 
     ed_list = []
-    for zarr_path in sorted(ed_zarr_paths):
+    ordered = sorted(ed_zarr_paths, key=_recording_order)
+    for zarr_path in ordered:
         ed = ep.open_converted(zarr_path, chunks={})
         # The raw configuration XML embeds transceiver status text that changes
         # when the transceiver restarts (e.g. after a power drop). It would
@@ -679,7 +736,7 @@ def combine_echodata_day(
         ed_list.append(ed)
 
     beam_channels = []
-    for zarr_path, ed in zip(sorted(ed_zarr_paths), ed_list, strict=True):
+    for zarr_path, ed in zip(ordered, ed_list, strict=True):
         group = ed["Platform"] if ed["Platform"] is not None and "channel" in ed["Platform"].coords \
             else ed["Sonar/Beam_group1"]
         channels = tuple(sorted(str(c) for c in group["channel"].values)) if group is not None else ()
@@ -704,21 +761,21 @@ def combine_echodata_day(
         logger.info("  %s/%s mixes sample types: %s — combined apart", day_key, category,
                     ", ".join(f"{len(g)} {mode}" for mode, g in groups.items()))
 
+    parts = _combine_parts(groups, day_key, category)
     outputs = []
-    for mode, members in groups.items():
+    for suffix, members in parts:
         if len(members) == 1:
-            logger.info("  Single %s file for %s/%s — no combine needed", mode, day_key, category)
+            logger.info("  Single file for %s/%s%s — no combine needed", day_key, category, suffix)
             outputs.append(members[0][0])
             continue
         ed_combined = ep.combine_echodata([ed for _, ed in members])
-        suffix = f"-{mode}" if len(groups) > 1 else ""
         combined_zarr = str(echodata_dir / f"{day_key}--{category}--combined{suffix}.zarr")
         logger.info("  Saving combined EchoData: %s", combined_zarr)
         _clean_echodata_encoding(ed_combined)
         ed_combined.to_zarr(combined_zarr, overwrite=True)
         outputs.append(combined_zarr)
         del ed_combined
-    del ed_list, groups
+    del ed_list, groups, parts
     _release_memory()
 
     # Delete per-file EchoData Zarrs to free disk space
@@ -761,6 +818,11 @@ def run_echodata_combine(
             if fn in file_info:
                 cat, zp = file_info[fn]
                 by_category[cat].append(zp)
+        # FM files recorded among CW ones (the Saildrones' daily chirp) cannot be combined
+        # with them; they are processed only when asked for.
+        if "broadband" in by_category and "broadband" not in cfg.expected_categories:
+            logger.info("  %s: %d broadband (FM) file(s) skipped, not in --expected-categories",
+                        day_key, len(by_category.pop("broadband")))
 
         day_echodata[day_key] = {}
 
@@ -2030,10 +2092,14 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                     return
                 t0 = time.time()
                 file_results = process_raw_files(files_list, cfg, echodata_dir, gps_df=gps_df)
+                n_converted = sum(1 for r in file_results if r[1])
                 logger.info(
-                    "STAGE 2 complete: %d files converted to EchoData (%.1fs)",
-                    len(file_results), time.time() - t0,
+                    "STAGE 2 complete: %d of %d files converted to EchoData (%.1fs)",
+                    n_converted, len(files_list), time.time() - t0,
                 )
+                if not n_converted:
+                    # Exit non-zero, so a day with no products is not reported as done.
+                    raise RuntimeError(f"none of the {len(files_list)} raw files converted")
 
                 # Stage 3: Combine EchoData per day+category
                 if not _stage_enabled(3):

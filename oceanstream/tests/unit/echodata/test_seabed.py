@@ -339,6 +339,22 @@ class TestDetectSeabedComposite:
         assert np.isnan(result.seabed_depth.values).all()
         assert np.isfinite(mask_seabed(ds, result)["Sv"].values).all()
 
+    def test_ring_down_below_the_transducer_is_not_a_seabed(self):
+        # Deep water: no seabed in range, but the transmit pulse's ring-down stays above
+        # the -40 dB floor down to 12 m, past the gate's 10 m start (SE2204, FKt260415).
+        ds = create_fjord_dataset(dropout=slice(0, 300))
+        rng_m = ds["echo_range"].values[0]
+        ds["Sv"][:, rng_m < 12.0] = 5.0
+        result = detect_seabed(ds, method="composite", pick="edge", r0=10)
+        assert result.pings_detected == 0
+
+    def test_seabed_under_a_ring_down_is_still_found(self):
+        ds = create_fjord_dataset()
+        rng_m = ds["echo_range"].values[0]
+        ds["Sv"][:, rng_m < 12.0] = 5.0
+        line = detect_seabed(ds, method="composite", pick="edge", r0=10).seabed_depth.values
+        assert np.all(np.abs(line - 73.0) <= 0.2)
+
     def test_unknown_pick(self):
         with pytest.raises(ValueError, match="Unknown pick"):
             detect_seabed(create_fjord_dataset(n_pings=10), method="composite", pick="middle")
@@ -593,6 +609,21 @@ class TestInterleavedSeabed:
         result = detect_seabed_interleaved(ds, pick="edge")
         assert result.pings_detected == 0
         assert np.isfinite(mask_seabed(ds, result)["Sv"].values).sum() == np.isfinite(ds["Sv"].values).sum()
+
+    def test_the_transmit_pulse_does_not_back_a_line_below_the_gate_top(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Deep water with the transmit pulse in the first two metres and a few spikes
+        # just below the gate's 10 m top (SE2204 2022-06-30, FKt260415 2026-04-20).
+        ds = self.interleaved()
+        gen = np.random.default_rng(2)
+        sv = gen.normal(-80, 2, ds["Sv"].shape)
+        rng_m = ds["echo_range"].values[0, 0]
+        sv[:, :, rng_m < 2.0] = 5.0
+        for p in gen.choice(ds.sizes["ping_time"], 60, replace=False):
+            sv[:, p, (rng_m >= 11.0) & (rng_m < 12.0)] = -38.0
+        ds["Sv"] = ds["Sv"].copy(data=np.where(np.isfinite(ds["Sv"].values), sv, np.nan))
+        assert detect_seabed_interleaved(ds, pick="edge").pings_detected == 0
 
     def test_a_weak_stretch_on_station_is_bridged(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved

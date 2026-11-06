@@ -604,20 +604,33 @@ def detect_seabed_ariza(
     )
 
 
-def _leading_edge(sv: np.ndarray, cand: np.ndarray, thr: np.ndarray) -> np.ndarray:
+def _leading_edge(
+    sv: np.ndarray, cand: np.ndarray, thr: np.ndarray, top: int = 0
+) -> np.ndarray:
     """Per ping, the sample where the seabed echo starts, or -1 with no candidate.
 
     Starts at the ping's strongest candidate — the seabed echo itself rather
     than its tail — and steps up while Sv stays above the ping's threshold.
     A NaN sample ends the step, as a sample below the threshold does.
+
+    The step stays below *top*, the start of the search gate. A candidate whose
+    echo stays above the threshold all the way up to *top* is the surface layer or
+    the transmit pulse's ring-down, not a seabed, and gets -1: on SE2204 and
+    FKt260415 such steps drew a seabed 2-8 m below the transducers and masked the
+    whole water column.
     """
     n_samples = sv.shape[1]
+    cols = np.arange(n_samples)[np.newaxis, :]
+    if top > 0:
+        # Drop the candidates of the run that reaches down from the gate's top.
+        quiet = ~(sv > thr[:, np.newaxis]) & (cols >= top)
+        first_quiet = np.where(quiet.any(axis=1), np.argmax(quiet, axis=1), n_samples)
+        cand = cand & (cols >= first_quiet[:, np.newaxis])
     has = cand.any(axis=1)
     peak = np.argmax(np.where(cand, sv, -np.inf), axis=1)
-    cols = np.arange(n_samples)[np.newaxis, :]
-    below = ~(sv > thr[:, np.newaxis]) & (cols < peak[:, np.newaxis])
+    below = ~(sv > thr[:, np.newaxis]) & (cols < peak[:, np.newaxis]) & (cols >= top)
     last_below = n_samples - 1 - np.argmax(below[:, ::-1], axis=1)
-    edge = np.where(below.any(axis=1), last_below + 1, 0)
+    edge = np.where(below.any(axis=1), last_below + 1, -1 if top > 0 else 0)
     return np.where(has, edge, -1)
 
 
@@ -792,9 +805,9 @@ def detect_seabed_composite(
         # ── 9–11. Leading edge, falling back to the candidates before ───
         # morphology, then a running median. A ping with no candidate at
         # all takes its neighbours' line, not the bottom of the range.
-        idx_primary = _leading_edge(Sv_filt, cand, thr_per_ping)
+        idx_primary = _leading_edge(Sv_filt, cand, thr_per_ping, i0)
         has_primary = idx_primary >= 0
-        idx_fallback = _leading_edge(Sv_filt, fallback_mask, thr_per_ping)
+        idx_fallback = _leading_edge(Sv_filt, fallback_mask, thr_per_ping, i0)
         idx = np.where(has_primary, idx_primary, idx_fallback).astype(float)
         idx[idx < 0] = np.nan
         line = _running_median_line(idx, win)
@@ -973,12 +986,13 @@ def _supported_line(
     below_m: float = 10.0,
     window: int = 7,
     min_pings: int = 3,
+    top_m: float = 0.0,
 ) -> np.ndarray:
     """*line* where a seabed echo backs it, NaN elsewhere.
 
-    A ping's line stands when the strongest Sv from *above_m* above it to *below_m* below
-    it reaches *min_sv*, and at least *min_pings* of the *window* pings around it stand
-    too. The composite detector falls back on any cell above its floor and smooths with a
+    A ping's line stands when the strongest Sv from *above_m* above it (but not above
+    *top_m*, the search gate's top) to *below_m* below it reaches *min_sv*, and at least
+    *min_pings* of the *window* pings around it stand too. The composite detector falls back on any cell above its floor and smooths with a
     running median, so in water deeper than the range a few interference spikes become a
     line wandering through the water column; a real seabed echo is tens of dB stronger.
     The band is narrow so that a line drawn tens of metres above the seabed, over
@@ -988,7 +1002,7 @@ def _supported_line(
 
     backed = np.zeros(line.size, dtype=bool)
     for p in np.flatnonzero(np.isfinite(line)):
-        band = (range_1d >= line[p] - above_m) & (range_1d <= line[p] + below_m)
+        band = (range_1d >= max(line[p] - above_m, top_m)) & (range_1d <= line[p] + below_m)
         values = sv[p, band]
         backed[p] = bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= min_sv
     near = uniform_filter1d(backed.astype(float), size=window, mode="constant") * window
@@ -1051,7 +1065,11 @@ def detect_seabed_interleaved(
         kwargs["r1"] = float(_get_range_array(compact)[0].max())
     result = detect_seabed(compact, method="composite", channel=channel, **kwargs)
     sv, range_1d, _ = _get_sv_2d(compact, channel)
-    line = _supported_line(sv, range_1d, result.seabed_depth.values.astype(float), min_seabed_sv)
+    # Only an echo inside the search gate backs the line: the transmit pulse above it,
+    # within ten metres of a line just below the gate's top, backed lines 4-8 m below the
+    # transducers on SE2204 and FKt260415 that masked the whole water column.
+    line = _supported_line(sv, range_1d, result.seabed_depth.values.astype(float), min_seabed_sv,
+                           top_m=float(kwargs.get("r0", 10.0)))
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     line = _bridge_line(src, line, max_bridge_s, max_step_m)
 

@@ -128,6 +128,36 @@ class TestSampleTypes:
         assert joined["ping_time"].to_index().is_monotonic_increasing
         assert np.isnan(joined["Sv"].isel(ping_time=3, range_sample=3)).item()
 
+    @staticmethod
+    def _vendor_ed(decimation):
+        vendor = xr.Dataset({"WBT_decimation": ("channel", [decimation])},
+                            coords={"channel": ["WBT 38"]})
+        return _Ed({"Vendor_specific": vendor})
+
+    def test_files_with_other_filter_settings_are_combined_apart(self):
+        # EX2506 2025-08-29: the WBT settings change during the day, so echopype refuses
+        # to combine all of the day's files.
+        groups = {"power": [(f"f{i}", self._vendor_ed(d)) for i, d in enumerate([6, 6, 3, 6, 3])]}
+        parts = pfr._combine_parts(groups, "2025-08-29", "short_pulse")
+        assert [(suffix, [p for p, _ in files]) for suffix, files in parts] == [
+            ("-1", ["f0", "f1", "f3"]), ("-2", ["f2", "f4"])]
+
+    def test_files_combine_in_recording_order_when_the_prefix_changes(self):
+        # HB2401 2024-02-15: the prefix changes at 18:32, and name order put it first.
+        paths = ["/x/D20240215-T183215.zarr", "/x/HB-D20240215-T173938.zarr",
+                 "/x/D20240215-T235228.zarr", "/x/HB-D20240215-T145956.zarr"]
+        assert [Path(p).name for p in sorted(paths, key=pfr._recording_order)] == [
+            "HB-D20240215-T145956.zarr", "HB-D20240215-T173938.zarr",
+            "D20240215-T183215.zarr", "D20240215-T235228.zarr"]
+
+    def test_settings_split_within_each_sample_type(self):
+        groups = {"complex": [("c0", self._vendor_ed(6)), ("c1", self._vendor_ed(6))],
+                  "power": [("p0", self._vendor_ed(6)), ("p1", self._vendor_ed(3))]}
+        parts = pfr._combine_parts(groups, "2025-08-29", "short_pulse")
+        assert [suffix for suffix, _ in parts] == ["-complex", "-power-1", "-power-2"]
+        one = pfr._combine_parts({"power": groups["complex"]}, "2025-08-29", "short_pulse")
+        assert [suffix for suffix, _ in one] == [""]
+
 
 class TestFillMissingPositions:
     def test_pings_without_a_fix_get_interpolated_positions(self):
@@ -155,3 +185,42 @@ class TestFillMissingPositions:
         assert joined.sizes["ping_time"] == 3
         assert joined.indexes["ping_time"].is_unique
 
+
+
+class TestBroadbandFilesAmongCw:
+    """The SWFSC Saildrones record one FM file a day among their CW files."""
+
+    @staticmethod
+    def _echodata(transmit_type):
+        beam = xr.Dataset(
+            {"transmit_duration_nominal": (("channel", "ping_time"), [[1.024e-3]]),
+             "transmit_type": (("channel", "ping_time"), [[transmit_type]])},
+            coords={"channel": ["WBT 38"], "ping_time": pd.to_datetime(["2022-07-20T08:00"]),
+                    "frequency_nominal": ("channel", [38000.0])},
+        )
+        return {"Sonar/Beam_group1": beam}
+
+    def test_fm_pings_are_broadband(self):
+        assert pfr._detect_pulse_category(self._echodata("LFM")) == "broadband"
+        assert pfr._detect_pulse_category(self._echodata("CW")) == "short_pulse"
+
+    def _combine(self, monkeypatch, expected):
+        names = ["D20220720-T065958", "D20220720-T075958", "D20220720-T085959"]
+        cats = ["short_pulse", "broadband", "short_pulse"]
+        monkeypatch.setattr(pfr, "group_files_by_day", lambda files, n: {"2022-07-20": files})
+        combined = {}
+        monkeypatch.setattr(pfr, "combine_echodata_day", lambda ed_zarr_paths, day_key, category,
+                            echodata_dir: combined.setdefault(category, ed_zarr_paths))
+        cfg = pfr.PipelineConfig()
+        cfg.expected_categories, cfg.category_parallel, cfg.raw.sv_per_file = expected, False, False
+        pfr.run_echodata_combine([(c, f"{n}.zarr", n) for c, n in zip(cats, names)],
+                                 [(n, {"file_name": n}) for n in names], cfg, Path("."))
+        return combined
+
+    def test_fm_file_is_left_out_of_the_cw_day(self, monkeypatch):
+        combined = self._combine(monkeypatch, ["short_pulse"])
+        assert combined == {"short_pulse": ["D20220720-T065958.zarr", "D20220720-T085959.zarr"]}
+
+    def test_fm_files_are_combined_when_asked_for(self, monkeypatch):
+        combined = self._combine(monkeypatch, ["short_pulse", "broadband"])
+        assert combined["broadband"] == ["D20220720-T075958.zarr"]

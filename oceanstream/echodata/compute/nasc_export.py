@@ -15,6 +15,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     import geopandas as gpd
+    import pandas as pd
     import xarray as xr
 
 logger = logging.getLogger(__name__)
@@ -57,24 +58,20 @@ def export_nasc_to_geoparquet(
         The output directory containing Hive-partitioned Parquet files.
     """
     import geopandas as gpd
-    import pandas as pd
-    from shapely.geometry import Point
 
     output_dir = Path(output_dir)
 
-    records = _flatten_nasc(ds_nasc, campaign_id, file_id)
+    df = _nasc_frame(ds_nasc, campaign_id, file_id)
 
-    if len(records) == 0:
+    if len(df) == 0:
         logger.warning("No non-NaN NASC values to export for file_id=%s", file_id)
         return output_dir
-
-    df = pd.DataFrame(records)
 
     # Compute spatial bins (floor to grid)
     df["lat_bin"] = (np.floor(df["latitude"] / lat_bin_size) * lat_bin_size).astype(int)
     df["lon_bin"] = (np.floor(df["longitude"] / lon_bin_size) * lon_bin_size).astype(int)
 
-    geometry = [Point(lon, lat) for lon, lat in zip(df["longitude"], df["latitude"])]
+    geometry = gpd.points_from_xy(df["longitude"], df["latitude"])
     gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
     # Write Hive-partitioned GeoParquet
@@ -104,66 +101,63 @@ def _flatten_nasc(
     file_id: str,
 ) -> list[dict]:
     """Flatten NASC dataset dimensions into a list of row dicts."""
-    import xarray as xr
+    return _nasc_frame(ds_nasc, campaign_id, file_id).to_dict("records")
 
-    records: list[dict] = []
 
-    nasc_var = ds_nasc["NASC"]
-    has_log = "NASC_log" in ds_nasc.data_vars
+def _nasc_frame(
+    ds_nasc: "xr.Dataset",
+    campaign_id: str,
+    file_id: str,
+) -> "pd.DataFrame":
+    """One row per non-NaN cell, in channel, distance, depth order.
 
-    # Get latitude and longitude (may be per-distance or global attrs)
+    The arrays are read once: selecting cell by cell from a lazily opened store
+    reads the store again for every cell, which took minutes per day.
+    """
+    import pandas as pd
+
     lat, lon = _resolve_location(ds_nasc)
 
-    channels = ds_nasc["channel"].values if "channel" in ds_nasc.dims else [None]
-    distances = ds_nasc["distance"].values if "distance" in ds_nasc.dims else [0]
-    depths = ds_nasc["depth"].values if "depth" in ds_nasc.dims else [0]
+    channels = ds_nasc["channel"].values if "channel" in ds_nasc.dims else np.array([None])
+    distances = ds_nasc["distance"].values if "distance" in ds_nasc.dims else np.array([0])
+    depths = ds_nasc["depth"].values if "depth" in ds_nasc.dims else np.array([0])
+    shape = (len(channels), len(distances), len(depths))
 
-    # Get ping_time per distance bin (if available)
-    ping_times = None
-    if "ping_time" in ds_nasc.data_vars:
-        ping_times = ds_nasc["ping_time"]
+    def grid(name: str) -> np.ndarray:
+        var = ds_nasc[name]
+        dims = [d for d in ("channel", "distance", "depth") if d in var.dims]
+        values = np.asarray(var.transpose(*dims).values, dtype=float)
+        for axis, dim in enumerate(("channel", "distance", "depth")):
+            if dim not in var.dims:
+                values = np.expand_dims(values, axis)
+        return np.broadcast_to(values, shape)
 
-    for ch_idx, ch in enumerate(channels):
-        for dist_idx, dist in enumerate(distances):
-            for depth_idx, depth in enumerate(depths):
-                sel = {}
-                if ch is not None:
-                    sel["channel"] = ch
-                if "distance" in nasc_var.dims:
-                    sel["distance"] = dist
-                if "depth" in nasc_var.dims:
-                    sel["depth"] = depth
+    nasc = grid("NASC")
+    ch_idx, dist_idx, depth_idx = np.nonzero(~np.isnan(nasc))
 
-                val = float(nasc_var.sel(sel).values)
-                if np.isnan(val):
-                    continue
+    ping_time = np.full(len(distances), None, dtype=object)
+    if "ping_time" in ds_nasc.data_vars and "distance" in ds_nasc["ping_time"].dims:
+        ping_time = np.asarray(
+            [str(t) for t in ds_nasc["ping_time"].values.reshape(len(distances))], dtype=object
+        )
+    lat_d = np.broadcast_to(np.asarray(lat, dtype=float), (len(distances),))
+    lon_d = np.broadcast_to(np.asarray(lon, dtype=float), (len(distances),))
 
-                pt = None
-                if ping_times is not None and "distance" in ping_times.dims:
-                    pt = str(ping_times.sel(distance=dist).values)
-
-                rec_lat = lat[dist_idx] if hasattr(lat, "__len__") else lat
-                rec_lon = lon[dist_idx] if hasattr(lon, "__len__") else lon
-
-                record = {
-                    "campaign_id": campaign_id,
-                    "file_id": file_id,
-                    "channel": str(ch) if ch is not None else "single",
-                    "ping_time": pt,
-                    "depth": float(depth),
-                    "nasc_value": val,
-                    "latitude": float(rec_lat),
-                    "longitude": float(rec_lon),
-                }
-
-                if has_log:
-                    record["nasc_log"] = float(
-                        ds_nasc["NASC_log"].sel(sel).values
-                    )
-
-                records.append(record)
-
-    return records
+    df = pd.DataFrame({
+        "campaign_id": campaign_id,
+        "file_id": file_id,
+        "channel": np.asarray(
+            [str(c) if c is not None else "single" for c in channels], dtype=object
+        )[ch_idx],
+        "ping_time": ping_time[dist_idx],
+        "depth": depths.astype(float)[depth_idx],
+        "nasc_value": nasc[ch_idx, dist_idx, depth_idx],
+        "latitude": lat_d[dist_idx],
+        "longitude": lon_d[dist_idx],
+    })
+    if "NASC_log" in ds_nasc.data_vars:
+        df["nasc_log"] = grid("NASC_log")[ch_idx, dist_idx, depth_idx]
+    return df
 
 
 def _resolve_location(ds_nasc: "xr.Dataset") -> tuple:

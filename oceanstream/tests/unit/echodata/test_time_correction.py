@@ -39,22 +39,37 @@ def test_every_datetime_is_shifted_and_values_kept() -> None:
 
 
 class FakeEchoData:
+    """The part of echopype's ``EchoData`` the shift uses: a DataTree and its group paths."""
+
     def __init__(self) -> None:
-        self.groups = {"Top-level": xr.Dataset(), "Sonar/Beam_group1": _beam(),
-                       "Platform": xr.Dataset(coords={"time1": _beam().ping_time.values})}
+        nmea = np.array(["2019-07-10T03:00:01"], dtype="datetime64[ns]")
+        self._tree = xr.DataTree.from_dict({
+            "/": xr.Dataset(),
+            "Sonar/Beam_group1": _beam(),
+            "Platform": xr.Dataset(coords={"time1": _beam().ping_time.values}),
+            "Platform/NMEA": xr.Dataset(coords={"nmea_time": nmea}),
+        })
 
     @property
-    def group_paths(self) -> list[str]:
-        return list(self.groups)
+    def group_paths(self) -> tuple[str, ...]:
+        return tuple(g[1:] if g != "/" else "Top-level" for g in self._tree.groups)
 
     def __getitem__(self, key: str) -> xr.Dataset:
-        return self.groups[key]
+        return self._tree["/" if key == "Top-level" else key].to_dataset()
 
     def __setitem__(self, key: str, value: xr.Dataset) -> None:
-        self.groups[key] = value
+        self._tree["/" if key == "Top-level" else key].dataset = value
 
 
 def test_all_groups_of_an_echodata_are_shifted() -> None:
     ed = shift_echodata_times(FakeEchoData(), SEVEN_HOURS)
     assert str(ed["Platform"].time1.values[0]) == "2019-07-09T20:00:00.000000000"
     assert str(ed["Sonar/Beam_group1"].ping_time.values[0]).startswith("2019-07-09T20")
+    assert str(ed["Platform/NMEA"].nmea_time.values[0]) == "2019-07-09T20:00:01.000000000"
+
+
+def test_a_child_group_does_not_shift_inherited_coordinates_again() -> None:
+    ed = shift_echodata_times(FakeEchoData(), SEVEN_HOURS)
+    nmea = ed["Platform/NMEA"]
+    assert "time1" not in ed._tree["Platform/NMEA"].to_dataset(inherit=False).coords
+    assert str(nmea.time1.values[0]) == "2019-07-09T20:00:00.000000000"
