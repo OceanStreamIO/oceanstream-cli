@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from oceanstream.echodata.products import ARTEFACT_BITS, NO_BACKSCATTER_DB, open_product_uri
 
 if TYPE_CHECKING:
+    import numpy as np
     import xarray as xr
 
 logger = logging.getLogger(__name__)
@@ -185,10 +186,28 @@ def artefact_marker(sv_dataset: "xr.Dataset") -> "xr.Dataset":
     return marker
 
 
+def _run_heights(gaps: "np.ndarray", axis: int) -> "np.ndarray":
+    """For each gap bin, how many bins tall the unbroken run of gaps along *axis* it is in."""
+    import numpy as np
+    from scipy.ndimage import label
+
+    # Connected along *axis* only: a run is one column of gaps, however wide the gap is.
+    structure = np.zeros((3,) * gaps.ndim, dtype=bool)
+    centre = [1] * gaps.ndim
+    for step in range(3):
+        centre[axis] = step
+        structure[tuple(centre)] = True
+    labels, _ = label(gaps, structure=structure)
+    sizes = np.bincount(labels.ravel())
+    sizes[0] = 0
+    return sizes[labels]
+
+
 def fill_gaps(
     sv: "xr.DataArray",
     gaps: "xr.DataArray",
     window: tuple[int, int] = DEFAULT_FILL_WINDOW,
+    max_height: int | None = None,
 ) -> tuple["xr.DataArray", "xr.DataArray"]:
     """MVBS Sv with *gaps* replaced by the mean of the valid bins around them.
 
@@ -197,6 +216,11 @@ def fill_gaps(
     that hold a value: bins at ``NO_BACKSCATTER_DB`` count as zero, NaN bins (other
     gaps among them) are left out. A gap with no such bin in its window stays NaN, and
     one whose window holds only zeros gets ``NO_BACKSCATTER_DB``.
+
+    Only gaps in a run at most *max_height* range bins tall are filled, by default as
+    tall as the window. A taller one is a block of pings the denoisers removed, a
+    noise burst or a dropout, and the bins beside it often hold what is left of the
+    same noise: filling it would draw that noise as a solid column. It stays NaN.
 
     Returns the filled Sv and a boolean mask of the bins that were filled.
     """
@@ -207,6 +231,7 @@ def fill_gaps(
     if any(size < 1 or size % 2 == 0 for size in window):
         raise ValueError(f"The fill window must be two odd sizes of at least 1, not {window}.")
     range_dim = next(d for d in sv.dims if d not in ("channel", "ping_time"))
+    tallest = range_bins if max_height is None else max_height
     kernel = np.ones(
         [ping_bins if d == "ping_time" else range_bins if d == range_dim else 1 for d in sv.dims]
     )
@@ -218,8 +243,10 @@ def fill_gaps(
     total = correlate(np.where(valid, linear, 0.0), kernel, mode="constant")
     count = correlate(valid.astype(float), kernel, mode="constant")
 
+    holes = np.asarray(gaps.transpose(*sv.dims).values, dtype=bool)
+    small = holes & (_run_heights(holes, sv.dims.index(range_dim)) <= tallest)
     # Sums of ones and zeros, so the counts are exact.
-    filled = np.asarray(gaps.transpose(*sv.dims).values, dtype=bool) & (count >= 1)
+    filled = small & (count >= 1)
     mean = np.divide(total, count, out=np.zeros_like(total), where=filled)
     with np.errstate(divide="ignore"):
         mean_db = np.where(mean > 0, 10 * np.log10(mean), NO_BACKSCATTER_DB)
