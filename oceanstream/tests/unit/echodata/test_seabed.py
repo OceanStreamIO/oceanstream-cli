@@ -639,6 +639,66 @@ class TestInterleavedSeabed:
         assert result.pings_detected == 300
         assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
 
+    def test_the_line_follows_a_seabed_climbing_a_shelf_edge(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # HB2403 2024-06-07: the seabed climbs 470 to 250 m in five minutes over rough
+        # ground, so its echo starts metres above or below the smoothed line from one
+        # ping to the next. No ping may keep seabed echo above its line.
+        import pandas as pd
+
+        n_pings, range_m = 300, np.arange(0, 500, 0.2)
+        gen = np.random.default_rng(4)
+        start = np.clip(np.linspace(470, 250, n_pings) + gen.uniform(-15, 15, n_pings), 0, 480)
+        sv = gen.normal(-80, 2, (n_pings, range_m.size))
+        for p, d in enumerate(start):
+            i = int(np.searchsorted(range_m, d))
+            sv[p, i : i + 40] = np.linspace(-15, -38, 40)
+            sv[p, i + 40 :] = -55
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.isfinite(depth).all()
+        inner = slice(5, -5)  # the last pings of a day take the line before them
+        assert np.all(depth[inner] <= start[inner] + 0.2)
+        assert np.median(start - depth) < 0.5  # it follows the edge, not the slope's top
+
+    def test_a_second_seabed_echo_above_the_line_is_masked(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # HB2403 2024-06-05 00:03: over rough ground a -11 dB echo starts at 15 m, a dip
+        # apart from the strongest echo at 21 m.
+        fjord = create_fjord_dataset(n_pings=300, seabed_m=21.0)
+        sv = fjord["Sv"].values.copy()
+        rng_m = fjord["echo_range"].values[0]
+        sv[:, (rng_m >= 15.0) & (rng_m < 16.5)] = -11.0
+        sv[:, (rng_m >= 21.0) & (rng_m < 22.0)] = -5.0
+        ds = TestSimultaneousSeabed.together(sv, rng_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.all(np.abs(depth - 15.0) <= 0.2)
+
+    def test_a_layer_on_a_flat_seabed_is_not_taken_for_seabed(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Pollock on the Bering shelf: a -45 dB layer on the bottom, 8 m thick.
+        fjord = create_fjord_dataset(n_pings=300, seabed_m=73.0)
+        sv = fjord["Sv"].values.copy()
+        rng_m = fjord["echo_range"].values[0]
+        sv[:, (rng_m >= 65.0) & (rng_m < 73.0)] = -45.0
+        ds = TestSimultaneousSeabed.together(sv, rng_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.all(np.abs(depth - 73.0) <= 0.2)
+
+    def test_a_dense_school_above_a_flat_seabed_stays_water(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        fjord = create_fjord_dataset(n_pings=300, seabed_m=73.0)
+        sv = fjord["Sv"].values.copy()
+        rng_m = fjord["echo_range"].values[0]
+        sv[100:160, (rng_m >= 55.0) & (rng_m < 70.0)] = -30.0
+        ds = TestSimultaneousSeabed.together(sv, rng_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.all(np.abs(depth - 73.0) <= 0.2)
+
 
 class TestSimultaneousSeabed:
     """Channels that ping together get the same guarded line (IESSNS 2021)."""

@@ -44,6 +44,8 @@ class SeabedDetectionResult:
         pings_total: Total number of pings.
         detection_rate: Fraction of pings with detected seabed.
         params: Parameters used for detection.
+        edge_depth: Per-ping depth of the seabed echo's leading edge before any
+            smoothing (NaN = none), from the composite detector's ``edge`` pick.
     """
     seabed_depth: xr.DataArray
     seabed_index: xr.DataArray
@@ -53,6 +55,7 @@ class SeabedDetectionResult:
     pings_total: int
     detection_rate: float
     params: dict
+    edge_depth: Optional[xr.DataArray] = None
 
 
 def _select_channel(
@@ -811,9 +814,12 @@ def detect_seabed_composite(
         idx = np.where(has_primary, idx_primary, idx_fallback).astype(float)
         idx[idx < 0] = np.nan
         line = _running_median_line(idx, win)
+        edge_idx = np.nan_to_num(idx, nan=0).astype(np.int64)
+        edge_depth = np.where(np.isnan(idx), np.nan, range_1d[edge_idx])
         no_seabed = np.isnan(line)
         idx_clean = np.clip(np.nan_to_num(line, nan=n_samples - 1), 0, n_samples - 1).astype(np.int64)
     else:
+        edge_depth = None
         no_seabed = np.zeros(n_pings, dtype=bool)
         # ── 9. Pick deepest candidate per ping ──────────────────────────
         idx_primary = np.full(n_pings, -1, dtype=np.int64)
@@ -895,6 +901,9 @@ def detect_seabed_composite(
             "savgol_window": savgol_window,
             "pick": pick,
         },
+        edge_depth=None if edge_depth is None else xr.DataArray(
+            edge_depth, dims=["ping_time"], coords={"ping_time": ping_times}, name="edge_depth"
+        ),
     )
 
 
@@ -1027,6 +1036,83 @@ def _bridge_line(
     return out
 
 
+def _echo_top(
+    sv: np.ndarray,
+    range_1d: np.ndarray,
+    times_ns: np.ndarray,
+    line: np.ndarray,
+    edge: Optional[np.ndarray] = None,
+    top_m: float = 0.0,
+    seabed_sv: float = -25.0,
+    seabed_step_sv: float = -40.0,
+    slope_sv: float = -45.0,
+    slope_step_sv: float = -50.0,
+    max_rise_m: float = 50.0,
+    max_rise_frac: float = 0.4,
+    min_rate_m_s: float = 0.1,
+    rate_window_s: float = 30.0,
+    max_spread_m: float = 5.0,
+    smooth_m: float = 1.0,
+) -> np.ndarray:
+    """*line* raised, ping by ping, to the start of a seabed echo found above it.
+
+    Each ping's profile, smoothed over *smooth_m* in range only, is searched from the line
+    up by *max_rise_frac* of its depth (at most *max_rise_m*, never above *top_m*). From
+    the shallowest sample of at least *seabed_sv* the top steps up while Sv stays at or
+    above *seabed_step_sv*: no fish school is that strong, but over rough ground a second
+    seabed echo, a dip apart from the strongest, can start metres above the line (HB2403
+    2024-06-05 00:03, -11 dB at 15 m over a line at 21 m).
+
+    Where the seabed is steep or rough the beam meets the upslope seabed first, and the
+    echo is a smear tens of metres long, mostly -45 to -30 dB, which moves by tens of
+    metres from ping to ping (HB2403 2024-06-07 at the shelf edge): there the search
+    starts from *slope_sv* and steps at *slope_step_sv*. Steep or rough means the line
+    changes by more than *min_rate_m_s* over *rate_window_s* either side, or the pings'
+    own edges (*edge*) spread by more than *max_spread_m* (interquartile range) within
+    half that window, as where a bridged line lies flat over rough ground. On a flat
+    seabed the weaker thresholds never apply, so a fish layer resting on it is not taken
+    for seabed.
+    """
+    from scipy.ndimage import median_filter
+
+    out = line.copy()
+    found = np.flatnonzero(np.isfinite(line))
+    if found.size == 0:
+        return out
+    steep = np.zeros(found.size, dtype=bool)
+    if found.size > 1:
+        t = times_ns[found] / 1e9
+        ahead = np.interp(t + rate_window_s, t, line[found])
+        behind = np.interp(t - rate_window_s, t, line[found])
+        steep = np.abs(ahead - behind) / (2 * rate_window_s) > min_rate_m_s
+    if edge is not None:
+        import pandas as pd
+
+        series = pd.Series(edge, index=pd.to_datetime(times_ns))
+        rolling = series.rolling(pd.Timedelta(seconds=rate_window_s), center=True, min_periods=3)
+        spread = (rolling.quantile(0.75) - rolling.quantile(0.25)).to_numpy()
+        steep |= spread[found] > max_spread_m
+    dz = float(np.nanmedian(np.diff(range_1d)))
+    width = max(1, int(round(smooth_m / dz)) | 1)
+    for c in range(0, found.size, 5000):
+        pings = found[c : c + 5000]
+        prof = median_filter(np.nan_to_num(sv[pings], nan=-999.0), size=(1, width))
+        for row, p, slope in zip(prof, pings, steep[c : c + 5000]):
+            rise = min(max_rise_m, max_rise_frac * line[p])
+            span = np.flatnonzero((range_1d >= max(line[p] - rise, top_m)) & (range_1d <= line[p]))
+            if span.size == 0:
+                continue
+            start_sv, step_sv = (slope_sv, slope_step_sv) if slope else (seabed_sv, seabed_step_sv)
+            strong = span[row[span] >= start_sv]
+            if strong.size == 0:
+                continue
+            i = strong[0]
+            while i > span[0] and row[i - 1] >= step_sv:
+                i -= 1
+            out[p] = min(line[p], float(range_1d[i]))
+    return out
+
+
 def detect_seabed_interleaved(
     ds: xr.Dataset,
     channel: Optional[str] = None,
@@ -1048,6 +1134,15 @@ def detect_seabed_interleaved(
     interpolated in time onto every ping. A ping more than *max_gap_s* from the nearest
     standing detection gets no line.
 
+    Where a ping's own leading edge, before smoothing, is shallower than the line and
+    is backed by a seabed echo too, the line takes it, and where the seabed changes depth
+    fast, or an echo only a seabed makes lies above it, the line is raised to the start
+    of that echo (:func:`_echo_top`).
+    Across a shelf edge the seabed can climb 200 m in five minutes, and the smoothed
+    line, or a bridge drawn where it lost its backing, then lay up to 40 m below the
+    echo's start (HB2403 2024-06-07): the seabed echo above it was integrated as water
+    column, most of the day's NASC.
+
     On RR2205 at 38 kHz the seabed's strongest echo reached -21 to -3 dB in 90 % of
     pings, while in water deeper than the range 90 % of pings peaked below -48 dB.
 
@@ -1068,10 +1163,16 @@ def detect_seabed_interleaved(
     # Only an echo inside the search gate backs the line: the transmit pulse above it,
     # within ten metres of a line just below the gate's top, backed lines 4-8 m below the
     # transducers on SE2204 and FKt260415 that masked the whole water column.
+    top_m = float(kwargs.get("r0", 10.0))
     line = _supported_line(sv, range_1d, result.seabed_depth.values.astype(float), min_seabed_sv,
-                           top_m=float(kwargs.get("r0", 10.0)))
+                           top_m=top_m)
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     line = _bridge_line(src, line, max_bridge_s, max_step_m)
+    edge = None if result.edge_depth is None else result.edge_depth.values.astype(float)
+    if edge is not None:
+        own = _supported_line(sv, range_1d, edge, min_seabed_sv, top_m=top_m)
+        line = np.where(np.isfinite(line) & (own < line), own, line)
+    line = _echo_top(sv, range_1d, src, line, edge=edge, top_m=top_m)
 
     dst = ds["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     found = np.isfinite(line)
