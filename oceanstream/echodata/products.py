@@ -14,6 +14,8 @@ information instead, and rebuilt on open:
 
 ``{day}--{cat}--pruned.zarr`` — *pruned view*
     ``keep_ping``        bool (ping_time) over the parent's pings
+    ``dropped_by_hand``  bool (ping_time), those among them dropped as bad data by
+                         hand, when the run was given any; the stretches in attrs
 
 Sources and parents are recorded as ``(container, path)`` relative to the
 storage backend, or — by writers that address stores by URL — with an empty
@@ -32,7 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -362,11 +364,39 @@ def masked_sv_dataset(
     return out
 
 
+def _utc(text: str) -> np.datetime64:
+    """An ISO-8601 time as naive UTC, as ping times are."""
+    from datetime import UTC, datetime
+
+    moment = datetime.fromisoformat(text)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(UTC).replace(tzinfo=None)
+    return np.datetime64(moment, "ns")
+
+
+def dropped_by_hand(ping_times: np.ndarray, drops: Iterable[Sequence[str]]) -> np.ndarray:
+    """Whether each of *ping_times* falls in one of *drops*.
+
+    A drop is a ``(start, end)`` pair of ISO-8601 times, both ends included: a
+    stretch marked as bad data by hand, as the Denoise Lab records them.
+    """
+    times = np.asarray(ping_times, dtype="datetime64[ns]")
+    out = np.zeros(times.shape, dtype=bool)
+    for start, end in drops:
+        out |= (times >= _utc(start)) & (times <= _utc(end))
+    return out
+
+
 def pruned_view_dataset(
     *, parent: xr.Dataset, kept_ping_times: np.ndarray, parent_container: str | None,
     parent_path: str, store_container: str | None,
+    hand_dropped: np.ndarray | None = None, ping_drops: Sequence[Sequence[str]] = (),
 ) -> xr.Dataset:
-    """Assemble the pruned-view store: which of *parent*'s pings survived."""
+    """Assemble the pruned-view store: which of *parent*'s pings survived.
+
+    With *hand_dropped*, a flag per parent ping, the pings dropped by hand are told
+    apart from those pruning dropped, and *ping_drops*, the stretches given, recorded.
+    """
     import xarray as xr
 
     keep = np.isin(parent["ping_time"].values, kept_ping_times)
@@ -383,6 +413,10 @@ def pruned_view_dataset(
         "parent_path": parent_path,
         "parent_ping_count": int(parent.sizes["ping_time"]),
     }
+    if hand_dropped is not None:
+        out["dropped_by_hand"] = ("ping_time", np.asarray(hand_dropped, dtype=bool))
+        out["dropped_by_hand"].attrs["long_name"] = "Ping dropped as bad data by hand"
+        out.attrs["ping_drops"] = json.dumps([list(drop) for drop in ping_drops])
     return out
 
 

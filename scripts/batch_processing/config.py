@@ -233,6 +233,10 @@ class PruneParams:
     crosstalk_ref_depth_min: float = 800.0    # metres — start of reference band
     crosstalk_ref_depth_max: float = 1200.0   # metres — end of reference band
     crosstalk_threshold_db: float = 6.0       # elevation above median to flag
+    # Pings marked as bad data by hand, {day: {category: [(start, end), ...]}} in
+    # ISO-8601 UTC, ends included. Dropped before the tests above, and even with
+    # pruning off, so MVBS and NASC leave them out.
+    ping_drops: dict = field(default_factory=dict)
 
 
 @dataclass

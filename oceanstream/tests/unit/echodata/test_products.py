@@ -238,6 +238,41 @@ class TestPrunedView:
             _local_opener(root)("2023-10-10/2023-10-10--short_pulse--pruned.zarr", "preset-a")
 
 
+class TestDroppedByHand:
+    TIMES = pd.date_range("2023-10-10T12:00:00", periods=10, freq="10s").values
+
+    def test_both_ends_are_included(self):
+        out = products.dropped_by_hand(self.TIMES, [("2023-10-10T12:00:20Z", "2023-10-10T12:00:40Z")])
+        assert np.flatnonzero(out).tolist() == [2, 3, 4]
+
+    def test_an_offset_is_read_as_utc_and_none_as_utc(self):
+        out = products.dropped_by_hand(
+            self.TIMES, [("2023-10-10T14:00:50+02:00", "2023-10-10T12:01:00")]
+        )
+        assert np.flatnonzero(out).tolist() == [5, 6]
+
+    def test_no_drops_drop_nothing(self):
+        assert not products.dropped_by_hand(self.TIMES, []).any()
+
+    def test_a_pruned_view_tells_them_from_pruning(self, source):
+        times = source["ping_time"].values
+        drop = ("2023-10-10T00:00:10Z", "2023-10-10T00:00:20Z")
+        hand = products.dropped_by_hand(times, [drop])
+        view = products.pruned_view_dataset(
+            parent=source,
+            kept_ping_times=times[~hand][::2],
+            parent_container="preset-a",
+            parent_path="denoised.zarr",
+            store_container="preset-a",
+            hand_dropped=hand,
+            ping_drops=[drop],
+        )
+        assert hand.sum() == 6
+        np.testing.assert_array_equal(view["dropped_by_hand"].values, hand)
+        assert not view["keep_ping"].values[hand].any()
+        assert json.loads(view.attrs["ping_drops"]) == [list(drop)]
+
+
 def test_background_thresholds_are_recorded_per_channel(source):
     store = _masked_store(source, {}, None, 3.0)
     assert json.loads(store.attrs["background_snr_db"]) == {CHANNELS[0]: 3.0, CHANNELS[1]: None}

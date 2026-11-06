@@ -183,11 +183,11 @@ class TestMvbsGapFill:
         return xr.DataArray(values, dims=("channel", "ping_time", "depth"))
 
     @staticmethod
-    def fill(sv, gaps, window):
+    def fill(sv, gaps, window, max_height=None):
         from oceanstream.echodata.compute.mvbs import fill_gaps
 
         mask = xr.DataArray(np.asarray(gaps, dtype=bool)[None], dims=sv.dims)
-        out, filled = fill_gaps(sv, mask, window)
+        out, filled = fill_gaps(sv, mask, window, max_height)
         return out.values[0], filled.values[0]
 
     def test_a_gap_gets_the_linear_mean_of_its_neighbours(self):
@@ -226,6 +226,32 @@ class TestMvbsGapFill:
         sv = self.grid([[-60]])
         with pytest.raises(ValueError, match="odd"):
             self.fill(sv, [[0]], (4, 3))
+
+    #: A removed block of pings four depth bins tall, one three tall, and a single bin.
+    TALL = [
+        [-60, -60, -60, -60, -60, -60],
+        [-60, np.nan, np.nan, np.nan, np.nan, -60],
+        [-60, np.nan, np.nan, np.nan, -60, -60],
+        [-60, -60, np.nan, -60, -60, -60],
+        [-60, -60, -60, -60, -60, -60],
+    ]
+
+    def test_a_gap_taller_than_the_window_stays_empty(self):
+        sv = self.grid(self.TALL)
+        gaps = np.isnan(np.asarray(self.TALL))
+        out, filled = self.fill(sv, gaps, (3, 3))
+        assert np.isnan(out[1, 1:5]).all() and not filled[1].any()
+        # As tall as the window, or shorter, however long in time: filled.
+        assert filled[2, 1:4].all() and filled[3, 2]
+        assert out[3, 2] == pytest.approx(-60.0)
+
+    def test_the_tallest_gap_filled_can_be_set(self):
+        sv = self.grid(self.TALL)
+        gaps = np.isnan(np.asarray(self.TALL))
+        _, filled = self.fill(sv, gaps, (3, 3), max_height=4)
+        assert filled[1, 1:5].all()
+        _, filled = self.fill(sv, gaps, (3, 3), max_height=1)
+        assert not filled[1:3].any() and filled[3, 2]
 
     def test_only_bins_emptied_by_artefacts_are_gaps(self):
         from oceanstream.echodata.compute import compute_mvbs

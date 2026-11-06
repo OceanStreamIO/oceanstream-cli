@@ -136,6 +136,33 @@ def _parse_raw_datetime(filename: str) -> Optional[datetime]:
     return datetime(y, m, d, hh, mm, ss)
 
 
+def _read_ping_drops(path: Path) -> dict[str, dict[str, list[tuple[str, str]]]]:
+    """The pings marked as bad data by hand in a ``--ping-drops-file``.
+
+    Raises:
+        ValueError: not ``{day: {category: [[start, end], ...]}}`` with ISO-8601 times.
+    """
+    import json
+
+    import numpy as np
+    from oceanstream.echodata.products import dropped_by_hand
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not all(isinstance(c, dict) for c in data.values()):
+        raise ValueError("expected {day: {category: [[start, end], ...]}}")
+    drops: dict[str, dict[str, list[tuple[str, str]]]] = {}
+    for day, categories in data.items():
+        for category, stretches in categories.items():
+            try:
+                pairs = [(str(start), str(end)) for start, end in stretches]
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"{day} {category}: each drop is [start, end]") from e
+            # Reads every time, so a malformed one fails here rather than mid-run.
+            dropped_by_hand(np.array([], dtype="datetime64[ns]"), pairs)
+            drops.setdefault(day, {})[category] = pairs
+    return drops
+
+
 def _within_date_range(dt: Optional[datetime], cfg: PipelineConfig) -> bool:
     """Whether *dt* falls inside the configured range (undated files always pass)."""
     if dt is None:
@@ -2162,11 +2189,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         # are computed on an analysis-ready Sv dataset)
         t0 = time.time()
         pruned_day_zarrs: dict = {}
-        if cfg.prune.enabled:
+        # Pings dropped by hand go here too, with pruning off as well.
+        if cfg.prune.enabled or cfg.prune.ping_drops:
             pruned_day_zarrs = run_pruning(
                 client, pre_prune_input, cfg, output_container
             )
-            logger.info("STAGE 6b complete: pruning (%.1fs)", time.time() - t0)
+            logger.info(
+                "STAGE 6b complete: %s (%.1fs)",
+                "pruning" if cfg.prune.enabled else "pings dropped by hand",
+                time.time() - t0,
+            )
             mvbs_input = pruned_day_zarrs
         else:
             logger.info("STAGE 6b skipped: pruning disabled (%.1fs)", time.time() - t0)
@@ -2364,6 +2396,12 @@ def parse_args() -> PipelineConfig:
     parser.add_argument(
         "--no-crosstalk", action="store_true",
         help="Disable the cross-talk detector in Stage 6b (keeps NaN-fraction pruning)",
+    )
+    parser.add_argument(
+        "--ping-drops-file", default="",
+        help="JSON of pings marked as bad data by hand, {day: {category: [[start, end], "
+             "...]}} in ISO-8601 UTC, ends included. Stage 6b drops them first, even with "
+             "--skip-pruning, so MVBS and NASC leave them out.",
     )
     parser.add_argument(
         "--crosstalk-ref-depth-min", type=float, default=800.0,
@@ -2754,6 +2792,11 @@ def parse_args() -> PipelineConfig:
     cfg.prune.crosstalk_ref_depth_min = args.crosstalk_ref_depth_min
     cfg.prune.crosstalk_ref_depth_max = args.crosstalk_ref_depth_max
     cfg.prune.crosstalk_threshold_db = args.crosstalk_threshold_db
+    if args.ping_drops_file:
+        try:
+            cfg.prune.ping_drops = _read_ping_drops(Path(args.ping_drops_file))
+        except (OSError, ValueError) as e:
+            parser.error(f"--ping-drops-file {args.ping_drops_file}: {e}")
     cfg.skip_campaign_echograms = args.skip_campaign_echograms
     cfg.denoise.sv_clip_max_db = args.sv_clip_max_db
     cfg.save_to_netcdf = args.save_netcdf

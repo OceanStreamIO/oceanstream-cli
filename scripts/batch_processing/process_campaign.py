@@ -33,6 +33,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -1252,10 +1253,16 @@ def prune_day(
     crosstalk_ref_depth_max: float = 1200.0,
     crosstalk_threshold_db: float = 6.0,
     artefact_threshold: float | None = 0.5,
+    ping_drops: Sequence[Sequence[str]] = (),
+    by_hand_only: bool = False,
 ) -> str:
     """Drop pings whose water column is mostly artefacts (or whose NaN fraction exceeds
     ``drop_threshold``, for stores without per-cell flags) and (optionally) pings
     whose deep reference band shows cross-talk.
+
+    Pings in *ping_drops*, ``(start, end)`` ISO-8601 stretches marked as bad data by
+    hand, go first, so they weigh in neither test; with *by_hand_only*, pruning is
+    off and only they go.
 
     Runs after denoising/seabed-masking so that MVBS/NASC are computed on
     an "analysis-ready" Sv dataset with junk pings excluded. Saves output
@@ -1273,12 +1280,23 @@ def prune_day(
 
     n_before = ds.sizes.get("ping_time", 0)
 
+    # ── Step 0: pings dropped as bad data by hand ─────────────────
+    ds_pruned, hand = ds, None
+    if ping_drops:
+        hand = products.dropped_by_hand(ds["ping_time"].values, ping_drops)
+        logger.info("  Dropped %d/%d pings by hand (%d stretches)",
+                    int(hand.sum()), n_before, len(ping_drops))
+        if hand.any():
+            ds_pruned = ds.isel(ping_time=~hand)
+    n_after_hand = ds_pruned.sizes.get("ping_time", 0)
+
     # ── Step 1: NaN-fraction drop (existing behaviour) ────────────
-    with dask.config.set(scheduler="synchronous"):
-        ds_pruned = drop_noisy_pings(ds, drop_threshold=drop_threshold,
-                                     artefact_threshold=artefact_threshold)
+    if not by_hand_only:
+        with dask.config.set(scheduler="synchronous"):
+            ds_pruned = drop_noisy_pings(ds_pruned, drop_threshold=drop_threshold,
+                                         artefact_threshold=artefact_threshold)
     n_after_nan = ds_pruned.sizes.get("ping_time", 0)
-    n_dropped_nan = n_before - n_after_nan
+    n_dropped_nan = n_after_hand - n_after_nan
     pct = (n_dropped_nan / n_before * 100) if n_before > 0 else 0.0
     logger.info("  Dropped %d/%d pings via NaN fraction (%.1f%%)", n_dropped_nan, n_before, pct)
 
@@ -1289,7 +1307,7 @@ def prune_day(
     # other Saildrones, ADCPs, or electrical sources that the mask denoisers
     # (impulse/transient/attenuation) miss because they look for local
     # discontinuities, not systemic per-ping elevation.
-    if crosstalk_enabled and "Sv" in ds_pruned and "depth" in ds_pruned:
+    if crosstalk_enabled and not by_hand_only and "Sv" in ds_pruned and "depth" in ds_pruned:
         try:
             depth = ds_pruned["depth"]
             # Build reference-band mask; depth may be (channel, ping_time, range_sample)
@@ -1377,6 +1395,7 @@ def prune_day(
         output_container, day_key, category,
         {
             "before_prune": int(n_before),
+            "after_hand_drops": int(n_after_hand),
             "after_nan_prune": int(n_after_nan),
             "after_crosstalk_prune": int(n_after),
         },
@@ -1397,6 +1416,8 @@ def prune_day(
         parent_container=output_container,
         parent_path=zarr_path,
         store_container=output_container,
+        hand_dropped=hand,
+        ping_drops=ping_drops,
     )
     output_zarr = f"{day_key}/{day_key}--{category}--pruned.zarr"
     save_dataset_to_azure(view, zarr_path=output_zarr, container=output_container)
@@ -1448,8 +1469,14 @@ def run_pruning(
     cfg: PipelineConfig,
     output_container: str,
 ) -> dict[str, dict[str, str]]:
-    """Prune noisy pings from all day Zarrs."""
-    if not cfg.prune.enabled:
+    """Prune noisy pings from all day Zarrs, and drop the pings dropped by hand.
+
+    With pruning off but pings dropped by hand, every day and category still gets a
+    pruned view, holding only those drops, so that the pruned panels, the combined
+    panel and MVBS/NASC all read the same stage.
+    """
+    drops = cfg.prune.ping_drops
+    if not cfg.prune.enabled and not drops:
         logger.info("Skipping pruning")
         return day_zarrs
 
@@ -1459,6 +1486,7 @@ def run_pruning(
     for day_key, categories in day_zarrs.items():
         pruned_zarrs[day_key] = {}
         for category, zarr_path in categories.items():
+            by_hand = drops.get(day_key, {}).get(category, [])
             pruned_path = prune_day(
                 zarr_path=zarr_path,
                 output_container=output_container,
@@ -1471,6 +1499,8 @@ def run_pruning(
                 crosstalk_ref_depth_max=cfg.prune.crosstalk_ref_depth_max,
                 crosstalk_threshold_db=cfg.prune.crosstalk_threshold_db,
                 artefact_threshold=cfg.prune.artefact_threshold,
+                ping_drops=by_hand,
+                by_hand_only=not cfg.prune.enabled,
             )
             pruned_zarrs[day_key][category] = pruned_path
 
@@ -1576,12 +1606,16 @@ def compute_mvbs_day(
         ds_mvbs["Sv"], ds_mvbs["gap_filled"] = fill_gaps(sv, gaps, fill_window)
         n_filled = int(ds_mvbs["gap_filled"].sum())
         ds_mvbs.attrs["gap_fill"] = (
-            f"Bins emptied only by artefact removal hold the linear mean of the bins with a "
-            f"value in a {fill_window[0]} ping-time x {fill_window[1]} range bin window "
-            f"around them ({NO_BACKSCATTER_DB:g} dB counting as zero); gap_filled marks them."
+            f"Bins emptied only by artefact removal, in gaps at most {fill_window[1]} range "
+            f"bins tall, hold the linear mean of the bins with a value in a {fill_window[0]} "
+            f"ping-time x {fill_window[1]} range bin window around them "
+            f"({NO_BACKSCATTER_DB:g} dB counting as zero); gap_filled marks them. Taller "
+            f"gaps stay empty."
         )
-        logger.info("  Filled %d of %d MVBS gap bins from a %d x %d window",
-                    n_filled, int(gaps.sum()), *fill_window)
+        logger.info(
+            "  Filled %d of %d MVBS gap bins from a %d x %d window (gaps up to %d bins tall)",
+            n_filled, int(gaps.sum()), *fill_window, fill_window[1],
+        )
 
     # Drop fully-empty ping_time bins (0 raw pings fell in the 10s window,
     # typically at raw-file boundaries — visible as white vertical stripes

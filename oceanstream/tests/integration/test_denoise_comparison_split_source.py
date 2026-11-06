@@ -329,3 +329,47 @@ class TestStrictMode:
     def test_source_may_not_be_the_output(self, experiment_root):
         with pytest.raises(ValueError, match="must differ"):
             _run(_config(SOURCE_CONTAINER, sv_source=SOURCE_CONTAINER))
+
+
+class TestPingsDroppedByHand:
+    """Stage 6b drops the pings marked as bad data by hand first, pruning on or off."""
+
+    #: The long pulse pings every 3 s from 02:00: 20 of them in this minute.
+    DROP = ("2023-10-10T02:01:00Z", "2023-10-10T02:01:59Z")
+
+    def _inside(self, times):
+        return (times >= np.datetime64("2023-10-10T02:01:00")) & (
+            times <= np.datetime64("2023-10-10T02:01:59")
+        )
+
+    @pytest.mark.parametrize("pruning", [True, False])
+    def test_they_leave_the_pruned_view(self, experiment_root, pruning):
+        cfg = _config("out-drops", sv_source=SOURCE_CONTAINER)
+        cfg.prune.enabled = pruning
+        cfg.prune.ping_drops = {DAY: {"long_pulse": [self.DROP]}}
+        _run(cfg)
+
+        day = experiment_root / "out-drops" / DAY
+        view = xr.open_zarr(day / f"{DAY}--long_pulse--pruned.zarr")
+        inside = self._inside(view["ping_time"].values)
+        assert inside.sum() == 20
+        np.testing.assert_array_equal(view["dropped_by_hand"].values, inside)
+        assert not view["keep_ping"].values[inside].any()
+        # The other pulse, with nothing dropped, gets a view all the same.
+        other = xr.open_zarr(day / f"{DAY}--short_pulse--pruned.zarr")
+        assert "dropped_by_hand" not in other
+        if not pruning:
+            assert view["keep_ping"].values[~inside].all()
+            assert other["keep_ping"].values.all()
+
+    def test_mvbs_has_no_bins_where_every_ping_was_dropped(self, experiment_root):
+        cfg = _config("out-drops-mvbs", sv_source=SOURCE_CONTAINER)
+        cfg.skip_mvbs = False
+        cfg.prune.ping_drops = {DAY: {"long_pulse": [self.DROP]}}
+        _run(cfg)
+
+        mvbs = open_product_uri(
+            str(experiment_root / "out-drops-mvbs" / DAY / f"{DAY}--long_pulse--mvbs.zarr")
+        )
+        assert not self._inside(mvbs["ping_time"].values).any()
+        assert mvbs.sizes["ping_time"] > 0
