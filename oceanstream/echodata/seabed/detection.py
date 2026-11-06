@@ -1052,6 +1052,7 @@ def _echo_top(
     min_rate_m_s: float = 0.1,
     rate_window_s: float = 30.0,
     max_spread_m: float = 5.0,
+    near_s: float = 120.0,
     smooth_m: float = 1.0,
 ) -> np.ndarray:
     """*line* raised, ping by ping, to the start of a seabed echo found above it.
@@ -1072,6 +1073,11 @@ def _echo_top(
     half that window, as where a bridged line lies flat over rough ground. On a flat
     seabed the weaker thresholds never apply, so a fish layer resting on it is not taken
     for seabed.
+
+    A ping without a line within *near_s* of one with a line, as where the seabed comes
+    back into range, is searched the same way around the nearest line, down to 20 m below
+    it, and takes a line where it holds an echo of at least *seabed_sv* (HB2403
+    2024-06-07 11:27, the seabed at 430 m with no line).
     """
     from scipy.ndimage import median_filter
 
@@ -1094,22 +1100,40 @@ def _echo_top(
         steep |= spread[found] > max_spread_m
     dz = float(np.nanmedian(np.diff(range_1d)))
     width = max(1, int(round(smooth_m / dz)) | 1)
-    for c in range(0, found.size, 5000):
-        pings = found[c : c + 5000]
+    # Pings without a line near one with a line: the nearest line is their reference.
+    lost = np.flatnonzero(~np.isfinite(line))
+    if lost.size:
+        t_found = times_ns[found]
+        pos = np.clip(np.searchsorted(t_found, times_ns[lost]), 1, max(found.size - 1, 1))
+        before = np.clip(pos - 1, 0, found.size - 1)
+        after = np.clip(pos, 0, found.size - 1)
+        nearer = np.where(np.abs(times_ns[lost] - t_found[before])
+                          <= np.abs(t_found[after] - times_ns[lost]), before, after)
+        close = np.abs(times_ns[lost] - t_found[nearer]) <= near_s * 1e9
+        lost, nearer = lost[close], found[nearer[close]]
+    ref = line.copy()
+    ref[lost] = line[nearer] if lost.size else ref[lost]
+    pings_all = np.concatenate([found, lost])
+    kinds = np.concatenate([np.where(steep, 1, 0), np.full(lost.size, 2)])
+    for c in range(0, pings_all.size, 5000):
+        pings = pings_all[c : c + 5000]
         prof = median_filter(np.nan_to_num(sv[pings], nan=-999.0), size=(1, width))
-        for row, p, slope in zip(prof, pings, steep[c : c + 5000]):
-            rise = min(max_rise_m, max_rise_frac * line[p])
-            span = np.flatnonzero((range_1d >= max(line[p] - rise, top_m)) & (range_1d <= line[p]))
+        for row, p, kind in zip(prof, pings, kinds[c : c + 5000]):
+            rise = min(max_rise_m, max_rise_frac * ref[p])
+            below = 20.0 if kind == 2 else 0.0
+            span = np.flatnonzero((range_1d >= max(ref[p] - rise, top_m))
+                                  & (range_1d <= ref[p] + below))
             if span.size == 0:
                 continue
-            start_sv, step_sv = (slope_sv, slope_step_sv) if slope else (seabed_sv, seabed_step_sv)
+            start_sv, step_sv = (slope_sv, slope_step_sv) if kind == 1 else (seabed_sv, seabed_step_sv)
             strong = span[row[span] >= start_sv]
             if strong.size == 0:
                 continue
             i = strong[0]
             while i > span[0] and row[i - 1] >= step_sv:
                 i -= 1
-            out[p] = min(line[p], float(range_1d[i]))
+            top = float(range_1d[i])
+            out[p] = top if kind == 2 else min(line[p], top)
     return out
 
 

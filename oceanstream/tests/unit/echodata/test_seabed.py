@@ -676,6 +676,20 @@ class TestInterleavedSeabed:
         depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
         assert np.all(np.abs(depth - 15.0) <= 0.2)
 
+    def test_a_seabed_coming_back_into_range_gets_a_line(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        # HB2403 2024-06-07 11:27: pings next to a line, the seabed echo at 430 m in them.
+        range_m = np.arange(0, 500, 0.2)
+        sv = np.full((6, range_m.size), -80.0)
+        sv[:, (range_m >= 430.0) & (range_m < 436.0)] = -15.0
+        sv[5] = -80.0  # no seabed echo in the last ping
+        line = np.array([np.nan, np.nan, 432.0, 432.0, np.nan, np.nan])
+        times = np.array([0, 1, 2, 3, 4, 400], dtype=np.int64) * 10**9
+        out = _echo_top(sv, range_m, times, line)
+        np.testing.assert_allclose(out[:5], 430.0, atol=0.2)
+        assert np.isnan(out[5])  # too far from a line, and no echo
+
     def test_a_layer_on_a_flat_seabed_is_not_taken_for_seabed(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 
