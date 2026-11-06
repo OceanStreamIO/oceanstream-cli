@@ -41,6 +41,8 @@ MODE="${MODE:-sv}"
 # power or auto. CAL_S3_KEY: a calibration XML in the project bucket (--cal-params-file).
 # CODE_S3_KEY: an oceanstream-cli source tarball in the project bucket, used instead of
 # downloading $BRANCH from GitHub. RAW_INCLUDE: only raw files whose names match this regex.
+# EXPECTED_CATEGORIES: pulse categories to keep (default short_pulse; long_pulse for ships
+# whose files have no 200 kHz channel and only pulses of 1.5 ms or more, such as Falkor (too)).
 if [ "$MODE" = sv ] && [ -n "${RAW_S3_PREFIX:-}" ]; then :
 elif [ "$MODE" = sv ]; then : "${SHIP:?}"
 elif [ "$MODE" = report ]; then : "${REPORT_RUNS:?}"
@@ -229,7 +231,7 @@ run_sv() {
     [ "$tag" = cpu ] && envp=(env CUDA_VISIBLE_DEVICES=)
     t0="$(date +%s)"
     "${envp[@]+"${envp[@]}"}" python -u "$PIPELINE" --cruise-id "$CRUISE" --start-date "$day" --end-date "$day" \
-        --expected-categories short_pulse --force \
+        --expected-categories "${EXPECTED_CATEGORIES:-short_pulse}" --force \
         --raw-source local --raw-dir "$W/raw/$day" --raw-cache-dir "$W/cache/raw" \
         --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
@@ -253,7 +255,7 @@ run_denoise() {
     local day="$1" t0 t1 rc
     t0="$(date +%s)"
     python -u "$PIPELINE" --cruise-id "$CRUISE" --start-date "$day" --end-date "$day" \
-        --expected-categories short_pulse --force \
+        --expected-categories "${EXPECTED_CATEGORIES:-short_pulse}" --force \
         --storage-backend s3 --s3-bucket "$OCEANSTREAM_S3_BUCKET" --s3-prefix "$PREFIX" \
         --s3-endpoint-url "$AWS_ENDPOINT_URL" --s3-region "${AWS_DEFAULT_REGION:-}" \
         --resume-stage "${RESUME_STAGE:-5}" --sv-source-container "${SV_CONTAINER:-sv}" --output-container "$DENOISED" \

@@ -291,14 +291,17 @@ def publish_stac_command(
     campaigns_dir: Path = CAMPAIGNS_DIR,
 ) -> None:
     """Rewrite Items and the Collection with the campaign's metadata, and the track tiles."""
-    from .cruise import RunConfig, all_metrics  # noqa: PLC0415
+    from .cruise import RunConfig, State, all_metrics  # noqa: PLC0415
     from .publish import publish_campaign  # noqa: PLC0415
 
     try:
         path = campaign_path(campaign_id, campaigns_dir)
         cfg = RunConfig.load(path)
-        out = publish_campaign(_cluster(), path, cfg, all_metrics(path),
-                               days=_days(days) if days else None, tiles=tiles)
+        state = State(path / "state.tsv")
+        chosen = _days(days) if days else sorted(state.pushed())
+        out = publish_campaign(_cluster(), path, cfg, all_metrics(path), days=chosen, tiles=tiles)
+        for day in chosen:
+            state.mark(day, "published")
         typer.echo(json.dumps(out, indent=1))
     except HpcError as e:
         _fail(e)

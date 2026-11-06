@@ -155,6 +155,16 @@ class State:
     def pushed(self) -> set[str]:
         return {d for d, e in self.events() if e == "pushed"}
 
+    def published(self) -> set[str]:
+        """Pushed days whose STAC Item was written after their last push."""
+        out: set[str] = set()
+        for d, e in self.events():
+            if e == "pushed":
+                out.discard(d)
+            elif e == "published":
+                out.add(d)
+        return out
+
 
 class Pusher:
     """Pushes finished days in the background, one push at a time."""
@@ -204,6 +214,9 @@ def job_spec(cluster: Cluster, cfg: RunConfig, days: list[str], preset: tuple[st
     args = list(cfg.pipeline_args)
     if cfg.gps and "--gps-dir" not in args:
         args += ["--gps-dir", f"{site.gps_dir}/{cfg.cruise}"]
+    # The staging window follows a wrong clock; the pipeline has to correct the ping times too.
+    if cfg.day_shift_hours and "--ping-time-offset" not in args:
+        args += ["--ping-time-offset", str(cfg.day_shift_hours * 3600)]
     mode: slurm.Mode = "node" if cfg.mode == "node" else "array"
     spec = slurm.JobSpec(cruise=cfg.cruise, days=days, mode=mode,
                          container=cfg.container, cpus=cfg.cpus, walltime=cfg.walltime,
@@ -313,8 +326,11 @@ def run_cruise(cluster: Cluster, campaign_dir: Path, *, dry_run: bool = False,
     log(f"Finished: {len(pushed)} of {len(cfg.days)} days pushed"
         + (f"; not pushed: {' '.join(failed)}" if failed else ""))
     result: dict[str, Any] = {"pushed": sorted(pushed), "failed": failed, "metrics": run.metrics}
-    if publish and pending and pushed:
+    # Also after a resume whose push finished but whose publish did not.
+    if publish and pushed - state.published():
         result["publish"] = publish_campaign(cluster, campaign_dir, cfg, all_metrics(campaign_dir))
+        for day in sorted(pushed):
+            state.mark(day, "published")
     return result
 
 

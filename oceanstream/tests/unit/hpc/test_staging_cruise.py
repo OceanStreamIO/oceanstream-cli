@@ -192,6 +192,18 @@ def test_run_cruise_processes_pushes_and_resumes(tmp_path: Path, sim: ClusterSim
     pulls = [a for act, a in sim.transfers if act == "pull"]
     assert len(pulls) == 1 and pulls[0][3].endswith("2022-06-23")
     assert result["failed"] == []
+    assert len(published) == 2  # noqa: PLR2004
+
+    # Nothing left to push or publish: no new Collection.
+    cruise.run_cruise(sim, d)
+    assert len(published) == 2  # noqa: PLR2004
+
+    # A run stopped after its push but before its publish publishes on resume.
+    state = d / "state.tsv"
+    state.write_text("".join(line + "\n" for line in state.read_text().splitlines()
+                             if "\tpublished\t" not in line))
+    result = cruise.run_cruise(sim, d)
+    assert len(published) == 3 and "publish" in result  # noqa: PLR2004
 
 
 def test_days_left_on_scratch_are_pushed_without_reprocessing(
@@ -210,3 +222,12 @@ def test_dry_run_renders_without_touching_the_cluster(tmp_path: Path, sim: Clust
     out = cruise.run_cruise(sim, d, dry_run=True)
     assert "run-node" in out["script"] and not sim.transfers
     assert "--encode-mode power --depth-offset 5" in out["script"]
+    assert "--ping-time-offset" not in out["script"]
+
+
+def test_a_fast_clock_corrects_the_ping_times_as_well(tmp_path: Path, sim: ClusterSim) -> None:
+    toml = RUN_TOML.replace('ship = "Oscar_Elton_Sette"',
+                            'ship = "Oscar_Elton_Sette"\nday_shift_hours = -7')
+    d = _campaign(tmp_path, ["2022-06-21"], toml)
+    out = cruise.run_cruise(sim, d, dry_run=True)
+    assert "--depth-offset 5 --ping-time-offset -25200" in out["script"]

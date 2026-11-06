@@ -79,7 +79,7 @@ kind = "ncei"                     # or "s3" with uri = "s3://bucket/prefix/"
 ship = "Oscar_Elton_Sette"        # ncei: the folder under data/raw/
 instrument = "EK80"               # ncei: EK80-format data is sometimes filed under EK60
 layout = "flat"                   # file names carry the date; "days" = one folder per day
-day_shift_hours = 0               # -7 for a recorder clock 7 h fast: UTC = file time - 7 h
+day_shift_hours = 0               # -7 for a recorder clock 7 h fast: UTC = file time - 7 h (staging window and --ping-time-offset)
 
 [gps]
 enabled = false                   # true: stage gps/<ID>/ and pass --gps-dir
