@@ -100,6 +100,15 @@ def test_ncei_ship_row(csv_path: Path, tmp_path: Path) -> None:
     assert "enabled = false" in toml  # NMEA in the files
 
 
+def test_ek60_cruise_is_not_recorded_as_ek80(csv_path: Path, tmp_path: Path) -> None:
+    row = {**catalogue.read_row(csv_path, "hb2402"), "hardware_class": "EK60 (GPT transceivers)"}
+    d = tmp_path / "HB1507"
+    catalogue.write_metadata(d, "HB1507", row)
+    ingest = json.loads((d / catalogue.INGEST).read_text())
+    assert ingest["instrument"]["id"] == "acoustic-simrad-ek60"
+    assert "EK60" in json.loads((d / catalogue.STAC_METADATA).read_text())["keywords"]
+
+
 def test_saildrone_and_sailbuoy_rows(csv_path: Path, tmp_path: Path) -> None:
     sd = catalogue.read_row(csv_path, "SD1046-2020-01")
     assert catalogue.slug("SD1046-2020-01", sd) == "saildrone_sd1046_2020_01"
@@ -197,6 +206,38 @@ def test_mirror_archive_keeps_raw_members_and_resumes() -> None:
     again = mirror.mirror_archive("https://x/FKt.tar.gz", "b", "r2r/FKt/raw",
                                   opener=lambda u: io.BytesIO(blob), s3=s3)
     assert (again.copied, again.skipped) == (0, 2)
+
+
+def test_griidc_files_walks_folders(monkeypatch: pytest.MonkeyPatch) -> None:
+    listing = {
+        "": [{"name": "FIO", "isDirectory": True}],
+        "FIO": [{"name": "Dutch Banks", "isDirectory": True},
+                {"name": "a.raw", "isDirectory": False, "fileId": 1, "size": 10}],
+        "FIO/Dutch Banks": [{"name": "b.raw", "isDirectory": False, "fileId": 2, "size": 20}],
+    }
+
+    class Response:
+        def __init__(self, items: list[dict[str, Any]]) -> None:
+            self.items = items
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> list[dict[str, Any]]:
+            return self.items
+
+    def get(url: str, params: dict[str, str] | None = None, timeout: float = 0) -> Response:
+        assert url.endswith("/api/files_dataset_submission/11141")
+        return Response(listing[(params or {}).get("path", "")])
+
+    monkeypatch.setattr("requests.get", get)
+    assert mirror.griidc_files("11141") == {
+        "a.raw": ("https://data.griidc.org/api/file/download/1", 10),
+        "b.raw": ("https://data.griidc.org/api/file/download/2", 20),
+    }
+    listing["FIO/Dutch Banks"][0]["name"] = "a.raw"
+    with pytest.raises(ValueError, match="two folders"):
+        mirror.griidc_files("11141")
 
 
 def test_mirror_files_unpacks_zips() -> None:

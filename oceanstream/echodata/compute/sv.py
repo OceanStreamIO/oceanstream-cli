@@ -73,6 +73,30 @@ def fill_transmit_type(echodata: "EchoData") -> list[str]:
     return changed
 
 
+def fill_cw_frequencies(echodata: EchoData) -> list[str]:
+    """Give CW channels their transmit start and stop frequency where the file records none.
+
+    EK80 software 1.8 (GRIIDC FL.x704.000:0003, 2016) writes no frequency parameters for a
+    WBT's CW pings, and echopype's complex calibration needs them to rebuild the transmit
+    signal. A CW pulse transmits at its nominal frequency, so both are that.
+
+    Returns the beam groups that were changed.
+    """
+    changed = []
+    for group in [g for g in echodata.group_paths if g.startswith("Sonar/Beam_group")]:
+        beam = echodata[group]
+        if (beam is None or "transmit_frequency_start" in beam or "transmit_type" not in beam
+                or "backscatter_i" not in beam or (beam["transmit_type"] != "CW").any()):
+            continue
+        nominal = beam["frequency_nominal"].broadcast_like(beam["transmit_duration_nominal"])
+        beam["transmit_frequency_start"] = nominal
+        beam["transmit_frequency_stop"] = nominal
+        echodata[group] = beam
+        changed.append(group)
+        logger.info("CW frequencies filled in %s (not in the file)", group)
+    return changed
+
+
 def hold_environment(echodata: "EchoData") -> bool:
     """Extend the Environment records to the first and last ping, holding their values.
 
@@ -136,6 +160,22 @@ def channel_pings(
     return {str(ch): pinged[i] for i, ch in enumerate(tt["channel"].values)}
 
 
+def channel_encode_modes(echodata: EchoData) -> dict[str, str] | None:
+    """Each channel's encode mode when a file mixes complex and power/angle channels, else None.
+
+    EK80 software can record WBT channels as complex samples and GPT channels as power/angle:
+    echopype puts the first in ``Sonar/Beam_group1`` and the second in ``Sonar/Beam_group2``,
+    and one ``compute_Sv`` call calibrates only one of the two groups.
+    """
+    if "Sonar/Beam_group2" not in echodata.group_paths:
+        return None
+    complex_beam, power_beam = echodata["Sonar/Beam_group1"], echodata["Sonar/Beam_group2"]
+    if complex_beam is None or power_beam is None or "backscatter_i" not in complex_beam:
+        return None
+    return {**{str(ch): "complex" for ch in complex_beam["channel"].values},
+            **{str(ch): "power" for ch in power_beam["channel"].values}}
+
+
 def select_channel(
     echodata: "EchoData", channel: str, pings: "np.ndarray", group: str = "Sonar/Beam_group1"
 ) -> int:
@@ -150,11 +190,67 @@ def select_channel(
     import numpy as np
 
     beam = echodata[group].sel(channel=[channel]).isel(ping_time=np.flatnonzero(pings))
-    first = beam["backscatter_r"].isel(ping_time=0)
-    valid = first.notnull().any([d for d in first.dims if d != "range_sample"]).values
+    # Over every ping: an EK80 on auto range records a different range each ping (GRIIDC
+    # FL.x704.000:0003), and the first ping's would cut the deeper ones off.
+    samples = beam["backscatter_r"]
+    valid = samples.notnull().any([d for d in samples.dims if d != "range_sample"]).values
     n_samples = int(np.flatnonzero(valid).max()) + 1 if valid.any() else beam.sizes["range_sample"]
     echodata[group] = beam.isel(range_sample=slice(0, n_samples))
+    # echopype checks for GPT channels on Vendor_specific, then indexes the selection with it.
+    if "Vendor_specific" in echodata.group_paths and echodata["Vendor_specific"] is not None:
+        vendor = echodata["Vendor_specific"]
+        if "channel" in vendor.dims:
+            echodata["Vendor_specific"] = vendor.sel(channel=[channel])
     return n_samples
+
+
+def commonest_pulse(beam: "xr.Dataset", channel: str, pings: "np.ndarray") -> "np.ndarray":
+    """Narrow *pings* to the commonest pulse length and sample interval of a complex channel.
+
+    echopype builds one transmit replica per channel and refuses a channel whose pulse changes.
+    One gain in the file cannot calibrate two pulse lengths anyway, and two sample intervals
+    would need two range grids (70 kHz WBT in GRIIDC FL.x704.000:0003).
+    """
+    import numpy as np
+
+    ch = beam.sel(channel=channel)
+    settings = np.column_stack(
+        [ch["transmit_duration_nominal"].values, ch["sample_interval"].values]
+    )
+    unique, counts = np.unique(settings[pings], axis=0, return_counts=True)
+    if len(unique) < 2:
+        return pings
+    return pings & (settings == unique[np.argmax(counts)]).all(axis=1)
+
+
+def minor_pulse_pings(beams: list["xr.Dataset"]) -> dict[str, "np.ndarray"]:
+    """Ping times of each complex channel outside its commonest pulse over *beams*.
+
+    For a day whose files were combined apart: each group is calibrated on its own, so
+    :func:`commonest_pulse` cannot see that a channel's pulse differs between them.
+    """
+    import pandas as pd
+
+    frames: dict[str, list] = {}
+    for beam in beams:
+        if "backscatter_i" not in beam:
+            continue
+        for channel in beam["channel"].values:
+            ch = beam.sel(channel=channel)
+            frames.setdefault(str(channel), []).append(pd.DataFrame(
+                {"duration": ch["transmit_duration_nominal"].values,
+                 "interval": ch["sample_interval"].values},
+                index=ch["ping_time"].values,
+            ))
+    minor = {}
+    for channel, rows in frames.items():
+        settings = pd.concat(rows).dropna()
+        counts = settings.value_counts()
+        if len(counts) > 1:
+            duration, interval = counts.index[0]
+            outside = settings["duration"].ne(duration) | settings["interval"].ne(interval)
+            minor[channel] = settings.index[outside].values
+    return minor
 
 
 def compute_sv(

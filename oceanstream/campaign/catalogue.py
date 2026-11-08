@@ -114,7 +114,7 @@ def repository_short(row: dict[str, str]) -> str:
     repo = row.get("repository", "").lower()
     for key, short in (("ncei", "ncei"), ("rolling deck", "r2r"), ("r2r", "r2r"),
                        ("zenodo", "zenodo"), ("pangaea", "pangaea"), ("hub ocean", "hubocean"),
-                       ("nmdc", "nmdc"), ("csiro", "csiro")):
+                       ("nmdc", "nmdc"), ("csiro", "csiro"), ("griidc", "griidc")):
         if key in repo:
             return short
     return "other"
@@ -358,7 +358,10 @@ def ingest_fields(campaign_id: str, row: dict[str, str], *, bucket: str = "ocean
             "kind": kind,
             "operator": row.get("platform_operator", "") or first(row.get("institution", "")),
         },
-        "instrument": {"id": "acoustic-simrad-ek80", "manufacturer": "Kongsberg",
+        "instrument": {"id": ("acoustic-simrad-ek60"
+                              if row.get("hardware_class", "").startswith("EK60")
+                              else "acoustic-simrad-ek80"),
+                       "manufacturer": "Kongsberg",
                        "model": row.get("hardware_class", "") or "EK80",
                        "frequencies_khz": frequencies(row)},
         "campaignForm": {

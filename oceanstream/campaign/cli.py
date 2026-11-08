@@ -180,7 +180,8 @@ def mirror_command(
     campaign_id: str,
     source: str = typer.Option(..., "--from",
                                help="An archive URL (.tar.gz, .tar, .zip), zenodo:<record>, "
-                                    "or azure (Saildrone file share)."),
+                                    "griidc:<dataset submission>, or azure (Saildrone file "
+                                    "share)."),
     dest: str = typer.Option("", help="s3://bucket/prefix/ (default: source.uri in "
                                       "hpc-run.toml)."),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -216,8 +217,10 @@ def mirror_command(
         if not dest.startswith("s3://"):
             raise typer.BadParameter("Give --dest s3://bucket/prefix/ or source.uri.")
         bucket, _, prefix = dest.removeprefix("s3://").partition("/")
-        if source.startswith("zenodo:"):
-            files = mirror.zenodo_files(source.removeprefix("zenodo:"))
+        if source.startswith(("zenodo:", "griidc:")):
+            files = (mirror.zenodo_files(source.removeprefix("zenodo:"))
+                     if source.startswith("zenodo:")
+                     else mirror.griidc_files(source.removeprefix("griidc:")))
             result = mirror.mirror_files({n: u for n, (u, _) in files.items()}, bucket,
                                          prefix, sizes={n: s for n, (_, s) in files.items()},
                                          workers=workers, dry_run=dry_run)

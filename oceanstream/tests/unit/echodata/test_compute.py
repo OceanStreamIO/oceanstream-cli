@@ -627,6 +627,122 @@ class TestChannelSelection:
         assert beam["ping_time"].values.tolist() == [1, 3]
 
 
+class TestAutoRangeAndMixedSamples:
+    """GRIIDC FL.x704.000:0003: a range per ping, and complex and power channels in one file."""
+
+    @staticmethod
+    def _beam(n_first=3, n_later=6):
+        import numpy as np
+        import xarray as xr
+
+        data = np.full((1, 2, 6), np.nan)
+        data[0, 0, :n_first] = 1.0
+        data[0, 1, :n_later] = 1.0
+        return xr.Dataset(
+            {"backscatter_r": (("channel", "ping_time", "range_sample"), data),
+             "transmit_duration_nominal": (("channel", "ping_time"), np.full((1, 2), 1e-3)),
+             "transmit_type": (("channel", "ping_time"), np.full((1, 2), "CW", dtype="<U3")),
+             "frequency_nominal": ("channel", [70000.0])},
+            coords={"channel": ["w"], "ping_time": [0, 1], "range_sample": range(6)},
+        )
+
+    def test_commonest_pulse_keeps_the_main_setting(self):
+        import numpy as np
+        import xarray as xr
+
+        from oceanstream.echodata.compute.sv import commonest_pulse
+
+        beam = xr.Dataset(
+            {"transmit_duration_nominal": (("channel", "ping_time"),
+                                           [[2.56e-4, 2.56e-4, 1.024e-3, 2.56e-4]]),
+             "sample_interval": (("channel", "ping_time"),
+                                 [[2.13e-5, 2.13e-5, 8.53e-5, 2.13e-5]])},
+            coords={"channel": ["w"], "ping_time": range(4)},
+        )
+        every = np.ones(4, dtype=bool)
+        assert commonest_pulse(beam, "w", every).tolist() == [True, True, False, True]
+        # Only the channel's own pings count, and one setting changes nothing.
+        own = np.array([False, False, True, False])
+        assert commonest_pulse(beam, "w", own).tolist() == own.tolist()
+
+    def test_minor_pulse_pings_look_across_groups_of_files(self):
+        import numpy as np
+        import xarray as xr
+
+        from oceanstream.echodata.compute.sv import minor_pulse_pings
+
+        def beam(times, duration, interval):
+            n = len(times)
+            return xr.Dataset(
+                {"backscatter_i": (("channel", "ping_time"), np.zeros((1, n))),
+                 "transmit_duration_nominal": (("channel", "ping_time"), np.full((1, n), duration)),
+                 "sample_interval": (("channel", "ping_time"), np.full((1, n), interval))},
+                coords={"channel": ["w"], "ping_time": times},
+            )
+
+        common, other = beam([0, 1, 2], 2.56e-4, 2.13e-5), beam([3, 4], 1.024e-3, 8.53e-5)
+        assert minor_pulse_pings([common, other])["w"].tolist() == [3, 4]
+        assert minor_pulse_pings([common]) == {}
+        # Power channels are calibrated ping by ping and do not count.
+        assert minor_pulse_pings([common.drop_vars("backscatter_i"), other]) == {}
+
+    def test_select_channel_keeps_the_longest_ping(self):
+        import numpy as np
+        import xarray as xr
+
+        from oceanstream.echodata.compute.sv import select_channel
+
+        ed = _FakeEchoData(self._beam())
+        vendor = xr.Dataset({"transceiver_type": ("channel", ["WBT", "GPT"])},
+                            coords={"channel": ["w", "g"]})
+        ed["Vendor_specific"] = vendor
+        assert select_channel(ed, "w", np.array([True, True])) == 6
+        assert ed["Sonar/Beam_group1"].sizes["range_sample"] == 6
+        # echopype's GPT check on Vendor_specific must see only the selected channel.
+        assert ed["Vendor_specific"]["channel"].values.tolist() == ["w"]
+
+    def test_channel_encode_modes(self):
+        import numpy as np
+
+        from oceanstream.echodata.compute.sv import channel_encode_modes
+
+        power = self._beam().assign_coords(channel=["g"])
+        wbt = self._beam()
+        wbt["backscatter_i"] = wbt["backscatter_r"] * np.nan
+        ed = _FakeEchoData(wbt)
+        assert channel_encode_modes(ed) is None  # one group
+        ed["Sonar/Beam_group2"] = power
+        assert channel_encode_modes(ed) == {"w": "complex", "g": "power"}
+        ed = _FakeEchoData(self._beam())
+        ed["Sonar/Beam_group2"] = power
+        assert channel_encode_modes(ed) is None  # the first group holds no complex samples
+
+    def test_fill_cw_frequencies(self):
+        import numpy as np
+
+        from oceanstream.echodata.compute.sv import fill_cw_frequencies
+
+        wbt = self._beam()
+        wbt["backscatter_i"] = wbt["backscatter_r"] * np.nan
+        ed = _FakeEchoData(wbt)
+        assert fill_cw_frequencies(ed) == ["Sonar/Beam_group1"]
+        beam = ed["Sonar/Beam_group1"]
+        assert (beam["transmit_frequency_start"] == 70000.0).all()
+        assert beam["transmit_frequency_stop"].dims == ("channel", "ping_time")
+        assert fill_cw_frequencies(ed) == []  # already there
+
+    def test_fill_cw_frequencies_leaves_power_and_fm_alone(self):
+        import numpy as np
+
+        from oceanstream.echodata.compute.sv import fill_cw_frequencies
+
+        assert fill_cw_frequencies(_FakeEchoData(self._beam())) == []  # power samples
+        fm = self._beam()
+        fm["backscatter_i"] = fm["backscatter_r"] * np.nan
+        fm["transmit_type"] = fm["transmit_type"].copy(data=np.full((1, 2), "LFM", dtype="<U3"))
+        assert fill_cw_frequencies(_FakeEchoData(fm)) == []
+
+
 class TestHoldEnvironment:
     """Sound speed is held, not extrapolated, past the Environment records."""
 

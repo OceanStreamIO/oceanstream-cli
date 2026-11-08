@@ -280,9 +280,11 @@ class RawConversionConfig:
 
     # echopype parameters
     sonar_model: str = "EK80"
+    single_pulse: bool = False  # keep only each complex channel's commonest pulse of the day
     waveform_mode: str = "CW"
     # "complex", "power", or "auto": complex where the files hold complex samples,
-    # else power/angle, decided per group of files (a day can hold both).
+    # else power/angle, decided per group of files (a day can hold both), and per
+    # channel when one file holds both.
     encode_mode: str = "complex"
 
     # Depth

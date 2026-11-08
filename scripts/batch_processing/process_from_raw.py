@@ -1238,8 +1238,11 @@ def _correct_absorption(sv_ch, ctd, freq: float, used, cfg: PipelineConfig):
     return sv_ch
 
 
+PULSE_DROPPED_ATTR = "pings_dropped_for_changing_pulse"
+
+
 def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: dict,
-                           cfg: PipelineConfig, ctd=None, cal=None):
+                           cfg: PipelineConfig, ctd=None, cal=None, modes: dict | None = None):
     """Sv one channel at a time, for channels that ping in turn or with CTD casts.
 
     Each channel is calibrated on its own pings and recorded range only, then binned, and
@@ -1247,21 +1250,43 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
     NaN-padded grid instead costs about 12 times the work and memory on RR2205. With
     *ctd* (CastProfiles), each channel's sound speed and absorption come from the casts,
     and Sv is corrected to the mean absorption along each sample's path before binning.
+    *modes* gives each channel's encode mode, for files that mix complex and power/angle
+    channels (see ``channel_encode_modes``).
     """
     import echopype as ep
     import xarray as xr
 
-    from oceanstream.echodata.compute.sv import fill_transmit_type, hold_environment, select_channel
+    from oceanstream.echodata.compute.sv import (
+        commonest_pulse,
+        fill_cw_frequencies,
+        fill_transmit_type,
+        hold_environment,
+        select_channel,
+    )
 
     parts = []
+    dropped = {}
     for channel, pings in by_channel.items():
         ed_ch = ep.open_converted(ed_zarr_path, chunks={})
-        n_samples = select_channel(ed_ch, channel, pings)
+        mode = modes[channel] if modes else None
+        group = "Sonar/Beam_group2" if mode == "power" else "Sonar/Beam_group1"
+        if "backscatter_i" in ed_ch[group]:
+            kept = commonest_pulse(ed_ch[group], channel, pings)
+            if kept.sum() < pings.sum():
+                dropped[channel] = int(pings.sum() - kept.sum())
+                logger.warning("  %s: pulse changes; dropping %d of %d pings to keep the commonest",
+                               channel, dropped[channel], int(pings.sum()))
+                pings = kept
+        n_samples = select_channel(ed_ch, channel, pings, group)
         fill_transmit_type(ed_ch)
+        fill_cw_frequencies(ed_ch)
         hold_environment(ed_ch)
         ed_ch = ed_ch.chunk({"ping_time": cfg.chunks.ping_time, "range_sample": -1})
-        logger.info("  %s: %d pings, %d range samples", channel, int(pings.sum()), n_samples)
+        logger.info("  %s: %d pings, %d range samples%s", channel, int(pings.sum()), n_samples,
+                    f" [{mode}]" if mode else "")
         kwargs, used = compute_kwargs, None
+        if mode:
+            kwargs = {**kwargs, "encode_mode": mode}
         if ctd is not None:
             env, used, freq = _ctd_environment(ed_ch, channel, n_samples, ctd, cfg)
             kwargs = {**compute_kwargs, "env_params": env}
@@ -1273,7 +1298,7 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
         if ctd is not None:
             sv_ch = _correct_absorption(sv_ch, ctd, freq, used, cfg)
         if cfg.raw.sv_range_bin_m > 0:
-            sv_ch = _bin_sv_range(sv_ch, cfg.raw.sv_range_bin_m)
+            sv_ch = _bin_sv_range(sv_ch, cfg.raw.sv_range_bin_m, cut_padding=False)
         parts.append(sv_ch)
     ds_Sv = xr.concat(parts, dim="channel", join="outer", data_vars="minimal",
                       coords="minimal", compat="override", combine_attrs="override")
@@ -1285,17 +1310,20 @@ def _compute_sv_by_channel(ed_zarr_path: str, by_channel: dict, compute_kwargs: 
         for part in parts:
             factors.update(ast.literal_eval(part["Sv"].attrs.get("range_bin_samples", "{}")))
         ds_Sv["Sv"].attrs["range_bin_samples"] = str(factors)
+    if dropped:
+        ds_Sv["Sv"].attrs[PULSE_DROPPED_ATTR] = str(dropped)
     return ds_Sv
 
 
-def _bin_sv_range(ds_Sv, target_bin_m: float):
+def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
     """Average Sv into coarser range bins, channel by channel.
 
     Each channel is reduced by a whole number of its own range samples (the
     count closest to *target_bin_m*), averaging Sv in the linear domain and
     echo_range arithmetically. Heavily oversampled channels (e.g. a 200 kHz
     short pulse sampled at 9 mm) shrink enough for a full day to be denoised
-    in memory.
+    in memory. *cut_padding* removes trailing bins empty in the first 50 pings;
+    a channel already cut to its own range (``select_channel``) needs no cut.
     """
     import numpy as np
     import xarray as xr
@@ -1317,11 +1345,13 @@ def _bin_sv_range(ds_Sv, target_bin_m: float):
         ds_binned = xr.Dataset({"Sv": sv_binned, "echo_range": range_binned})
         # A channel with a longer sample interval is NaN-padded along
         # range_sample; cut the padding off so it does not count as missing data.
-        has_data = (
-            ds_binned["Sv"].isel(channel=0, ping_time=slice(0, 50)).notnull().any("ping_time").values
-        )
-        n_valid = int(np.flatnonzero(has_data).max()) + 1 if has_data.any() else 0
-        ds_binned = ds_binned.isel(range_sample=slice(0, n_valid))
+        if cut_padding:
+            has_data = (
+                ds_binned["Sv"].isel(channel=0, ping_time=slice(0, 50))
+                .notnull().any("ping_time").values
+            )
+            n_valid = int(np.flatnonzero(has_data).max()) + 1 if has_data.any() else 0
+            ds_binned = ds_binned.isel(range_sample=slice(0, n_valid))
         ds_binned = ds_binned.assign_coords(range_sample=np.arange(ds_binned.sizes["range_sample"]))
         binned.append(ds_binned)
         logger.info(
@@ -1412,14 +1442,40 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
     # Compute Sv
     compute_kwargs = {}
     by_channel = None
+    modes = None
     if cfg.raw.sonar_model == "EK80":
-        from oceanstream.echodata.compute.sv import channel_pings, fill_transmit_type
+        from oceanstream.echodata.compute.sv import (
+            channel_encode_modes,
+            channel_pings,
+            fill_cw_frequencies,
+            fill_transmit_type,
+        )
 
         compute_kwargs["waveform_mode"] = cfg.raw.waveform_mode
         compute_kwargs["encode_mode"] = encode_mode
         by_channel = channel_pings(ed)
+        modes = channel_encode_modes(ed) if cfg.raw.encode_mode == "auto" else None
+        if modes:
+            import numpy as np
+
+            if cfg.raw.ctd_file or cfg.raw.cal_params_file:
+                raise ValueError("--ctd-file and --cal-params-file need one sample type per file; "
+                                 f"{Path(ed_zarr_path).name} mixes complex and power channels.")
+            # Every channel, each calibrated from its own beam group.
+            logger.info("  Channels of mixed sample types: %s", modes)
+            encode_mode = "complex+power"
+            by_channel = {
+                channel: pinged
+                for group in ("Sonar/Beam_group1", "Sonar/Beam_group2")
+                for channel, pinged in (
+                    channel_pings(ed, group)
+                    or {str(c): np.ones(ed[group].sizes["ping_time"], dtype=bool)
+                        for c in ed[group]["channel"].values}
+                ).items()
+            }
         # Channels that ping in turn would otherwise be dropped (see fill_transmit_type).
         fill_transmit_type(ed)
+        fill_cw_frequencies(ed)
 
     # The combined EchoData is opened lazily; a GPU-enabled echopype would
     # materialise the whole day at once, so stay on the chunked CPU path.
@@ -1453,7 +1509,8 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
     logger.info("  compute_Sv (waveform=%s, encode=%s) on %s", cfg.raw.waveform_mode, encode_mode,
                 Path(ed_zarr_path).name)
     if by_channel:
-        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd, cal=cal)
+        ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd,
+                                       cal=cal, modes=modes)
         if ctd is not None:
             ds_Sv.attrs["environment"] = (
                 f"Sound speed and absorption from {ctd.time.size} CTD casts in "
@@ -1532,6 +1589,9 @@ def _fill_missing_positions(ds_Sv):
 
 def _join_sv_parts(parts: list):
     """Sv of one day's groups of files (e.g. complex and power/angle), joined in time."""
+    import ast
+    from collections import Counter
+
     import xarray as xr
 
     ds_Sv = xr.concat(parts, dim="ping_time", join="outer", data_vars="minimal",
@@ -1539,6 +1599,11 @@ def _join_sv_parts(parts: list):
     factors = {p["Sv"].attrs.get("range_bin_samples") for p in parts}
     if len(factors) > 1:
         logger.warning("  Groups were range-binned differently: %s", sorted(map(str, factors)))
+    dropped = Counter()
+    for part in parts:
+        dropped.update(ast.literal_eval(part["Sv"].attrs.get(PULSE_DROPPED_ATTR, "{}")))
+    if dropped:
+        ds_Sv["Sv"].attrs[PULSE_DROPPED_ATTR] = str(dict(dropped))
     ds_Sv = ds_Sv.sortby("ping_time")
     # A ping can close one raw file and open the next; keep it once. Repeated ping
     # times also break joins on ping_time downstream (echopype's NASC distance).
@@ -1546,6 +1611,25 @@ def _join_sv_parts(parts: list):
     ds_Sv = ds_Sv.drop_duplicates("ping_time", keep="first")
     if ds_Sv.sizes["ping_time"] < n:
         logger.info("  Dropped %d repeated ping times", n - ds_Sv.sizes["ping_time"])
+    return ds_Sv
+
+
+def _blank_minor_pulses(ds_Sv, paths: list[str]):
+    """Keep only each complex channel's commonest pulse of the day (--single-pulse)."""
+    import echopype as ep
+
+    from oceanstream.echodata.compute.sv import minor_pulse_pings
+
+    minor = minor_pulse_pings([ep.open_converted(p, chunks={})["Sonar/Beam_group1"] for p in paths])
+    for channel, times in minor.items():
+        logger.warning("  %s: pulse differs on %d pings of the day; keeping the commonest",
+                       channel, len(times))
+        blank = (ds_Sv["channel"] == channel) & ds_Sv["ping_time"].isin(times)
+        for name in ("Sv", "echo_range"):
+            ds_Sv[name] = ds_Sv[name].where(~blank).assign_attrs(ds_Sv[name].attrs)
+    if minor:
+        # Counted from the files, so this includes pings dropped inside a group of files.
+        ds_Sv["Sv"].attrs[PULSE_DROPPED_ATTR] = str({c: len(t) for c, t in minor.items()})
     return ds_Sv
 
 
@@ -1626,6 +1710,8 @@ def compute_sv_day(
     else:
         parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
         ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
+        if cfg.raw.single_pulse and len(parts) > 1:
+            ds_Sv = _blank_minor_pulses(ds_Sv, paths)
         ds_Sv.attrs["encode_mode"] = ",".join(dict.fromkeys(p[1] for p in parts))
 
         if gps_df is None or gps_df.empty:
@@ -2594,6 +2680,20 @@ def parse_args() -> PipelineConfig:
     parser.add_argument("--nasc-range-bin", default="10m")
     parser.add_argument("--nasc-dist-bin", default="0.5nmi")
 
+    parser.add_argument(
+        "--single-pulse",
+        action="store_true",
+        help="Keep only each complex channel's commonest pulse of the day: another pulse needs "
+             "its own calibration and range grid. Other channels keep their pings.",
+    )
+    parser.add_argument(
+        "--sonar-model",
+        default="EK80",
+        choices=["EK80", "EK60"],
+        help="Format of the raw files, read from the files themselves: NCEI files EK80-format "
+             "data under EK60 folders too. Default EK80.",
+    )
+
     # EK80 parameters
     parser.add_argument(
         "--waveform-mode",
@@ -2605,7 +2705,8 @@ def parse_args() -> PipelineConfig:
         "--encode-mode",
         default="complex",
         choices=["complex", "power", "auto"],
-        help="EK80 encode mode; auto picks complex or power per group of files",
+        help="EK80 encode mode; auto picks complex or power per group of files, and calibrates "
+             "each channel from its own samples when one file holds both",
     )
 
     # Depth
@@ -2911,6 +3012,8 @@ def parse_args() -> PipelineConfig:
     cfg.raw.file_share_name = args.file_share
     cfg.raw.file_share_path = args.file_share_path
     cfg.raw.calibration_file = args.calibration_file
+    cfg.raw.sonar_model = args.sonar_model
+    cfg.raw.single_pulse = args.single_pulse
     cfg.raw.waveform_mode = args.waveform_mode
     cfg.raw.encode_mode = args.encode_mode
     cfg.raw.depth_offset = args.depth_offset

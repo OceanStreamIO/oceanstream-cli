@@ -1,0 +1,65 @@
+# Reef survey at 6-12 pings a second in 20-30 m of water: only the filters that apply there.
+
+[preset]
+key = "reef-shelf-shallow"
+name = "Reef survey, shallow shelf, fast pings"
+status = "draft"
+summary = "Impulse and attenuation filters for an EK80 recording 38, 70 and 120 kHz 6 to 12 times a second over reefs in 20-30 m."
+description = """
+Starting point for the Boswell and Patterson reef fish surveys on the north-west Florida shelf (GRIIDC FL.x704.000:0003, Dutch Banks, 2016-05-16): GPT 38 and 120 kHz and, for most of the survey, WBT 70 kHz at 0.256 ms, a ping every 0.08-0.17 s (0.14 s on average), and a recorded range of about 1.5 times the water depth, set anew each ping.
+
+There is no background filter: the recording stops inside the seabed echo tail, so no part of a ping is noise only, and 20-30 m is too shallow for noise to matter. There is no transient filter: its reference layer would hold the reef fish. The attenuation reference band is 5-12 m, above the fish and below the near-surface bubbles. Integration starts at 7 m: median Sv falls steadily from the surface to about 9 m in all three channels, 17-18 dB between 3 and 9 m at 70 and 120 kHz, and the upper metres would dominate a column total. The windows are written for a 0.14 s ping interval.
+
+Sv in this data set is relative: no calibration was made, and the gains in the files are nominal.
+"""
+derived_from = "research-vessel-nordic-shelf"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["shelf"]
+water_depth_m = [15.0, 40.0]
+pulse_mode = "CW"
+echosounders = ["Simrad EK80 WBT", "Simrad GPT"]
+region = "North-west Florida shelf"
+
+[[preset.validations]]
+cruise = "FLx704-0003"
+days = ["2016-05-16"]
+outcome = "pending"
+notes = "Used for the published products (four EDITO rounds, then MareNostrum 5), with --single-pulse and --seabed-mask-offset 3. At a 1 m offset seabed echo made 78 % of the 70 kHz column total. Not reviewed by the survey's authors."
+reference = "https://doi.org/10.7266/N7WM1BR2"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation"]
+use_frequency_specific = true
+reference_ping_interval_s = 0.14
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 5.0, lower_limit_sl = 12.0, num_side_pings = 105, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 105, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 5.0, lower_limit_sl = 12.0, num_side_pings = 105, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 105, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 5.0, lower_limit_sl = 12.0, num_side_pings = 105, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 105, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.integration.38000]
+start_depth_m = 7.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.70000]
+start_depth_m = 7.0
+max_noise_sv_db = -85.0
+
+[echodata.integration.120000]
+start_depth_m = 7.0
+max_noise_sv_db = -85.0

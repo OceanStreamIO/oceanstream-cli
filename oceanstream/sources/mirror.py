@@ -7,6 +7,7 @@ size are skipped, so an interrupted mirror resumes.
 
 - :func:`mirror_azure_raw` / :func:`mirror_azure_gps`: the Saildrone file share
   and GPS blobs (the TPOS route), with the pipeline's own file discovery.
+- :func:`griidc_files`: the files of a GRIIDC dataset, for :func:`mirror_files`;
 - :func:`mirror_archive`: HTTPS ``.tar.gz``/``.tar``/``.zip`` archives (R2R BagIt
   tarballs, Zenodo zips) streamed member by member, keeping only raw files.
 - :func:`mirror_files`: plain HTTPS files (Zenodo records, NMDC).
@@ -238,6 +239,36 @@ def zenodo_files(record: str, timeout: float = 60) -> dict[str, tuple[str, int]]
 
 
 # -- Azure (Saildrone file share) -----------------------------------------------------------------
+def griidc_files(submission: str, timeout: float = 60) -> dict[str, tuple[str, int]]:
+    """``name -> (download URL, size)`` for the files of a GRIIDC dataset submission.
+
+    The number is ``data-submission`` of the file manager on the dataset's page (data.griidc.org).
+    GRIIDC lists one folder at a time, and names must be unique once folders are flattened.
+    """
+    import requests  # noqa: PLC0415 - optional dependency
+
+    base = "https://data.griidc.org/api"
+    files: dict[str, tuple[str, int]] = {}
+
+    def walk(path: str) -> None:
+        r = requests.get(f"{base}/files_dataset_submission/{submission}",
+                         params={"path": path} if path else None, timeout=timeout)
+        r.raise_for_status()
+        for item in r.json():
+            below = f"{path}/{item['name']}" if path else item["name"]
+            if item.get("isDirectory"):
+                walk(below)
+            elif item["name"] in files:
+                raise ValueError(f"GRIIDC submission {submission}: {item['name']} is in two "
+                                 "folders. Mirror them to separate prefixes.")
+            else:
+                files[item["name"]] = (f"{base}/file/download/{item['fileId']}",
+                                       int(item["size"]))
+
+    walk("")
+    return files
+
+
 def _pipeline_dir(explicit: str = "") -> Path:
     candidates = [Path(explicit)] if explicit else []
     candidates.append(Path(__file__).resolve().parents[2] / "scripts" / "batch_processing")

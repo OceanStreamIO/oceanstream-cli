@@ -255,3 +255,21 @@ class TestBroadbandFilesAmongCw:
     def test_fm_files_are_combined_when_asked_for(self, monkeypatch):
         combined = self._combine(monkeypatch, ["short_pulse", "broadband"])
         assert combined["broadband"] == ["D20220720-T075958.zarr"]
+
+
+def test_bin_sv_range_keeps_later_pings_of_a_channel_already_cut():
+    """An EK80 on auto range: the first 50 pings need not reach as far as later ones."""
+    import numpy as np
+    import xarray as xr
+
+    n_pings, n_samples = 60, 8
+    sv = np.full((1, n_pings, n_samples), np.nan)
+    sv[0, :50, :4] = -60.0
+    sv[0, 50:, :8] = -60.0
+    echo_range = np.broadcast_to(np.arange(n_samples) * 0.05, (1, n_pings, n_samples)).copy()
+    ds = xr.Dataset({"Sv": (("channel", "ping_time", "range_sample"), sv),
+                     "echo_range": (("channel", "ping_time", "range_sample"), echo_range)},
+                    coords={"channel": ["a"], "ping_time": np.arange(n_pings),
+                            "range_sample": np.arange(n_samples)})
+    assert pfr._bin_sv_range(ds, 0.1, cut_padding=False).sizes["range_sample"] == 4
+    assert pfr._bin_sv_range(ds, 0.1).sizes["range_sample"] == 2  # the shared-grid cut
