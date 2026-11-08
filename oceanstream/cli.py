@@ -1276,6 +1276,7 @@ if typer:
         force_reprocess: bool = typer.Option(False, "--force-reprocess", help="Clear previous metadata and reprocess all files from scratch."),
         nmea_sentence_types: list[str] = typer.Option(None, help="NMEA sentence types to process (e.g., GGA,RMC). If not specified, processes all supported types (GGA,RMC,GNS,VTG,ZDA). Only applies to .txt NMEA files."),
         nmea_sampling_interval: float = typer.Option(None, help="NMEA sampling interval in seconds (e.g., 10.0 = 1 point per 10 seconds). If not specified, keeps all data points. Only applies to .txt NMEA files."),
+        fill_positions_max_gap: float = typer.Option(0.0, "--fill-positions-max-gap", help="Rows with measurements but no position get one interpolated in time between fixes at most this many minutes apart, marked by 'position_interpolated'. 0 drops such rows."),
     ) -> None:
         global _provider_obj
         
@@ -1350,6 +1351,7 @@ if typer:
                 nmea_sentence_types=nmea_sentence_types,
                 nmea_sampling_interval=nmea_sampling_interval,
                 use_cloud_storage=use_cloud_storage,
+                fill_positions_max_gap_minutes=fill_positions_max_gap,
             )
         except FileNotFoundError as e:
             typer.echo(f"[geotrack] ERROR: {e}")

@@ -292,7 +292,8 @@ def emit_stac_collection_and_item(
 
         # Add all parquets in this partition as assets
         for i, pf in enumerate(files):
-            rel_href = str(Path("..").joinpath(pf.relative_to(geoparquet_root)))
+            # Items live in stac/items/, two levels below the dataset root.
+            rel_href = str(Path("..", "..").joinpath(pf.relative_to(geoparquet_root)))
             asset_key = "geoparquet" if i == 0 else f"geoparquet_{i}"
             item["assets"][asset_key] = {
                 "href": rel_href,

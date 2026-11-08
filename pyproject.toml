@@ -66,6 +66,7 @@ azure-storage-blob = ">=12.19"
 typer = ">=0.12"
 rich = ">=13.7"
 tqdm = ">=4.66"
+python-dotenv = ">=1.0"  # config/settings.py loads .env on import
 
 # Optional dependencies for specific processing modules
 geopandas = { version = ">=0.14", optional = true }

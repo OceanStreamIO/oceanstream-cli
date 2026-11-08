@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
@@ -17,6 +18,74 @@ from oceanstream.geotrack.deduplication import read_existing_campaign_data
 
 
 InterpolationMethod = Literal["nearest", "linear", "ffill", "bfill"]
+
+#: Columns that identify a row rather than measure something.
+_ID_COLUMNS = frozenset(
+    {"time", "latitude", "longitude", "trajectory", "platform_id", "campaign_id"}
+)
+
+
+def fill_positions_in_time(
+    df: pd.DataFrame, max_gap: pd.Timedelta, time_column: str = "time"
+) -> pd.DataFrame:
+    """Give rows with measurements but no position one interpolated in time.
+
+    Some telemetry reports positions and sensor values in different rows: PMEL's
+    Saildrone datasets do on days a drone sent reduced data, and those rows would be
+    dropped for lack of a position. Each gets the position linearly interpolated between
+    its platform's fixes either side, when those are at most *max_gap* apart; otherwise
+    it stays without one. Longitude is interpolated across the antimeridian.
+
+    ``position_interpolated`` marks the filled rows. Rows without any measurement are
+    left as they are, so filling never adds track points of its own.
+    """
+    out = df.copy()
+    times = pd.to_datetime(out[time_column], errors="coerce", utc=True)
+    lat = pd.to_numeric(out["latitude"], errors="coerce").to_numpy(dtype=float, copy=True)
+    lon = pd.to_numeric(out["longitude"], errors="coerce").to_numpy(dtype=float, copy=True)
+    valid_time = times.notna().to_numpy()
+    stamps = times.to_numpy(dtype="datetime64[ns]").astype("int64")
+
+    values = [
+        c for c in out.columns
+        if c not in _ID_COLUMNS and pd.api.types.is_numeric_dtype(out[c])
+        and not pd.api.types.is_bool_dtype(out[c])
+    ]
+    measured = out[values].notna().any(axis=1).to_numpy() if values else np.zeros(len(out), bool)
+    has_fix = ~np.isnan(lat) & ~np.isnan(lon) & valid_time
+    wanted = ~has_fix & valid_time & measured
+    filled = np.zeros(len(out), dtype=bool)
+
+    if "platform_id" in out.columns:
+        keys = out["platform_id"].astype("string").fillna("").to_numpy()
+    else:
+        keys = np.full(len(out), "", dtype=object)
+    for key in pd.unique(keys[wanted]):
+        group = keys == key
+        fixes = np.flatnonzero(has_fix & group)
+        need = np.flatnonzero(wanted & group)
+        if len(fixes) < 2:  # noqa: PLR2004 - a position needs a fix on either side
+            continue
+        fixes = fixes[np.argsort(stamps[fixes], kind="stable")]
+        fix_t = stamps[fixes]
+        after = np.searchsorted(fix_t, stamps[need], side="right")
+        before = after - 1
+        inside = (before >= 0) & (after < len(fix_t))
+        b = fixes[np.clip(before, 0, len(fix_t) - 1)]
+        a = fixes[np.clip(after, 0, len(fix_t) - 1)]
+        span = stamps[a] - stamps[b]
+        ok = inside & (span <= max_gap.value)
+        weight = np.where(span > 0, (stamps[need] - stamps[b]) / np.where(span > 0, span, 1), 0.0)
+        step = (lon[a] - lon[b] + 180.0) % 360.0 - 180.0
+        rows = need[ok]
+        lat[rows] = (lat[b] + weight * (lat[a] - lat[b]))[ok]
+        lon[rows] = ((lon[b] + weight * step + 180.0) % 360.0 - 180.0)[ok]
+        filled[rows] = True
+
+    out["latitude"] = lat
+    out["longitude"] = lon
+    out["position_interpolated"] = filled
+    return out
 
 
 def has_spatial_coordinates(df: pd.DataFrame) -> bool:

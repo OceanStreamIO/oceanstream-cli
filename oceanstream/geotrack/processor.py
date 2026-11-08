@@ -28,7 +28,11 @@ from .deduplication import (
     merge_with_deduplication,
     check_schema_compatibility,
 )
-from .interpolation import enrich_sensor_data_from_campaign, has_spatial_coordinates
+from .interpolation import (
+    enrich_sensor_data_from_campaign,
+    fill_positions_in_time,
+    has_spatial_coordinates,
+)
 from ..stac import emit_stac_collection_and_item
 from ..config.settings import Settings
 from ..semantic.semantic import SemanticMapper, SemanticConfig, semantic_to_parquet_metadata
@@ -221,6 +225,7 @@ def _read_single_csv(
     filename: str,
     provider: ProviderBase | None = None,
     allow_non_spatial: bool = False,
+    fill_positions_max_gap: pd.Timedelta | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None]:
     """
     Read and validate a single CSV or GeoCSV file.
@@ -231,6 +236,9 @@ def _read_single_csv(
         provider: Optional provider for platform identification
         allow_non_spatial: If True, allow files without spatial coordinates
                           (they will be enriched via interpolation later)
+        fill_positions_max_gap: Rows with measurements but no position get one
+                          interpolated in time between fixes at most this far apart
+                          (:func:`fill_positions_in_time`). None drops them.
 
     Returns:
         Tuple of (DataFrame, metadata_dict) where metadata_dict is None for regular CSV
@@ -268,10 +276,12 @@ def _read_single_csv(
 
     # Only validate coordinates if they're already in standard format
     # R2R files will be handled by the provider's enrich_dataframe
+    filling = fill_positions_max_gap is not None
     if 'latitude' in df.columns and 'longitude' in df.columns:
         df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
         df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
-        df = df.dropna(subset=['latitude', 'longitude'])
+        if not filling:
+            df = df.dropna(subset=['latitude', 'longitude'])
 
         if df.empty:
             return None, None
@@ -289,6 +299,13 @@ def _read_single_csv(
         df['platform_id'] = extract_platform_id(filename)
 
     df = _sanitize_column_types(df)
+    # After the types are clean, so a fill value never counts as a measurement.
+    if filling and 'latitude' in df.columns and 'longitude' in df.columns:
+        if 'time' in df.columns:
+            df = fill_positions_in_time(df, fill_positions_max_gap)
+        df = df.dropna(subset=['latitude', 'longitude'])
+        if df.empty:
+            return None, None
     na_subset = [c for c in df.columns if c != 'platform_id']
     df = df.dropna(how='all', subset=na_subset)
     df = df.dropna(axis=1, how='all')
@@ -572,6 +589,7 @@ class GeotrackProcessor:
         nmea_sentence_types: list[str] | None = None,
         nmea_sampling_interval: float | None = None,
         filesystem: "pafs.FileSystem | None" = None,
+        fill_positions_max_gap: pd.Timedelta | None = None,
     ):
         self.provider = provider
         self.verbose = verbose
@@ -586,6 +604,7 @@ class GeotrackProcessor:
         self._nmea_sentence_types = nmea_sentence_types  # NMEA sentence types to process
         self._nmea_sampling_interval = nmea_sampling_interval  # NMEA sampling interval in seconds
         self._filesystem = filesystem  # PyArrow filesystem for cloud storage
+        self._fill_positions_max_gap = fill_positions_max_gap
 
     def log(self, message: str) -> None:
         """Log a message if verbose is enabled."""
@@ -877,7 +896,8 @@ class GeotrackProcessor:
         try:
             # Allow non-spatial files for now, we'll try to interpolate later
             df_file, file_metadata = _read_single_csv(
-                file_path, fname, self.provider, allow_non_spatial=True
+                file_path, fname, self.provider, allow_non_spatial=True,
+                fill_positions_max_gap=self._fill_positions_max_gap,
             )
         except Exception as e:
             if self.verbose:
@@ -1585,6 +1605,7 @@ def convert(
     nmea_sentence_types: list[str] | None = None,
     nmea_sampling_interval: float | None = None,
     use_cloud_storage: bool = False,
+    fill_positions_max_gap_minutes: float = 0.0,
 ) -> None:
     """
     Convert geotrack CSV data into GeoParquet format, and optionally PMTiles and heatmaps.
@@ -1678,6 +1699,10 @@ def convert(
         nmea_sentence_types=nmea_sentence_types,
         nmea_sampling_interval=nmea_sampling_interval,
         filesystem=filesystem,
+        fill_positions_max_gap=(
+            pd.Timedelta(minutes=fill_positions_max_gap_minutes)
+            if fill_positions_max_gap_minutes > 0 else None
+        ),
     )
 
     # Step 1: Scan input source (file or directory)

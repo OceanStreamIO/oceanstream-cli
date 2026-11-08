@@ -77,6 +77,7 @@ def test_stac_collection_and_item_emission(tmp_path: Path):
     # relative href pointing up from items/ to dataset root
     href = item["assets"]["geoparquet"]["href"]
     assert href.startswith(".."), f"Unexpected asset href: {href}"
+    assert (item_path.parent / href).resolve().is_file(), f"Asset href does not resolve: {href}"
 
     # Optional temporal properties
     props = item.get("properties", {})

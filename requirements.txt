@@ -1,6 +1,7 @@
 pandas>=2.1
 pyarrow>=14
 azure-storage-blob>=12.19
+python-dotenv>=1.0
 # Optional
 geopandas>=0.14
 pynmea2>=1.18

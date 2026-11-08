@@ -196,7 +196,20 @@ def extract_platform_id(file_name: str) -> str | None:
     return parts[1] if len(parts) > 1 else None
 
 
+#: Below this magnitude a non-zero value is an encoding artefact, never a reading. PMEL's
+#: ERDDAP serves some missing Saildrone values as integer fill patterns read as doubles
+#: (2147483647 becomes 1.06e-314); they are missing values.
+FILL_MAGNITUDE = 1e-300
+
+
 def _sanitize_column_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Parse ``time``, keep text columns as text and numeric columns as numbers.
+
+    A text column is numeric when at least 60 % of its filled cells parse as numbers.
+    Empty cells do not count against it, so a sparse sensor column read as text (ERDDAP's
+    units row makes every column text) is still numeric. Fill values below
+    :data:`FILL_MAGNITUDE` become missing.
+    """
     out = df.copy()
 
     if 'time' in out.columns and not pd.api.types.is_datetime64_any_dtype(out['time']):
@@ -212,9 +225,11 @@ def _sanitize_column_types(df: pd.DataFrame) -> pd.DataFrame:
         if col in ('latitude', 'longitude', 'platform_id', 'time'):
             continue
         series = out[col]
-        if pd.api.types.is_object_dtype(series):
+        # pandas 3 reads text as the ``str`` dtype, pandas 2 as ``object``.
+        if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
             numeric = pd.to_numeric(series, errors='coerce')
-            ratio = numeric.notna().mean() if len(series) else 0.0
+            filled = int(series.notna().sum())
+            ratio = numeric.notna().sum() / filled if filled else 0.0
             if ratio >= 0.6:
                 out[col] = numeric
             else:
@@ -222,4 +237,7 @@ def _sanitize_column_types(df: pd.DataFrame) -> pd.DataFrame:
                     out[col] = series.astype("string")
                 except Exception:
                     out[col] = series.astype("string[python]")
+        if pd.api.types.is_float_dtype(out[col]):
+            values = out[col]
+            out[col] = values.mask((values != 0) & (values.abs() < FILL_MAGNITUDE))
     return out
