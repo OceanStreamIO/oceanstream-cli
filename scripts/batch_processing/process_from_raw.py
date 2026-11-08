@@ -688,19 +688,40 @@ def _recording_order(path: str) -> tuple[str, str]:
     return (stamp.group(1) + stamp.group(2) if stamp else "", name)
 
 
+def _static_platform(ed):
+    """The ``Platform`` variables without a time dimension (drop keel, water level), or None."""
+    try:
+        platform = ed["Platform"]
+    except KeyError:
+        return None
+    if platform is None:
+        return None
+    static = [name for name, var in platform.data_vars.items()
+              if not any(str(dim).startswith(("time", "ping_time")) for dim in var.dims)]
+    return platform[static].reset_coords(drop=True)
+
+
+def _same(a, b, attrs: bool = True) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    return a.identical(b) if attrs else a.equals(b)
+
+
 def _split_by_vendor_settings(members: list[tuple[str, object]]) -> list[list[tuple[str, object]]]:
-    """Files grouped by identical ``Vendor_specific`` groups (filters, decimation), in order.
+    """Files grouped by identical settings, in order: the ``Vendor_specific`` group
+    (filters, decimation) and the ``Platform`` variables that have no time dimension.
 
     echopype refuses to combine files whose filter settings differ, e.g. when the
-    transceiver settings change during the day.
+    transceiver settings change during the day, or whose drop keel offset differs, when
+    the drop keel is moved (HB2202 2022-03-01).
     """
     parts: list[list[tuple[str, object]]] = []
     for path, ed in members:
-        vendor = ed["Vendor_specific"]
+        vendor, platform = ed["Vendor_specific"], _static_platform(ed)
         for part in parts:
-            ref = part[0][1]["Vendor_specific"]
-            if (vendor is None and ref is None) or (
-                    vendor is not None and ref is not None and vendor.identical(ref)):
+            ref = part[0][1]
+            if (_same(vendor, ref["Vendor_specific"])
+                    and _same(platform, _static_platform(ref), attrs=False)):
                 part.append((path, ed))
                 break
         else:
@@ -720,7 +741,7 @@ def _combine_parts(
     for mode, members in groups.items():
         settings = _split_by_vendor_settings(members)
         if len(settings) > 1:
-            logger.info("  %s/%s %s files change filter settings during the day: %s — "
+            logger.info("  %s/%s %s files change filter or platform settings during the day: %s — "
                         "combined apart", day_key, category, mode,
                         ", ".join(str(len(s)) for s in settings))
         mode_suffix = f"-{mode}" if len(groups) > 1 else ""
@@ -1449,7 +1470,39 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
         ds_Sv.attrs["calibration"] = (
             f"Gain, Sa correction and equivalent beam angle from {os.path.basename(cfg.raw.cal_params_file)}"
         )
+    if cfg.raw.depth_from_platform:
+        import numpy as np
+
+        depth = _platform_transducer_depth(ed)
+        if depth is None:
+            logger.warning("  No transducer depth in the Platform group; using --depth-offset %.2f m",
+                           cfg.raw.depth_offset)
+            depth = cfg.raw.depth_offset
+        logger.info("  Transducer depth from the Platform group: %.2f m", depth)
+        ds_Sv["transducer_depth"] = ("ping_time", np.full(ds_Sv.sizes["ping_time"], depth))
     return ds_Sv, encode_mode, _platform_gps(ed)
+
+
+def _platform_transducer_depth(ed) -> float | None:
+    """Water level + drop keel offset + transducer z offset from the Platform group (metres).
+
+    On the Henry B. Bigelow the transducers sit on a drop keel whose offset (6.0 to 7.5 m on
+    HB2202 2022-03-01) is the transducer depth: TransducerOffsetZ and the water level are 0.
+    None when the Platform group gives none of the three.
+    """
+    import numpy as np
+
+    platform = ed["Platform"]
+    if platform is None:
+        return None
+    parts = []
+    for name in ("water_level", "drop_keel_offset", "transducer_offset_z"):
+        if name in platform:
+            values = np.asarray(platform[name].values, dtype=float).ravel()
+            values = values[np.isfinite(values)]
+            if values.size:
+                parts.append(float(np.median(values)))
+    return float(sum(parts)) if parts and any(parts) else None
 
 
 def _fill_missing_positions(ds_Sv):
@@ -1582,9 +1635,20 @@ def compute_sv_day(
                 logger.info("  GPS from the raw files' NMEA: %d fixes", len(gps_df))
 
     # Add depth variable from echo_range + transducer depth offset
-    depth_offset = cfg.raw.depth_offset
-    logger.info("  add_depth (offset=%.1fm)", depth_offset)
-    ds_Sv = ep.consolidate.add_depth(ds_Sv, depth_offset=depth_offset)
+    if "transducer_depth" in ds_Sv:
+        import numpy as np
+
+        # Per set of files, from their Platform group (--depth-from-platform).
+        logger.info("  add_depth (transducer depth %s m from the Platform group)",
+                    sorted({round(float(v), 2) for v in np.unique(ds_Sv["transducer_depth"].values)
+                            if np.isfinite(v)}))
+        ds_Sv = ep.consolidate.add_depth(ds_Sv, depth_offset=0.0)
+        attrs = ds_Sv["depth"].attrs
+        ds_Sv["depth"] = (ds_Sv["depth"] + ds_Sv["transducer_depth"]).assign_attrs(attrs)
+    else:
+        depth_offset = cfg.raw.depth_offset
+        logger.info("  add_depth (offset=%.1fm)", depth_offset)
+        ds_Sv = ep.consolidate.add_depth(ds_Sv, depth_offset=depth_offset)
 
     # Merge GPS location data if available
     if gps_df is not None and not gps_df.empty:
@@ -1968,6 +2032,7 @@ def _serialisable_config(cfg: PipelineConfig) -> dict:
         "apply_seabed_mask": cfg.apply_seabed_mask,
         "seabed_mask_offset": cfg.seabed_mask_offset,
         "seabed_line": cfg.seabed_line,
+        "seabed_min_range": cfg.seabed_min_range,
         "parallel_workers": cfg.parallel_workers,
     }
 
@@ -2622,6 +2687,15 @@ def parse_args() -> PipelineConfig:
              "(default: 0).",
     )
     parser.add_argument(
+        "--seabed-min-range",
+        type=float,
+        default=10.0,
+        help="Range below the transducer (metres) where the seabed search starts (default: 10). "
+             "Lower it where the seabed can be shallower than 10 m of range, e.g. 3 for the "
+             "NEFSC Bigelow near port and Saildrones on the coast; the transmit pulse above "
+             "the search start never backs a line.",
+    )
+    parser.add_argument(
         "--seabed-line",
         choices=["deepest", "edge"],
         default="deepest",
@@ -2650,6 +2724,13 @@ def parse_args() -> PipelineConfig:
         type=float,
         default=1.9,
         help="Transducer depth below waterline in metres (default: 1.9 for Saildrone)",
+    )
+    parser.add_argument(
+        "--depth-from-platform",
+        action="store_true",
+        help="Take the transducer depth from each set of files' Platform group (water level + "
+             "drop keel offset + transducer z offset) instead of --depth-offset, for ships whose "
+             "drop keel moves, such as the NEFSC Henry B. Bigelow.",
     )
     parser.add_argument(
         "--ping-time-offset",
@@ -2833,6 +2914,7 @@ def parse_args() -> PipelineConfig:
     cfg.raw.waveform_mode = args.waveform_mode
     cfg.raw.encode_mode = args.encode_mode
     cfg.raw.depth_offset = args.depth_offset
+    cfg.raw.depth_from_platform = args.depth_from_platform
     cfg.raw.ping_time_offset_s = args.ping_time_offset
     cfg.raw.max_range_m = args.max_range_m
     cfg.raw.sv_float32 = args.sv_float32
@@ -2853,6 +2935,7 @@ def parse_args() -> PipelineConfig:
     cfg.apply_seabed_mask = args.seabed_mask
     cfg.seabed_mask_offset = args.seabed_mask_offset
     cfg.seabed_line = args.seabed_line
+    cfg.seabed_min_range = args.seabed_min_range
     cfg.raw.sv_range_bin_m = args.sv_range_bin_m
     if args.raw_cache_dir:
         cfg.raw.local_raw_dir = Path(args.raw_cache_dir)

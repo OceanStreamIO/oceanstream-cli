@@ -1141,6 +1141,7 @@ def mask_seabed_day(
     cruise_id: str,
     mask_offset: float = 0.0,
     line: str = "deepest",
+    min_range: float = 10.0,
 ) -> str:
     """Detect and mask seabed for a day Zarr. Returns masked zarr path.
 
@@ -1160,7 +1161,7 @@ def mask_seabed_day(
             # a detection) whether or not the channels ping in turn: on its own, the
             # composite detector draws a line through the water column when the seabed
             # is out of range, and the mask then removes hours of water (IESSNS 2021).
-            seabed_result = detect_seabed_interleaved(ds, pick=line)
+            seabed_result = detect_seabed_interleaved(ds, pick=line, r0=min_range)
             logger.info(
                 "  Seabed on %.1f%% of pings (channel %s)",
                 100 * seabed_result.detection_rate, seabed_result.channel,
@@ -1230,6 +1231,7 @@ def run_seabed_masking(
                 cruise_id=cfg.cruise_id,
                 mask_offset=cfg.seabed_mask_offset,
                 line=cfg.seabed_line,
+                min_range=cfg.seabed_min_range,
             )
             masked_zarrs[day_key][category] = masked_path
 

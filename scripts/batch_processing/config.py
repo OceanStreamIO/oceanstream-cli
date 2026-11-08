@@ -287,6 +287,9 @@ class RawConversionConfig:
 
     # Depth
     depth_offset: float = 1.9  # Saildrone transducer depth below waterline (metres)
+    # Transducer depth from each set of files' Platform group instead (water level + drop
+    # keel offset + transducer z offset), for ships whose drop keel moves (NEFSC Bigelow).
+    depth_from_platform: bool = False
 
     # Seconds added to every timestamp of a raw file (file name and data) when the
     # recorder clock was wrong, e.g. -25200 for a clock 7 h fast. 0 = trust the clock.
@@ -413,6 +416,7 @@ class PipelineConfig:
     apply_seabed_mask: bool = False  # disabled for tropical pacific (no seabed)
     seabed_mask_offset: float = 0.0  # metres above the detected seabed where masking starts
     seabed_line: str = "deepest"  # composite pick: deepest candidate (legacy) or leading "edge"
+    seabed_min_range: float = 10.0  # metres below the transducer where the seabed search starts
     skip_denoising: bool = False
     skip_echograms: bool = False
     skip_pmtiles: bool = False

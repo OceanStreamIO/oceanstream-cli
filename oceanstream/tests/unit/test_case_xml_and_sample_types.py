@@ -142,6 +142,22 @@ class TestSampleTypes:
         assert [(suffix, [p for p, _ in files]) for suffix, files in parts] == [
             ("-1", ["f0", "f1", "f3"]), ("-2", ["f2", "f4"])]
 
+    def test_files_with_another_drop_keel_offset_are_combined_apart(self):
+        # HB2202 2022-03-01: the drop keel is moved during the day.
+        def ed(offset):
+            e = self._vendor_ed(6)
+            e["Platform"] = xr.Dataset(
+                {"drop_keel_offset": ((), offset),
+                 "latitude": ("time1", [41.0, 41.1])},
+                coords={"time1": pd.date_range("2022-03-01", periods=2, freq="1h")},
+            )
+            return e
+
+        groups = {"power": [("f0", ed(0.0)), ("f1", ed(0.0)), ("f2", ed(1.1)), ("f3", ed(1.1))]}
+        parts = pfr._combine_parts(groups, "2022-03-01", "short_pulse")
+        assert [(suffix, [p for p, _ in files]) for suffix, files in parts] == [
+            ("-1", ["f0", "f1"]), ("-2", ["f2", "f3"])]
+
     def test_files_combine_in_recording_order_when_the_prefix_changes(self):
         # HB2401 2024-02-15: the prefix changes at 18:32, and name order put it first.
         paths = ["/x/D20240215-T183215.zarr", "/x/HB-D20240215-T173938.zarr",
@@ -157,6 +173,21 @@ class TestSampleTypes:
         assert [suffix for suffix, _ in parts] == ["-complex", "-power-1", "-power-2"]
         one = pfr._combine_parts({"power": groups["complex"]}, "2025-08-29", "short_pulse")
         assert [suffix for suffix, _ in one] == [""]
+
+
+class TestPlatformTransducerDepth:
+    def test_drop_keel_offset_is_the_transducer_depth(self):
+        # HB2202 2022-03-01: TransducerOffsetZ and water level 0, the drop keel at 6.0 m.
+        plat = xr.Dataset({"water_level": ((), 0.0), "drop_keel_offset": ((), 6.0),
+                           "transducer_offset_z": ("channel", [0.0, 0.0])},
+                          coords={"channel": ["WBT 18", "WBT 38"]})
+        assert pfr._platform_transducer_depth(_Ed({"Platform": plat})) == 6.0
+
+    def test_no_offsets_gives_none(self):
+        plat = xr.Dataset({"water_level": ((), 0.0), "transducer_offset_z": ("channel", [0.0])},
+                          coords={"channel": ["WBT 38"]})
+        assert pfr._platform_transducer_depth(_Ed({"Platform": plat})) is None
+        assert pfr._platform_transducer_depth(_Ed({"Platform": None})) is None
 
 
 class TestFillMissingPositions:

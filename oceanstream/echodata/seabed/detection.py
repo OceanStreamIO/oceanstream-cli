@@ -1048,11 +1048,13 @@ def _echo_top(
     slope_sv: float = -45.0,
     slope_step_sv: float = -50.0,
     max_rise_m: float = 50.0,
-    max_rise_frac: float = 0.4,
+    max_rise_frac: float = 0.55,
     min_rate_m_s: float = 0.1,
     rate_window_s: float = 30.0,
     max_spread_m: float = 5.0,
     near_s: float = 120.0,
+    multiples: tuple[int, ...] = (3, 2),
+    multiple_tol: float = 0.15,
     backing_sv: float = -35.0,
     backing_m: float = 10.0,
     smooth_m: float = 1.0,
@@ -1065,6 +1067,12 @@ def _echo_top(
     above *seabed_step_sv*: no fish school is that strong, but over rough ground a second
     seabed echo, a dip apart from the strongest, can start metres above the line (HB2403
     2024-06-05 00:03, -11 dB at 15 m over a line at 21 m).
+    More than half the depth, so a line drawn on the seabed's second echo, at twice
+    its depth, finds the first (HB2401 2024-02-17 00:24 near port, a line at 15.6 m of
+    range over a seabed echo at 7.9 m). Further up, an echo of at least *seabed_sv* within
+    *multiple_tol* of a third or a half of the line's range takes the line too: the line
+    was drawn on a repeat of it (HB2202 2022-03-11 in Chesapeake Bay, a line at 22.9 m over
+    the seabed at 5-8 m).
 
     Where the seabed is steep or rough the beam meets the upslope seabed first, and the
     echo is a smear tens of metres long, mostly -45 to -30 dB, which moves by tens of
@@ -1122,7 +1130,12 @@ def _echo_top(
     kinds = np.concatenate([np.where(steep, 1, 0), np.full(lost.size, 2)])
     for c in range(0, pings_all.size, 5000):
         pings = pings_all[c : c + 5000]
-        prof = median_filter(np.nan_to_num(sv[pings], nan=-999.0), size=(1, width))
+        # Cells an earlier step removed (impulse noise) can sit inside the seabed echo
+        # (HB2202 2022-03-13): short gaps take their neighbours' values before smoothing.
+        import pandas as pd
+
+        filled = pd.DataFrame(sv[pings]).ffill(axis=1, limit=2 * width).bfill(axis=1, limit=2 * width)
+        prof = median_filter(np.nan_to_num(filled.to_numpy(), nan=-999.0), size=(1, width))
         for row, p, kind in zip(prof, pings, kinds[c : c + 5000]):
             rise = min(max_rise_m, max_rise_frac * ref[p])
             below = 20.0 if kind == 2 else 0.0
@@ -1136,6 +1149,14 @@ def _echo_top(
                     kind = 1
             start_sv, step_sv = (slope_sv, slope_step_sv) if kind == 1 else (seabed_sv, seabed_step_sv)
             strong = span[row[span] >= start_sv]
+            if strong.size == 0 and kind != 2:
+                for k in multiples:
+                    near = np.flatnonzero((np.abs(range_1d - ref[p] / k) <= multiple_tol * ref[p] / k)
+                                          & (range_1d >= top_m))
+                    strong = near[row[near] >= seabed_sv]
+                    if strong.size:
+                        step_sv = seabed_step_sv
+                        break
             if strong.size == 0:
                 continue
             i = strong[0]

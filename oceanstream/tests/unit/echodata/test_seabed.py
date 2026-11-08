@@ -702,6 +702,56 @@ class TestInterleavedSeabed:
         out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, line)
         np.testing.assert_allclose(out, 430.0, atol=0.2)
 
+    def test_a_line_on_the_second_echo_moves_up_to_the_seabed(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        # HB2401 2024-02-17 00:24: the seabed at 7.9 m of range, the line on its second
+        # echo at 15.6 m.
+        range_m = np.arange(0, 40, 0.18)
+        sv = np.full((3, range_m.size), -90.0)
+        sv[:, (range_m >= 7.9) & (range_m < 9.3)] = -12.0
+        sv[:, (range_m >= 15.6) & (range_m < 17.0)] = -30.0
+        out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, np.full(3, 15.6),
+                        top_m=3.0)
+        np.testing.assert_allclose(out, 7.9, atol=0.2)
+
+    def test_a_line_on_the_third_echo_moves_up_to_the_seabed(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        # HB2202 2022-03-11, Chesapeake Bay: the seabed at 7.6 m, the line at 22.9 m.
+        range_m = np.arange(0, 40, 0.18)
+        sv = np.full((3, range_m.size), -90.0)
+        sv[:, (range_m >= 7.6) & (range_m < 9.0)] = -10.0
+        sv[:, (range_m >= 15.2) & (range_m < 16.6)] = -28.0
+        sv[:, (range_m >= 22.9) & (range_m < 24.3)] = -36.0
+        out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, np.full(3, 22.9),
+                        top_m=3.0)
+        np.testing.assert_allclose(out, 7.6, atol=0.2)
+
+    def test_a_gap_in_the_seabed_echo_does_not_hide_it(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        # HB2202 2022-03-13: impulse removal blanked cells inside the seabed echo at 11 m.
+        range_m = np.arange(0, 40, 0.18)
+        sv = np.full((3, range_m.size), -90.0)
+        sv[:, (range_m >= 10.9) & (range_m < 12.0)] = -11.0
+        sv[:, (range_m >= 11.1) & (range_m < 11.7)] = np.nan
+        sv[:, (range_m >= 21.9) & (range_m < 22.6)] = -28.0
+        out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, np.full(3, 21.7),
+                        top_m=3.0)
+        np.testing.assert_allclose(out, 10.9, atol=0.2)
+
+    def test_a_school_at_half_the_depth_is_not_a_repeat(self):
+        from oceanstream.echodata.seabed.detection import _echo_top
+
+        range_m = np.arange(0, 120, 0.18)
+        sv = np.full((3, range_m.size), -90.0)
+        sv[:, (range_m >= 98.0) & (range_m < 100.0)] = -10.0
+        sv[:, (range_m >= 48.0) & (range_m < 52.0)] = -32.0  # a school, weaker than -25 dB
+        out = _echo_top(sv, range_m, np.arange(3, dtype=np.int64) * 10**9, np.full(3, 98.0),
+                        top_m=3.0)
+        np.testing.assert_allclose(out, 98.0, atol=0.2)
+
     def test_a_layer_on_a_flat_seabed_is_not_taken_for_seabed(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 
