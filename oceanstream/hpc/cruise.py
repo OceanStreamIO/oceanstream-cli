@@ -268,7 +268,24 @@ class _Run:
         ok(f"Submitted job {jobid} ({job.name}, {len(days)} days)")
         for d in days:
             self.state.mark(d, f"submitted:{jobid}")
-        slurm.wait(cluster, jobid)
+        # The raw files are a copy of the source; a re-run streams them again. Each day's
+        # are freed as soon as it finishes: two 60-day NEFSC cruises at once held 630 GB of
+        # raw on scratch until their jobs ended, and their products would have taken the
+        # group past its 1.03 TB hard quota.
+        freed: set[str] = set()
+
+        def free_finished() -> None:
+            try:
+                fin = [d for d in staging.finished_days(cluster, cfg.container, days)
+                       if d not in freed]
+            except HpcError as e:
+                warn(f"Could not list finished days: {e}")
+                return
+            if fin:
+                staging.unstage(cluster, cfg.cruise, fin)
+                freed.update(fin)
+
+        slurm.wait(cluster, jobid, on_poll=free_finished)
         try:
             m = slurm.metrics(slurm.sacct(cluster, jobid))
         except HpcError as e:
@@ -277,8 +294,7 @@ class _Run:
         if cfg.mode == "array":
             m = {days[int(i)]: v for i, v in m.items() if str(i).isdigit()}
         self.metrics.update(m)
-        # The raw files are a copy of the source; a re-run streams them again.
-        staging.unstage(cluster, cfg.cruise, days)
+        staging.unstage(cluster, cfg.cruise, [d for d in days if d not in freed])
         done = [d for d in days if staging.on_scratch(cluster, cfg.container, d)]
         for d in sorted(set(days) - set(done)):
             self.state.mark(d, "failed-process")

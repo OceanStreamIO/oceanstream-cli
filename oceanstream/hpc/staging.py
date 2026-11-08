@@ -114,6 +114,14 @@ def unstage(cluster: Cluster, cruise: str, days: list[str]) -> None:
             warn(f"{day}: could not remove {path}")
 
 
+def finished_days(cluster: Cluster, container: str, days: list[str]) -> list[str]:
+    """The *days* whose node step has finished: a ``.<day>.DONE`` marker by their products."""
+    path = f"{cluster.site.products_dir}/{container}"
+    r = cluster.xfer(f"ls -a {shlex.quote(path)} 2>/dev/null || true")
+    names = set((r.stdout or "").split())
+    return [d for d in days if f".{d}.DONE" in names]
+
+
 def on_scratch(cluster: Cluster, container: str, day: str) -> bool:
     """Whether the day's products are on scratch."""
     path = f"{cluster.site.products_dir}/{container}/{day}"

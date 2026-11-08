@@ -234,8 +234,12 @@ def test_only(cluster: Cluster, job: RenderedJob) -> str:
 
 
 def wait(cluster: Cluster, jobid: str, poll_s: int | None = None,
-         timeout_s: int | None = None, sleep: Any = time.sleep) -> str:
-    """Poll until the job leaves the queue; returns its final ``sacct`` rows."""
+         timeout_s: int | None = None, sleep: Any = time.sleep,
+         on_poll: Any = None) -> str:
+    """Poll until the job leaves the queue; returns its final ``sacct`` rows.
+
+    *on_poll*, if given, is called after every poll while the job is queued or running.
+    """
     poll = poll_s or cluster.site.poll_interval_s
     limit = timeout_s or cluster.site.poll_timeout_s
     waited, last = 0, ""
@@ -248,6 +252,8 @@ def wait(cluster: Cluster, jobid: str, poll_s: int | None = None,
         if state != last:
             info(state)
             last = state
+        if on_poll is not None:
+            on_poll()
         sleep(poll)
         waited += poll
     else:

@@ -156,7 +156,10 @@ def test_wait_polls_until_the_job_leaves_the_queue(fake: Any) -> None:
         return 0, "1|COMPLETED|0:0|00:01:00\n"
 
     fake.handler = handler
-    assert "COMPLETED" in slurm.wait(fake, "1", poll_s=1, sleep=lambda s: None)
+    polls: list[int] = []
+    assert "COMPLETED" in slurm.wait(fake, "1", poll_s=1, sleep=lambda s: None,
+                                     on_poll=lambda: polls.append(1))
+    assert len(polls) == 3  # once per poll while the job is queued or running
 
 
 # -- per-day runner ---------------------------------------------------------------------------

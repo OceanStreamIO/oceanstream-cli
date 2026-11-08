@@ -231,3 +231,11 @@ def test_a_fast_clock_corrects_the_ping_times_as_well(tmp_path: Path, sim: Clust
     d = _campaign(tmp_path, ["2022-06-21"], toml)
     out = cruise.run_cruise(sim, d, dry_run=True)
     assert "--depth-offset 5 --ping-time-offset -25200" in out["script"]
+
+
+def test_finished_days_come_from_the_done_markers(fake: FakeCluster) -> None:
+    listing = ".\n..\n.2022-06-21.DONE\n.2022-06-22.FAILED\n2022-06-21\n"
+    fake.handler = lambda host, cmd: (0, listing) if cmd.startswith("ls -a") else (0, "")
+    assert staging.finished_days(fake, "X", ["2022-06-21", "2022-06-22"]) == ["2022-06-21"]
+    assert fake.commands[-1][1].startswith("ls -a /scratch/g/oceanstream/products/X")
+
