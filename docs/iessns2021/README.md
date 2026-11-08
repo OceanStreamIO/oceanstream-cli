@@ -26,7 +26,7 @@ Our copy of the data is in `s3://oceanstream-bucket/pangaea/IESSNS2021/`:
 - `raw/`: the mirrored raw files
 - `meta/`: the calibration XML and PANGAEA's file table
 
-`deploy/edito/pangaea/mirror.py` makes the mirror. It starts PANGAEA's tape recalls ahead of the downloads and checks every file's MD5. PANGAEA serves each file at 1–4 MB/s.
+`edito/pangaea/mirror.py` in the oceanstream-hpc-runs repository makes the mirror. It starts PANGAEA's tape recalls ahead of the downloads and checks every file's MD5. PANGAEA serves each file at 1–4 MB/s.
 
 ## Supporting data
 

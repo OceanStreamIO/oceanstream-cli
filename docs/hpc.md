@@ -97,7 +97,7 @@ Without `zarr_format=3`, xarray probes for Zarr v2 files (`.zmetadata`, `.zgroup
 
 ## Prefect
 
-`oceanstream.hpc.flows` defines four flows. They run on a small process worker (`deploy/edito/Dockerfile.hpc-submitter`, pool `oceanstream-hpc`) that calls the same library over SSH. Register them with `python -m oceanstream.hpc.deploy`. The pure logic (day selection, batching, guards, quota parsing) lives in `oceanstream.hpc.flowlib`, which has unit tests.
+`oceanstream.hpc.flows` defines four flows. They run on a small process worker (image `docker/Dockerfile.hpc-submitter`, Deployment `edito/21-hpc-submitter.yaml` in the oceanstream-hpc-runs repository, pool `oceanstream-hpc`) that calls the same library over SSH. Register them with `python -m oceanstream.hpc.deploy`. The pure logic (day selection, batching, guards, quota parsing) lives in `oceanstream.hpc.flowlib`, which has unit tests.
 
 | Flow | What it does |
 |---|---|

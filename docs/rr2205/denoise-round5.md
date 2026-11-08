@@ -124,7 +124,7 @@ The second pass, unsupervised grouping of multi-frequency cells after our denois
 
 ## Reproducing
 
-The jobs run in the EDITO namespace from `deploy/edito/ncei-sv/` (see the comments at the top of each manifest):
+The jobs run in the EDITO namespace from `edito/ncei-sv/` in the oceanstream-hpc-runs repository (see the comments at the top of each manifest):
 
 - `job-denoise.yaml`: stages 5–9 for the test days with one preset, with `PRESET`, `DENOISED_CONTAINER` and `PIPELINE_ARGS` set as in the table above, then per-day statistics (`split_stats.py`).
 - `job-report.yaml`: echograms for every day, channel and run, and the frequency differences (`echogram_report.py`, `MODE=report`). Images go to `s3://oceanstream-bucket/r2r/RR2205/sv-runs/<run>/report/<day>/` with an `index.json`. The figures here are composites of those images.

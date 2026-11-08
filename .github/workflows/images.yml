@@ -12,8 +12,8 @@ on:
       - scripts/batch_processing/**
       - pyproject.toml
       - requirements-hpc.txt
-      - deploy/Dockerfile.echodata
-      - deploy/edito/Dockerfile.hpc-submitter
+      - docker/Dockerfile.echodata
+      - docker/Dockerfile.hpc-submitter
       - .github/workflows/images.yml
   workflow_dispatch:
 
@@ -32,10 +32,10 @@ jobs:
         include:
           # Base of the Denoise Lab worker: oceanstream[echodata] and the batch scripts.
           - image: echodata
-            dockerfile: deploy/Dockerfile.echodata
+            dockerfile: docker/Dockerfile.echodata
           # Prefect worker that drives the cluster over SSH (oceanstream.hpc.flows).
           - image: hpc-submitter
-            dockerfile: deploy/edito/Dockerfile.hpc-submitter
+            dockerfile: docker/Dockerfile.hpc-submitter
     steps:
       - uses: actions/checkout@v4
       - id: image

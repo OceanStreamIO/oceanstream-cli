@@ -7,7 +7,7 @@
 #
 # Built and published by .github/workflows/images.yml on every push to main as
 #   ghcr.io/oceanstreamio/oceanstream-cli/echodata:sha-<commit>
-# Locally: docker build -f deploy/Dockerfile.echodata .
+# Locally: docker build -f docker/Dockerfile.echodata .
 # =============================================================================
 
 ARG PYTHON_VERSION=3.12

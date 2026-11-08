@@ -61,11 +61,11 @@ Raw files that carry no NMEA need a track: `oceanstream campaign gps <ID> --from
 
 `gps/coverage.json` records the span, the median step and the longest gap; days without a track get no NASC and no map line.
 
-Sources that are not in S3 are mirrored into the project bucket first, to `source.uri` in `hpc-run.toml` (`s3://oceanstream-bucket/mirror/<ID>/raw/` by default): `oceanstream campaign mirror <ID> --from https://…/cruise.tar.gz` streams an R2R BagIt tarball member by member and keeps only the `.raw`/`.idx` files; `--from zenodo:<record>` copies a Zenodo record's files and unpacks its zips; `--from azure` copies a Saildrone file-share cruise. Mirrors resume, skipping what is already there. For a long mirror, run the command in an EDITO Job rather than the workspace pod (`deploy/edito/mirror/job.yaml`).
+Sources that are not in S3 are mirrored into the project bucket first, to `source.uri` in `hpc-run.toml` (`s3://oceanstream-bucket/mirror/<ID>/raw/` by default): `oceanstream campaign mirror <ID> --from https://…/cruise.tar.gz` streams an R2R BagIt tarball member by member and keeps only the `.raw`/`.idx` files; `--from zenodo:<record>` copies a Zenodo record's files and unpacks its zips; `--from azure` copies a Saildrone file-share cruise. Mirrors resume, skipping what is already there. For a long mirror, run the command in an EDITO Job rather than the workspace pod (`edito/mirror/job.yaml` in the oceanstream-hpc-runs repository).
 
 ## 4. Test on EDITO, then fix `hpc-run.toml`
 
-Two days of every cruise run on EDITO before the cluster (`deploy/edito/ncei-sv/`: Sv, then denoising with a preset, then the echogram report), typically one ordinary day and one edge case (deep water, shelf, a settings change). They decide the preset and the pipeline flags, and they measure the peak memory and the minutes per day, which set `job.day_memory_gb` and `job.walltime`. Record them in the campaign's `README.md`.
+Two days of every cruise run on EDITO before the cluster (`edito/ncei-sv/` in the oceanstream-hpc-runs repository: Sv, then denoising with a preset, then the echogram report), typically one ordinary day and one edge case (deep water, shelf, a settings change). They decide the preset and the pipeline flags, and they measure the peak memory and the minutes per day, which set `job.day_memory_gb` and `job.walltime`. Record them in the campaign's `README.md`.
 
 ```toml
 cruise = "SE2204"                 # optional; default: the campaign id
