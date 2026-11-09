@@ -48,10 +48,19 @@ def _root() -> str:
 
 
 def _resolve(path: str, container: Optional[str] = None) -> str:
-    """Resolve *path* inside *container* to ``s3://{bucket}/{prefix}/{container}/{path}``."""
-    parts = [_root()]
-    if container:
-        parts.append(str(container).strip("/"))
+    """Resolve *path* inside *container* to ``s3://{bucket}/{prefix}/{container}/{path}``.
+
+    A container given as an ``s3://`` URI is a location of its own, outside the
+    configured prefix: Sv another pipeline published, read with
+    ``--sv-source-container``.
+    """
+    container = str(container or "")
+    if container.startswith("s3://"):
+        parts = [container.rstrip("/")]
+    else:
+        parts = [_root()]
+        if container:
+            parts.append(container.strip("/"))
     if path:
         parts.append(str(path).strip("/"))
     return "/".join(parts)
@@ -314,13 +323,20 @@ class _S3PrefixFS:
         return f"{self.root}/{path}" if path else self.root
 
     def _rel(self, path: str) -> str:
+        """*path* relative to the root; one outside it stays an ``s3://`` URI.
+
+        So a listing of a container given as a URI comes back as that URI's
+        children, which ``_abs`` reads back unchanged.
+        """
         path = str(path)
         for scheme in ("s3://", "s3a://"):
             if path.startswith(scheme):
                 path = path[len(scheme):]
                 break
         prefix = f"{self.root}/"
-        return path[len(prefix):] if path.startswith(prefix) else path
+        if path.startswith(prefix):
+            return path[len(prefix):]
+        return path if path == self.root else f"s3://{path}"
 
     def ls(self, path: str, detail: bool = False, **kwargs) -> list:
         try:

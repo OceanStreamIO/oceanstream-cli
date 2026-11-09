@@ -256,6 +256,50 @@ class TestSplitSourceRun:
         assert not (experiment_root / "out-split" / "run-manifest.json").exists()
 
 
+class TestSourceOutsideTheRoot:
+    """Sv read where another pipeline published it, by an absolute location."""
+
+    def test_denoises_published_sv_in_place(self, experiment_root, tmp_path):
+        import shutil
+
+        from oceanstream.echodata import products
+
+        published = tmp_path / "published" / "CRUISE"
+        shutil.copytree(experiment_root / SOURCE_CONTAINER, published)
+        before = {
+            c: sorted(p.name for p in (published / DAY / f"{DAY}--{c}.zarr").rglob("*"))
+            for c in CATEGORIES
+        }
+
+        _run(_config("out-published", sv_source=str(published)))
+        _run(_config("out-split", sv_source=SOURCE_CONTAINER))
+
+        assert sorted(p.name for p in (published / DAY).iterdir()) == [
+            f"{DAY}--{c}.zarr" for c in CATEGORIES
+        ]
+        for category in CATEGORIES:
+            assert sorted(
+                p.name for p in (published / DAY / f"{DAY}--{category}.zarr").rglob("*")
+            ) == before[category]
+            day = experiment_root / "out-published" / DAY
+            denoised = xr.open_zarr(day / f"{DAY}--{category}--denoised.zarr")
+            try:
+                assert denoised.attrs["sv_source_container"] == str(published)
+            finally:
+                denoised.close()
+            # The resolver follows the absolute source, and the result is the
+            # same as from a source beside the output.
+            a = products.open_product_uri(str(day / f"{DAY}--{category}--pruned.zarr"))
+            b = products.open_product_uri(
+                str(experiment_root / "out-split" / DAY / f"{DAY}--{category}--pruned.zarr")
+            )
+            try:
+                np.testing.assert_array_equal(a["Sv"].values, b["Sv"].values)
+            finally:
+                a.close()
+                b.close()
+
+
 class TestSplitVsSameContainer:
     def test_denoised_sv_matches_within_declared_tolerance(self, experiment_root):
         import shutil

@@ -1858,6 +1858,8 @@ def _reconstruct_day_zarrs(
 
     fs = get_azure_filesystem()
     day_zarrs: dict[str, dict[str, str]] = {}
+    # Listed paths start with the container; a trailing slash would cut a character more.
+    output_container = output_container.rstrip("/")
 
     # List day directories in container
     try:
@@ -2627,7 +2629,10 @@ def parse_args() -> PipelineConfig:
         help="Container holding the stage-4 Sv zarrs to resume from. Defaults to "
              "--output-container. Set it to share one immutable Sv source across "
              "several runs; requires --resume-stage >= 5 and must differ from the "
-             "output container. The source container is never written to.",
+             "output container. The source container is never written to. On the "
+             "S3 backend it may be an s3:// URI outside --s3-prefix, such as Sv "
+             "published by another pipeline (s3://bucket/hpc/products/HB2402); "
+             "on the local backend, an absolute folder.",
     )
     parser.add_argument(
         "--stop-after-stage", type=int, default=0,

@@ -219,8 +219,9 @@ class _LocalFS:
             return []
         items = []
         for p in sorted(local.iterdir()):
-            # Return path relative to _OUTPUT_ROOT (matches Azure's container/... format)
-            rel = str(p.relative_to(_OUTPUT_ROOT))
+            # Return path relative to _OUTPUT_ROOT (matches Azure's container/... format);
+            # a container given as an absolute folder elsewhere keeps its absolute paths.
+            rel = str(p.relative_to(_OUTPUT_ROOT)) if p.is_relative_to(_OUTPUT_ROOT) else str(p)
             if detail:
                 items.append(
                     {

@@ -102,6 +102,15 @@ class TestUriResolution:
             "d/x.zarr", "out"
         )
 
+    def test_a_uri_container_is_its_own_location(self, configured):
+        # Sv another pipeline published, read with --sv-source-container.
+        assert (
+            s3_storage._resolve(
+                "2024-03-04/2024-03-04--short_pulse.zarr", "s3://pub/hpc/products/HB2402/"
+            )
+            == "s3://pub/hpc/products/HB2402/2024-03-04/2024-03-04--short_pulse.zarr"
+        )
+
     def test_unconfigured_bucket_raises(self, monkeypatch):
         monkeypatch.setattr(s3_storage, "_BUCKET", "")
         with pytest.raises(RuntimeError, match="patch_storage"):
@@ -213,6 +222,16 @@ class TestPrefixFilesystem:
         fake, fs = self._fs()
         fs.ls("s3://otherbucket/thing")
         assert fake.calls == [("ls", "otherbucket/thing")]
+
+    def test_paths_outside_the_root_come_back_as_uris(self):
+        fake, fs = self._fs(
+            [{"name": "pub/hpc/products/HB2402/2024-03-04", "type": "directory"}]
+        )
+        listed = fs.ls("s3://pub/hpc/products/HB2402")
+        assert listed == ["s3://pub/hpc/products/HB2402/2024-03-04"]
+        # ...which the view reads back unchanged.
+        fs.ls(listed[0])
+        assert fake.calls[-1] == ("ls", "pub/hpc/products/HB2402/2024-03-04")
 
     def test_empty_prefix_roots_at_the_bucket(self):
         fake = _FakeFS()

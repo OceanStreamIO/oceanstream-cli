@@ -633,6 +633,8 @@ def resolve_at(ds: xr.Dataset, uri: str, open_uri: Callable[[str], xr.Dataset]) 
     side by side under one root, and each store records its own container, so
     the root is the part of *uri* before ``/{store_container}/``. A writer that
     addresses stores by URL instead records no container and an absolute path.
+    A source container that is itself a URI or an absolute folder (Sv read in
+    place from another pipeline's products) is used as it is.
     """
     if not product_kind(ds):
         return ds
@@ -641,6 +643,9 @@ def resolve_at(ds: xr.Dataset, uri: str, open_uri: Callable[[str], xr.Dataset]) 
     def opener(path: str, container: str | None) -> xr.Dataset:
         if not container:
             target = path
+        elif "://" in container or container.startswith("/"):
+            # A source outside the side-by-side containers, such as published Sv.
+            target = f"{container.rstrip('/')}/{path.strip('/')}"
         else:
             marker = f"/{own}/"
             if not own or marker not in f"/{uri}":

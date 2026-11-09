@@ -267,6 +267,41 @@ def fake_container(monkeypatch):
     return process_from_raw
 
 
+class _BucketFS:
+    """An s3fs-like listing of keys, for the prefix view to wrap."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+
+    def ls(self, path: str, detail: bool = False, **kwargs):
+        prefix = path.rstrip("/") + "/"
+        children = {k[len(prefix):].split("/")[0] for k in self.keys if k.startswith(prefix)}
+        return sorted(prefix + child for child in children)
+
+
+def test_days_are_found_under_a_uri_source(monkeypatch):
+    """Sv published outside the run's prefix is found by its s3:// URI."""
+    with scripts_importable():
+        import process_from_raw
+        import s3_storage
+
+    root = "pub/hpc/products/HB2402"
+    keys = [
+        f"{root}/2024-03-04/2024-03-04--short_pulse.zarr/zarr.json",
+        f"{root}/2024-03-04/2024-03-04--short_pulse--denoised.zarr/zarr.json",
+        f"{root}/2024-03-05/2024-03-05--short_pulse.zarr/zarr.json",
+        f"{root}/collection.json",
+    ]
+    fs = s3_storage._S3PrefixFS(_BucketFS(keys), "lab", "denoise-lab")
+    monkeypatch.setattr("oceanstream.echodata.storage.get_azure_filesystem", lambda: fs)
+
+    found = process_from_raw._reconstruct_day_zarrs(
+        f"s3://{root}/", suffix=".zarr",
+        start_date=datetime(2024, 3, 4), end_date=datetime(2024, 3, 4),
+    )
+    assert found == {"2024-03-04": {"short_pulse": "2024-03-04/2024-03-04--short_pulse.zarr"}}
+
+
 class TestReconstructionDateFilter:
     def test_no_dates_returns_everything(self, fake_container):
         found = fake_container._reconstruct_day_zarrs("src", suffix=".zarr")
