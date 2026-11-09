@@ -166,7 +166,7 @@ def stage_command(
             return
         result = staging.stage_days(c, cfg.cruise, wanted, src=cfg.source(),
                                     layout=cfg.source_layout, opendata=cfg.opendata,
-                                    shift_hours=cfg.day_shift_hours)
+                                    shift_hours=cfg.day_shift_hours, exclude=cfg.source_exclude)
         if gps or cfg.gps:
             staging.stage_gps(c, cfg.cruise, cfg.gps_uri)
         if not all(result.values()):
@@ -186,7 +186,7 @@ def submit_command(
     campaigns_dir: Path = CAMPAIGNS_DIR,
 ) -> None:
     """Submit processing for days already staged; waits for the job unless --detach."""
-    from .cruise import RunConfig, job_spec, preset_spec  # noqa: PLC0415
+    from .cruise import RunConfig, calibration_spec, job_spec, preset_spec  # noqa: PLC0415
 
     try:
         cfg = RunConfig.load(campaign_path(campaign_id, campaigns_dir))
@@ -196,9 +196,11 @@ def submit_command(
         wanted = _days(days) if days else cfg.days
         if render_only:
             preset = (f"<{cfg.preset}.toml>", cfg.preset) if cfg.preset else ("", "")
+            calibration = f"<{cfg.cal_params_file.name}>" if cfg.cal_params_file else ""
         else:
             preset = preset_spec(c, cfg)
-        spec = job_spec(c, cfg, wanted, preset)
+            calibration = calibration_spec(c, cfg)
+        spec = job_spec(c, cfg, wanted, preset, calibration)
         if mode == "day":
             spec.mode = "day"
         job = slurm.build(c.site, spec)

@@ -47,6 +47,15 @@ def test_stage_days_layouts(fake: FakeCluster) -> None:
         staging.stage_days(fake, "X", ["2022-06-21"], layout="flat")
 
 
+def test_stage_days_leaves_out_excluded_files(fake: FakeCluster) -> None:
+    # NF2104 keeps its sphere-calibration files among the survey files.
+    staging.stage_days(fake, "X", ["2021-06-26"], src="s3://noaa/X/EK60/", layout="flat",
+                       opendata=True, exclude=["*D20210626-T2052*.raw", "*T211152.raw"])
+    _, args = fake.transfers[0]
+    assert args[4:] == ["--include", "*D20210626-T*.raw", "--exclude", "*D20210626-T2052*.raw",
+                        "--exclude", "*T211152.raw", "--opendata"]
+
+
 def test_unstage_refuses_paths_outside_the_layout(fake: FakeCluster) -> None:
     staging.unstage(fake, "X", ["2022-06-21"])
     assert fake.commands[-1][1] == "rm -rf /scratch/g/oceanstream/raw/X/2022-06-21"
@@ -106,9 +115,30 @@ def test_run_config(tmp_path: Path) -> None:
     assert cfg.source() == "s3://noaa-wcsd-pds/data/raw/Oscar_Elton_Sette/SE2204/EK80/"
     assert cfg.source_layout == "flat" and cfg.opendata
     assert cfg.pipeline_args == ["--encode-mode", "power", "--depth-offset", "5"]
+    assert cfg.source_exclude == [] and cfg.cal_params_file is None
     bad = _campaign(tmp_path / "b", ["2022-06-21"], RUN_TOML + "\n[jobs]\nx = 1\n")
     with pytest.raises(HpcError, match="unknown sections"):
         cruise.RunConfig.load(bad)
+
+
+CAL_TOML = RUN_TOML.replace(
+    'ship = "Oscar_Elton_Sette"', 'ship = "Oscar_Elton_Sette"\nexclude = ["*T195850.raw"]').replace(
+    "[output]", 'cal_params_file = "calibration.xml"\n\n[output]')
+CAL_XML = '<calibration><case kHz="38" g="22.99" SA="256:-0.62"/></calibration>\n'
+
+
+def test_run_config_calibration_and_exclusions(tmp_path: Path) -> None:
+    d = _campaign(tmp_path, ["2022-06-21"], CAL_TOML)
+    with pytest.raises(HpcError, match="cal_params_file .* not found"):
+        cruise.RunConfig.load(d)
+    (d / "calibration.xml").write_text(CAL_XML)
+    cfg = cruise.RunConfig.load(d)
+    assert cfg.source_exclude == ["*T195850.raw"]
+    assert cfg.cal_params_file == d / "calibration.xml"
+    (d / "hpc-run.toml").write_text(CAL_TOML.replace('"--depth-offset", 5',
+                                                     '"--cal-params-file", "x.xml"'))
+    with pytest.raises(HpcError, match="cal_params_file only"):
+        cruise.RunConfig.load(d)
 
 
 class ClusterSim(FakeCluster):
@@ -223,6 +253,25 @@ def test_dry_run_renders_without_touching_the_cluster(tmp_path: Path, sim: Clust
     assert "run-node" in out["script"] and not sim.transfers
     assert "--encode-mode power --depth-offset 5" in out["script"]
     assert "--ping-time-offset" not in out["script"]
+
+
+def test_the_calibration_file_is_shipped_and_passed(tmp_path: Path, sim: ClusterSim,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    d = _campaign(tmp_path, ["2022-06-21"], CAL_TOML)
+    (d / "calibration.xml").write_text(CAL_XML)
+    out = cruise.run_cruise(sim, d, dry_run=True)
+    assert "--depth-offset 5 --cal-params-file '<calibration.xml>'" in out["script"]
+
+    _process(sim)
+    monkeypatch.setattr(cruise, "publish_campaign", lambda *a, **k: {})
+    cruise.run_cruise(sim, d)
+    shipped = [(c, i) for _, c, i in sim.commands if "calibration/SE2204" in c]
+    assert shipped and shipped[0][1] == CAL_XML
+    remote = "/proj/g/oceanstream/calibration/SE2204/calibration.xml"
+    assert shipped[0][0].endswith(f"cat > {remote}")
+    assert f"--cal-params-file {remote}" in sim.jobs[0]
+    pull = next(a for act, a in sim.transfers if act == "pull")
+    assert pull[pull.index("--exclude") + 1] == "*T195850.raw"
 
 
 def test_a_fast_clock_corrects_the_ping_times_as_well(tmp_path: Path, sim: ClusterSim) -> None:

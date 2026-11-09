@@ -80,6 +80,7 @@ ship = "Oscar_Elton_Sette"        # ncei: the folder under data/raw/
 instrument = "EK80"               # ncei: the folder; EK80-format data is sometimes filed under EK60
 layout = "flat"                   # file names carry the date; "days" = one folder per day
 day_shift_hours = 0               # -7 for a recorder clock 7 h fast: UTC = file time - 7 h (staging window and --ping-time-offset)
+# exclude = ["*D20210626-T2052*.raw"]  # file name patterns not staged, e.g. sphere calibration files among the survey files
 
 [gps]
 enabled = false                   # true: stage gps/<ID>/ and pass --gps-dir
@@ -95,10 +96,13 @@ walltime = "12:00:00"
 [pipeline]
 preset = "research-vessel-open-ocean-ryan-short"
 args = ["--encode-mode", "power", "--depth-offset", "5", "..."]
+# cal_params_file = "calibration.xml"  # in the campaign directory; copied to the cluster, passed as --cal-params-file
 
 [output]
 dest = "hpc/products/SE2204"
 ```
+
+When the raw files carry the wrong gains (factory values, or values that change during the cruise), write the calibration as a `<calibration><case kHz= g= SA="<pulse µs>:<dB>"/></calibration>` file (the format `--cal-params-file` reads) into the campaign directory and name it in `pipeline.cal_params_file`; the EDITO test takes the same file through `CAL_S3_KEY`. The NCEI calibration folders hold Simrad's calibration XMLs, whose `CalibrationResults` give the gain and Sa correction for one pulse each.
 
 True EK60 files need `"--sonar-model", "EK60"` in `pipeline.args`, whatever folder they are in (the default is EK80). With `"--encode-mode", "auto"`, a file that holds complex and power channels (WBT and GPT under EK80 software) gets every channel, each calibrated from its own samples; `power` or `complex` keeps only that kind. A complex channel whose pulse changes inside a group of files keeps that group's commonest pulse, because echopype cannot calibrate it otherwise; files with different settings are combined apart and joined. `--single-pulse` keeps only the channel's commonest pulse of the whole day, for a change between files that would otherwise put a step in Sv. Dropped pings are logged and listed in the Sv attribute `pings_dropped_for_changing_pulse`.
 

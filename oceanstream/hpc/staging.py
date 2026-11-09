@@ -58,19 +58,25 @@ def raw_dest(cluster: Cluster, cruise: str, day: str) -> str:
 
 def stage_days(  # noqa: PLR0913
         cluster: Cluster, cruise: str, days: list[str], *, src: str = "",
-               layout: str = "days", opendata: bool = False, shift_hours: int = 0
-               ) -> dict[str, bool]:
-    """Stage each day's raw files; returns day -> staged."""
+               layout: str = "days", opendata: bool = False, shift_hours: int = 0,
+               exclude: list[str] | tuple[str, ...] = ()) -> dict[str, bool]:
+    """Stage each day's raw files; returns day -> staged.
+
+    *exclude*: file name patterns left out, e.g. sphere-calibration files that the
+    source keeps among the survey files.
+    """
     check_days(days)
     if layout not in ("days", "flat"):
         raise HpcError(f"Unknown source layout {layout!r}: use 'days' or 'flat'.")
     site = cluster.site
     result: dict[str, bool] = {}
+    excludes = [arg for p in exclude for arg in ("--exclude", p)]
     if layout == "days":
         src = src or site.s3_uri(f"{site.s3_raw_prefix}/{cruise}/")
         includes = [arg for d in days for arg in ("--include", f"{d}/*")]
         rc = cluster.transfer("pull", ["--src", src, "--dest", f"{site.raw_dir}/{cruise}",
-                                       *includes, *(["--opendata"] if opendata else [])])
+                                       *includes, *excludes,
+                                       *(["--opendata"] if opendata else [])])
         result = dict.fromkeys(days, rc == 0)
     else:
         if not src:
@@ -78,7 +84,8 @@ def stage_days(  # noqa: PLR0913
         for day in days:
             includes = [arg for p in file_patterns(day, shift_hours) for arg in ("--include", p)]
             rc = cluster.transfer("pull", ["--src", src, "--dest", raw_dest(cluster, cruise, day),
-                                           *includes, *(["--opendata"] if opendata else [])])
+                                           *includes, *excludes,
+                                           *(["--opendata"] if opendata else [])])
             result[day] = rc == 0
     for day, staged in result.items():
         (info if staged else warn)(f"{day}: {'staged' if staged else 'staging failed'}")

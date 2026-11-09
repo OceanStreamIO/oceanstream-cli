@@ -175,9 +175,20 @@ def build(site: HpcSite, spec: JobSpec) -> RenderedJob:
 
 def ship_preset(cluster: Cluster, local_path: str, text: str) -> str:
     """Copy a preset file to the cluster; returns its path there."""
-    remote = f"{cluster.site.root}/presets/{PurePosixPath(local_path).name}"
-    r = cluster.login(f"mkdir -p {shlex.quote(cluster.site.root)}/presets && "
-                      f"cat > {shlex.quote(remote)}", input=text)
+    return _ship(cluster, "presets", PurePosixPath(local_path).name, text, local_path)
+
+
+def ship_calibration(cluster: Cluster, cruise: str, local_path: str, text: str) -> str:
+    """Copy a cruise's calibration file (``--cal-params-file``) to the cluster; returns its path."""
+    return _ship(cluster, f"calibration/{cruise}", PurePosixPath(local_path).name, text,
+                 local_path)
+
+
+def _ship(cluster: Cluster, subdir: str, name: str, text: str, local_path: str) -> str:
+    folder = f"{cluster.site.root}/{subdir}"
+    remote = f"{folder}/{name}"
+    r = cluster.login(f"mkdir -p {shlex.quote(folder)} && cat > {shlex.quote(remote)}",
+                      input=text)
     if r.returncode != 0:
         raise HpcError(f"Could not copy {local_path} to {remote}: {r.stderr.strip()[-300:]}")
     return remote

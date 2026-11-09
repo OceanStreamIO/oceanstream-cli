@@ -46,6 +46,7 @@ class RunConfig:
     ship: str = ""                   # ncei kind
     instrument: str = "EK80"         # ncei kind (NCEI also files EK80-format data under EK60)
     day_shift_hours: int = 0
+    source_exclude: list[str] = field(default_factory=list)  # file name patterns left out
     # [gps]
     gps: bool = False
     gps_uri: str = ""
@@ -64,6 +65,7 @@ class RunConfig:
     # [pipeline]
     preset: str = ""
     pipeline_args: list[str] = field(default_factory=list)
+    cal_params_file: Path | None = None  # shipped and passed as --cal-params-file
     # [output]
     container: str = ""
     dest: str = ""
@@ -107,6 +109,7 @@ class RunConfig:
             source_layout=src.get("layout", "flat" if src.get("kind") == "ncei" else "days"),
             ship=src.get("ship", ""), instrument=src.get("instrument", "EK80"),
             day_shift_hours=int(src.get("day_shift_hours", 0)),
+            source_exclude=[str(x) for x in src.get("exclude", [])],
             gps=bool(gps.get("enabled", bool(gps))), gps_uri=gps.get("uri", ""),
             mode=job.get("mode", "node"), cpus=int(job.get("cpus", 4)),
             walltime=job.get("walltime", "12:00:00"), constraint=job.get("constraint"),
@@ -115,10 +118,16 @@ class RunConfig:
             batch=int(job.get("batch", 6)), array_limit=int(job.get("array_limit", 0)),
             dask_workers=int(job.get("dask_workers", 1)),
             preset=pipe.get("preset", ""), pipeline_args=[str(a) for a in pipe.get("args", [])],
+            cal_params_file=campaign_dir / pipe["cal_params_file"] if pipe.get("cal_params_file")
+            else None,
             container=out.get("container", "") or cruise, dest=out.get("dest", ""),
         )
         if cfg.mode not in ("node", "array"):
             raise HpcError(f"{path}: job.mode must be 'node' or 'array', not {cfg.mode!r}")
+        if cfg.cal_params_file and not cfg.cal_params_file.is_file():
+            raise HpcError(f"{path}: pipeline.cal_params_file {cfg.cal_params_file} not found.")
+        if cfg.cal_params_file and "--cal-params-file" in cfg.pipeline_args:
+            raise HpcError(f"{path}: give the calibration as pipeline.cal_params_file only.")
         return cfg
 
 
@@ -208,10 +217,20 @@ def preset_spec(cluster: Cluster, cfg: RunConfig) -> tuple[str, str]:
     return slurm.ship_preset(cluster, str(path), path.read_text(encoding="utf-8")), cfg.preset
 
 
-def job_spec(cluster: Cluster, cfg: RunConfig, days: list[str], preset: tuple[str, str]
-             ) -> slurm.JobSpec:
+def calibration_spec(cluster: Cluster, cfg: RunConfig) -> str:
+    """Ship the calibration file to the cluster; returns its path there ('' if none)."""
+    if not cfg.cal_params_file:
+        return ""
+    return slurm.ship_calibration(cluster, cfg.cruise, str(cfg.cal_params_file),
+                                  cfg.cal_params_file.read_text(encoding="utf-8"))
+
+
+def job_spec(cluster: Cluster, cfg: RunConfig, days: list[str], preset: tuple[str, str],
+             calibration: str = "") -> slurm.JobSpec:
     site = cluster.site
     args = list(cfg.pipeline_args)
+    if calibration:
+        args += ["--cal-params-file", calibration]
     if cfg.gps and "--gps-dir" not in args:
         args += ["--gps-dir", f"{site.gps_dir}/{cfg.cruise}"]
     # The staging window follows a wrong clock; the pipeline has to correct the ping times too.
@@ -241,6 +260,7 @@ class _Run:
         self.pusher = Pusher(cluster, cfg, state, streams=8)
         self.metrics: dict[str, Any] = {}
         self.preset: tuple[str, str] = ("", "")
+        self.calibration = ""
 
     def resume(self, group: list[str]) -> list[str]:
         """Push days processed before a restart; returns the days still to process."""
@@ -255,7 +275,7 @@ class _Run:
         cfg = self.cfg
         staged = staging.stage_days(self.cluster, cfg.cruise, days, src=cfg.source(),
                                     layout=cfg.source_layout, opendata=cfg.opendata,
-                                    shift_hours=cfg.day_shift_hours)
+                                    shift_hours=cfg.day_shift_hours, exclude=cfg.source_exclude)
         for d, good in staged.items():
             self.state.mark(d, "staged" if good else "failed-stage")
         return [d for d in days if staged[d]]
@@ -263,7 +283,8 @@ class _Run:
     def process(self, days: list[str]) -> None:
         """One job for *days*; then free their raw input and push what finished."""
         cluster, cfg = self.cluster, self.cfg
-        job = slurm.build(cluster.site, job_spec(cluster, cfg, days, self.preset))
+        job = slurm.build(cluster.site, job_spec(cluster, cfg, days, self.preset,
+                                                 self.calibration))
         jobid = slurm.submit(cluster, job)
         ok(f"Submitted job {jobid} ({job.name}, {len(days)} days)")
         for d in days:
@@ -303,6 +324,7 @@ class _Run:
     def run(self, pending: list[str]) -> None:
         cfg = self.cfg
         self.preset = preset_spec(self.cluster, cfg)
+        self.calibration = calibration_spec(self.cluster, cfg)
         if cfg.gps:
             staging.stage_gps(self.cluster, cfg.cruise, cfg.gps_uri)
         size = len(pending) if cfg.mode == "node" else cfg.batch
@@ -327,7 +349,8 @@ def run_cruise(cluster: Cluster, campaign_dir: Path, *, dry_run: bool = False,
         f"state in {state.path}")
     if dry_run:
         preset = (f"<{cfg.preset}.toml>", cfg.preset) if cfg.preset else ("", "")
-        spec = job_spec(cluster, cfg, pending or cfg.days, preset)
+        calibration = f"<{cfg.cal_params_file.name}>" if cfg.cal_params_file else ""
+        spec = job_spec(cluster, cfg, pending or cfg.days, preset, calibration)
         return {"days": pending, "script": slurm.build(cluster.site, spec).script}
     run = _Run(cluster, cfg, state)
     if pending:
