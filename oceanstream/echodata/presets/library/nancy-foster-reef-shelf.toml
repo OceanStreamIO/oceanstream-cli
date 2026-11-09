@@ -1,0 +1,80 @@
+# NOAA Ship Nancy Foster over reefs and hard bottom: GPT 38/70/120/200 kHz, 7 pings a second, 10-35 m.
+
+[preset]
+key = "nancy-foster-reef-shelf"
+name = "NOAA Ship Nancy Foster, reef and hard-bottom shelf, fast pings"
+status = "draft"
+summary = "Impulse and attenuation filters for GPT 38, 70, 120 and 200 kHz at 0.128-0.256 ms, a ping every 0.12-0.14 s, over reefs and hard bottom in 10-35 m of water."
+description = """
+For the habitat-mapping and sanctuary cruises of NOAA Ship Nancy Foster with GPT transceivers recorded by EK80 software (2019-2022): 38 kHz at 0.256 ms and 70, 120 and 200 kHz at 0.128 ms, a ping every 0.12-0.14 s, 40-50 m of recorded range, hull-mounted transducers 3.57 m below the surface. Derived from reef-shelf-shallow, with a table for every channel.
+
+There is no background filter: below the seabed the recorded range holds seabed echoes and their multiples, so no part of a ping is noise only, and noise does not matter at these ranges. There is no transient filter: its reference layer would hold the reef fish. The attenuation filter works on range below the transducer, not depth. Its reference band, 3.5-7 m of range, starts below the transmit ring-down (to about 3 m at 38 kHz) and the near-field dip of the other channels (to about 4 m), and ends above the shallowest seabed of the NF2205 inshore box (8.3 m of range on 99 % of pings). Integration starts at 7.5 m depth, 3.9 m of range. Median Sv is flat from 4 m of range to the seabed on all four channels. The windows are written for a 0.13 s ping interval.
+"""
+derived_from = "reef-shelf-shallow"
+
+[preset.applies_to]
+platforms = ["research-vessel"]
+regimes = ["shelf"]
+water_depth_m = [10.0, 40.0]
+pulse_mode = "CW"
+echosounders = ["Simrad GPT"]
+region = "US south-east shelf: Georgia and the Carolinas"
+
+[[preset.validations]]
+cruise = "NF2205"
+days = ["2022-07-10", "2022-07-14"]
+outcome = "pending"
+notes = "EDITO test, 2026-11-09."
+reference = "https://doi.org/10.25921/2yjb-7d86"
+
+[[preset.validations]]
+cruise = "NF2104"
+days = ["2021-06-17", "2021-06-19"]
+outcome = "pending"
+notes = "EDITO test, 2026-11-09."
+reference = "https://doi.org/10.25921/tt6p-ew65"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation"]
+use_frequency_specific = true
+reference_ping_interval_s = 0.13
+
+[echodata.denoise.frequency_params.38000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.denoise.frequency_params.70000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.denoise.frequency_params.120000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
+background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
+
+[echodata.integration.38000]
+start_depth_m = 7.5
+max_noise_sv_db = -85.0
+
+[echodata.integration.70000]
+start_depth_m = 7.5
+max_noise_sv_db = -85.0
+
+[echodata.integration.120000]
+start_depth_m = 7.5
+max_noise_sv_db = -85.0
+
+[echodata.integration.200000]
+start_depth_m = 7.5
+max_noise_sv_db = -85.0
