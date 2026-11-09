@@ -8,7 +8,7 @@ summary = "Impulse and attenuation filters for GPT 38, 70, 120 and 200 kHz at 0.
 description = """
 For the habitat-mapping and sanctuary cruises of NOAA Ship Nancy Foster with GPT transceivers recorded by EK80 software (2019-2022): 38 kHz at 0.256 ms and 70, 120 and 200 kHz at 0.128 ms, a ping every 0.12-0.14 s, 40-50 m of recorded range, hull-mounted transducers 3.57 m below the surface. Derived from reef-shelf-shallow, with a table for every channel.
 
-There is no background filter: below the seabed the recorded range holds seabed echoes and their multiples, so no part of a ping is noise only, and noise does not matter at these ranges. There is no transient filter: its reference layer would hold the reef fish. The attenuation filter works on range below the transducer, not depth. Its reference band, 3.5-7 m of range, starts below the transmit ring-down (to about 3 m at 38 kHz) and the near-field dip of the other channels (to about 4 m), and ends above the shallowest seabed of the NF2205 inshore box (8.3 m of range on 99 % of pings). Integration starts at 7.5 m depth, 3.9 m of range. Median Sv is flat from 4 m of range to the seabed on all four channels. The windows are written for a 0.13 s ping interval.
+There is no background filter: below the seabed the recorded range holds seabed echoes and their multiples, so no part of a ping is noise only, and noise does not matter at these ranges. There is no transient filter: its reference layer would hold the reef fish. The attenuation filter works on range below the transducer, not depth. Its reference band, 3.5-7 m of range, starts below the transmit ring-down (to about 3 m at 38 kHz) and the near-field dip of the other channels (to about 4 m), and ends above the shallowest seabed of the NF2205 inshore box (8.3 m of range on 99 % of pings). The threshold is 10 dB, not 6: scatterers in the band make its median vary from ping to ping, and at 6 dB the filter removed 6 % of 38 kHz pings on NF2104 2021-06-19 whose whole water column was only 0.7 dB darker than their neighbours (median). The drops below the band's rolling median form one smooth tail; at 10 dB about 1 % of pings go, and the few true dropouts (15-20 dB, the whole column dark) are still removed. Integration starts at 7.5 m depth, 3.9 m of range. Median Sv was flat from 4 m of range to the seabed on NF2205 2022-07-10 (night) and rose about 20 dB towards the seabed on NF2104 2021-06-19. The windows are written for a 0.13 s ping interval.
 """
 derived_from = "reef-shelf-shallow"
 
@@ -41,25 +41,25 @@ reference_ping_interval_s = 0.13
 
 [echodata.denoise.frequency_params.38000]
 impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
-attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 10.0 }
 transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
 background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
 
 [echodata.denoise.frequency_params.70000]
 impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
-attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 10.0 }
 transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
 background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
 
 [echodata.denoise.frequency_params.120000]
 impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
-attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 10.0 }
 transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
 background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
 
 [echodata.denoise.frequency_params.200000]
 impulse     = { vertical_bin_size = "1m", ping_lags = [1, 2], threshold_db = 10.0 }
-attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 6.0 }
+attenuation = { upper_limit_sl = 3.5, lower_limit_sl = 7.0, num_side_pings = 110, threshold = 10.0 }
 transient   = { exclude_above = 10.0, depth_bin = 5.0, n_pings = 110, thr_dB = 6.0, maxts = -35.0 }
 background  = { range_window = 30, ping_window = 300, SNR_threshold = "3.0dB", background_noise_max = "-140.0dB" }
 
