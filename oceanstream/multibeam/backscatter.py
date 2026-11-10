@@ -13,7 +13,9 @@ class AngularResponse:
     Seabed backscatter depends on the beam angle as well as on the seabed, which shows
     in a mosaic as stripes along the track. :meth:`flatten` removes the median response
     of the survey (or day) and puts every sounding on the level of the reference angles,
-    30-50 degrees by default, where the response is flattest.
+    30-50 degrees on both sides by default, where the response is flattest. Port and
+    starboard are kept apart (signed angles): on NF2104's EM710 they differ by 4 dB at
+    30-50 degrees, which pooling them would leave as stripes between adjacent lines.
     """
 
     def __init__(  # noqa: PLR0913 - histogram geometry
@@ -27,7 +29,8 @@ class AngularResponse:
         min_count: int = 100,
     ) -> None:
         self.angle_step = angle_step_deg
-        self.n_angles = int(round(max_angle_deg / angle_step_deg))
+        self.max_angle = max_angle_deg
+        self.n_angles = 2 * int(round(max_angle_deg / angle_step_deg))
         self.bs_min = bs_min_db
         self.bs_step = bs_step_db
         self.n_bs = int(round((bs_max_db - bs_min_db) / bs_step_db))
@@ -35,9 +38,16 @@ class AngularResponse:
         self.counts = np.zeros((self.n_angles, self.n_bs), dtype=np.int64)
 
     def _angle_bin(self, angle_deg: np.ndarray) -> np.ndarray:
-        a = np.floor(np.abs(np.asarray(angle_deg, dtype=np.float64)) / self.angle_step)
-        out: np.ndarray = np.clip(np.nan_to_num(a, nan=-1), -1, self.n_angles - 1)
-        return out.astype(np.int64)
+        a = np.asarray(angle_deg, dtype=np.float64)
+        b = np.floor((a + self.max_angle) / self.angle_step)
+        b = np.where(np.isfinite(b) & (b >= 0) & (b < self.n_angles), b, -1)
+        out: np.ndarray = b.astype(np.int64)
+        return out
+
+    def bin_centres(self) -> np.ndarray:
+        """Signed beam angle at the centre of each bin (port negative)."""
+        out: np.ndarray = -self.max_angle + (np.arange(self.n_angles) + 0.5) * self.angle_step
+        return out
 
     def add(self, angle_deg: np.ndarray, backscatter_db: np.ndarray) -> None:
         """Add soundings to the histograms; NaN values are skipped."""
@@ -61,10 +71,10 @@ class AngularResponse:
         return np.array([self._median(h) for h in self.counts])
 
     def reference_db(self, low_deg: float = 30.0, high_deg: float = 50.0) -> float:
-        """Median backscatter over the reference angles."""
-        lo = int(low_deg / self.angle_step)
-        hi = int(high_deg / self.angle_step)
-        return self._median(self.counts[lo:hi].sum(axis=0))
+        """Median backscatter over the reference angles, port and starboard together."""
+        a = np.abs(self.bin_centres())
+        sel = (a >= low_deg) & (a < high_deg)
+        return self._median(self.counts[sel].sum(axis=0))
 
     def flatten(self, angle_deg: np.ndarray, backscatter_db: np.ndarray) -> np.ndarray:
         """Backscatter with the angular response removed (NaN where it is unknown)."""
@@ -80,9 +90,7 @@ class AngularResponse:
         n = self.counts.sum(axis=1)
         keep = n > 0
         return {
-            "angle_deg": [
-                round(float(a), 2) for a in (np.arange(self.n_angles) * self.angle_step)[keep]
-            ],
+            "angle_deg_port_negative": [round(float(a), 2) for a in self.bin_centres()[keep]],
             "median_db": [None if np.isnan(m) else round(float(m), 2) for m in med[keep]],
             "soundings": [int(c) for c in n[keep]],
             "reference_db": _round(self.reference_db()),

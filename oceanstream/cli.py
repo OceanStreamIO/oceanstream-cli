@@ -2409,6 +2409,7 @@ if typer:
         tile_size: int = typer.Option(1000, help="Grid tile size in cells."),
         epsg: Optional[int] = typer.Option(None, help="Projected CRS of the grids; default the UTM zone of the data, or the one already in --output-dir."),
         mosaic: bool = typer.Option(False, "--mosaic", help="Combine the day grids already in --output-dir into grids/campaign instead of reading files."),
+        regrid: bool = typer.Option(False, "--regrid", help="Grid the soundings already in --output-dir/soundings again (all days, or --day), without the .all files."),
         quicklook: bool = typer.Option(True, "--quicklook/--no-quicklook", help="Write greyscale PNG quick-looks of depth and backscatter."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
@@ -2429,6 +2430,7 @@ if typer:
                 epsg=epsg,
                 quicklook=quicklook,
                 mosaic=mosaic,
+                regrid=regrid,
                 verbose=verbose,
                 dry_run=dry_run,
             )

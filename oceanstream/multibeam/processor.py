@@ -16,6 +16,7 @@ with the sound speed applied at sea; there is no tide reduction.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -126,7 +127,6 @@ class _DayWriter:
             ("quality_factor", pa.uint8()),
         ], metadata={"crs": f"EPSG:{epsg}", "depth_reference": DEPTH_REFERENCE})
         self.writer = pq.ParquetWriter(self.tmp, self.schema, compression="zstd")
-        self.response = AngularResponse()
         self.pings = 0
         self.soundings = 0
         self.t0: np.datetime64 | None = None
@@ -143,7 +143,6 @@ class _DayWriter:
             pa.array(b.beam_angle_deg), pa.array(b.quality_factor),
         ]
         self.writer.write_table(pa.Table.from_arrays(cols, schema=self.schema))
-        self.response.add(b.beam_angle_deg, b.backscatter_db)
         self.pings += int(np.unique(b.ping_time).size)
         self.soundings += len(b)
         lo, hi = b.ping_time.min(), b.ping_time.max()
@@ -153,6 +152,11 @@ class _DayWriter:
     def close(self) -> None:
         self.writer.close()
         self.tmp.replace(self.path)
+
+    def meta(self, files: Sequence[Path]) -> dict[str, Any]:
+        return {"files": [p.name for p in files], "pings": self.pings,
+                "soundings": self.soundings, "time_start": str(self.t0),
+                "time_end": str(self.t1)}
 
 
 def _grid_one(
@@ -178,7 +182,7 @@ def _grid_one(
     bs = np.concatenate(bs_cells) if bs_cells else np.empty(0)
     name = scope.rsplit("/", 1)[-1]
     if quicklook and n_tiles:
-        write_quicklooks(grid_dir, output_dir / "quicklooks" / name, name)
+        write_quicklooks(grid_dir, output_dir / "quicklooks" / name, name, spec)
     return {
         "tiles": n_tiles,
         "cells_with_data": int(depth.size),
@@ -242,20 +246,57 @@ def process_files(  # noqa: PLR0913
     for day, w in sorted(writers.items()):
         w.close()
         log(f"{day}: {w.pings} pings, {w.soundings} soundings; gridding")
-        summaries.append(_grid_day(output_dir, day, w, spec, files=files, quicklook=quicklook))
+        summaries.append(_grid_day(output_dir, day, w.path, spec, meta=w.meta(files),
+                                   quicklook=quicklook))
     return summaries
 
 
+def regrid_days(output_dir: Path, *, days: Sequence[str] | None = None,
+                quicklook: bool = True, log: Log = _quiet) -> list[dict[str, Any]]:
+    """Grid the soundings already in ``output_dir/soundings`` again, without the raw files.
+
+    For a change of the backscatter correction or the gridding; the CRS, cell size and
+    tile size stay those of ``grid.json``. File, ping and time details are carried over
+    from the day's existing summary.
+    """
+    output_dir = Path(output_dir)
+    spec = _load_spec(output_dir)
+    if spec is None:
+        raise FileNotFoundError(f"No grid.json in {output_dir}; process the .all files first.")
+    paths = sorted((output_dir / "soundings").glob("*.parquet"))
+    if days:
+        paths = [p for p in paths if p.stem in set(days)]
+    if not paths:
+        raise FileNotFoundError(
+            f"No soundings/<day>.parquet in {output_dir} for {days or 'any day'}."
+        )
+    out = []
+    for p in paths:
+        old = output_dir / "summaries" / f"{p.stem}.json"
+        prev = json.loads(old.read_text()) if old.exists() else {}
+        meta = {k: prev.get(k) for k in ("files", "pings", "time_start", "time_end")}
+        meta["soundings"] = pq.ParquetFile(p).metadata.num_rows
+        log(f"{p.stem}: regridding {meta['soundings']} soundings")
+        out.append(_grid_day(output_dir, p.stem, p, spec, meta=meta, quicklook=quicklook))
+    return out
+
+
 def _grid_day(  # noqa: PLR0913
-    output_dir: Path, day: str, w: _DayWriter, spec: GridSpec, *,
-    files: Sequence[Path], quicklook: bool,
+    output_dir: Path, day: str, soundings: Path, spec: GridSpec, *,
+    meta: dict[str, Any], quicklook: bool,
 ) -> dict[str, Any]:
+    """Grid one day's soundings: angular response first, then the grid, in batches."""
+    pf = pq.ParquetFile(soundings)
+    response = AngularResponse()
+    for rb in pf.iter_batches(batch_size=BATCH_ROWS, columns=["beam_angle_deg", "backscatter_db"]):
+        response.add(rb.column("beam_angle_deg").to_numpy(zero_copy_only=False),
+                     rb.column("backscatter_db").to_numpy(zero_copy_only=False))
     acc = GridAccumulator(spec)
     depth_sample, bs_sample = [], []
     columns = ["easting", "northing", "depth_m", "backscatter_db", "beam_angle_deg"]
-    for rb in pq.ParquetFile(w.path).iter_batches(batch_size=BATCH_ROWS, columns=columns):
+    for rb in pf.iter_batches(batch_size=BATCH_ROWS, columns=columns):
         col = {c: rb.column(c).to_numpy(zero_copy_only=False) for c in columns}
-        bs_flat = w.response.flatten(col["beam_angle_deg"], col["backscatter_db"])
+        bs_flat = response.flatten(col["beam_angle_deg"], col["backscatter_db"])
         acc.add(col["easting"], col["northing"], col["depth_m"], bs_flat)
         depth_sample.append(col["depth_m"][::SAMPLE_STEP])
         bs_sample.append(col["backscatter_db"][::SAMPLE_STEP])
@@ -265,12 +306,9 @@ def _grid_day(  # noqa: PLR0913
     summary = {
         "day": day,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
-        "software": {"themachinethatgoesping": library_version()},
-        "files": [p.name for p in files],
-        "pings": w.pings,
-        "soundings": w.soundings,
-        "time_start": str(w.t0),
-        "time_end": str(w.t1),
+        "software": {"themachinethatgoesping": library_version(),
+                     "oceanstream_revision": os.environ.get("OCEANSTREAM_REVISION")},
+        **meta,
         "epsg": spec.epsg,
         "resolution_m": spec.resolution,
         "tile_px": spec.tile_px,
@@ -278,7 +316,7 @@ def _grid_day(  # noqa: PLR0913
         "sounding_depth_m_every_20th": _percentiles(depth.astype(np.float64), (1, 50, 99)),
         "sounding_backscatter_db_every_20th": _percentiles(bs_raw.astype(np.float64),
                                                            (5, 50, 95)),
-        "angular_response": w.response.to_dict(),
+        "angular_response": response.to_dict(),
         **stats,
     }
     _write_json(output_dir / "summaries" / f"{day}.json", summary)
@@ -313,6 +351,10 @@ def build_mosaic(output_dir: Path, *, quicklook: bool = True,
             yield ti, tj, g
 
     stats = _grid_one(output_dir, "campaign", spec, tiles(), quicklook=quicklook)
+    if quicklook:
+        # Redraw the days too, so they follow the current quick-look layout.
+        for d in day_dirs:
+            write_quicklooks(d, output_dir / "quicklooks" / d.name, d.name, spec)
     summary = {
         "scope": "campaign",
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -339,11 +381,20 @@ def process(  # noqa: PLR0913
     epsg: int | None = None,
     quicklook: bool = True,
     mosaic: bool = False,
+    regrid: bool = False,
     verbose: bool = False,
     dry_run: bool = False,
 ) -> None:
-    """CLI entry: process the .all files of ``input_dir``, or build the campaign mosaic."""
+    """CLI entry: process .all files, regrid stored soundings, or build the mosaic."""
     log: Log = (lambda m: print(f"[multibeam] {m}", flush=True)) if verbose else _quiet
+    if regrid:
+        if dry_run:
+            print("[multibeam] Dry Run Summary: would regrid the soundings in "
+                  f"{output_dir}/soundings for {', '.join(days) if days else 'every day'}")
+            return
+        for s in regrid_days(output_dir, days=days, quicklook=quicklook, log=log):
+            print(f"[multibeam] {s['day']}: regridded, {s['area_km2']} km2 in {s['tiles']} tiles")
+        return
     if mosaic:
         if dry_run:
             print("[multibeam] Dry Run Summary: would combine the day grids in "

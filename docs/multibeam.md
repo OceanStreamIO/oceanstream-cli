@@ -22,6 +22,8 @@ oceanstream process multibeam --output-dir out/NF2104 --mosaic
 - `--day` keeps only pings of that UTC day; repeat it for several days. Without it, every day in the files is processed.
 - `--resolution` (default 1 m) and `--tile-size` (default 1000 cells) set the grid; `--epsg` its CRS, by default the UTM zone of the data. The first run writes them to `grid.json`, and later runs into the same output directory must match.
 - `--mosaic` combines the day grids already in `--output-dir` into `grids/campaign`.
+- `--regrid` grids the soundings already in `--output-dir/soundings` again (every day, or those given with `--day`), without the `.all` files, for example after a change to the backscatter correction. The grid definition stays that of `grid.json`.
+- Summaries record the oceanstream revision when the environment variable `OCEANSTREAM_REVISION` is set, as the EDITO Job does.
 - The `.wcd` water-column files are not read yet.
 
 ## Outputs
@@ -32,7 +34,7 @@ oceanstream process multibeam --output-dir out/NF2104 --mosaic
 | `soundings/<day>.parquet` | Every valid sounding: ping time, beam, latitude, longitude, easting, northing, depth, backscatter, beam angle, quality factor (zstd Parquet; CRS in the schema metadata) |
 | `grids/days/<day>/<var>/E<easting>_N<northing>.tif` | Tiles of 1000 × 1000 cells as deflate-compressed Cloud-Optimized GeoTIFFs, named by their lower-left corner; `<var>.vrt` mosaics them |
 | `grids/campaign/...` | The same, combined over the days |
-| `quicklooks/<day or campaign>/{depth,backscatter}.png` | Greyscale quick-looks, cropped to the data |
+| `quicklooks/<day or campaign>/{depth,backscatter}-NN.png` | Greyscale quick-looks, one per patch of touching tiles (a survey box, a transit), largest first, at most 12; `--mosaic` redraws the days' too |
 | `summaries/<day or campaign>.json` | Counts, area, depth and backscatter percentiles, per-cell depth spread, the backscatter angular response and the software version |
 
 The variables are `depth` (mean in each cell), `depth_std` (standard deviation of the soundings in the cell), `backscatter` (linear mean, in dB) and `count` (soundings). In the campaign mosaic, `depth_std` also includes the differences between days.
@@ -41,7 +43,7 @@ The variables are `depth` (mean in each cell), `depth_std` (standard deviation o
 
 - **Soundings** come from each ping's XYZ88 datagram, valid detections only. Each sounding is placed from the vessel reference point's position at the ping, which the library interpolates from the position datagrams, and the heading in the XYZ88 datagram. The along- and across-track distances are rotated by the heading and applied on the WGS84 ellipsoid, then projected to the grid's CRS.
 - **Depth** is below the water line at the ping: the XYZ88 depth below the transmit transducer plus the transducer depth the datagram records. The sound speed is as applied at sea. There is no tide reduction, so depths are not on a chart datum.
-- **Backscatter** is the beam backscatter of the XYZ88 datagram. The median response per degree of beam angle over the day is removed, and the soundings are brought to the level of 30–50°. A faint stripe can remain under the ship, where the response changes fastest with angle. Seabed-image samples (the `Y` datagram) and calibration are not used.
+- **Backscatter** is the beam backscatter of the XYZ88 datagram. The median response per degree of signed beam angle over the day is removed, port and starboard separately, and the soundings are brought to the level of 30–50° on both sides. On NF2104's EM710, port read 4 dB lower than starboard at 30–50°; pooling the two sides left stripes between adjacent lines. A faint stripe can remain under the ship, where the response changes fastest with angle. Seabed-image samples (the `Y` datagram) and calibration are not used.
 
 ## Checked on
 

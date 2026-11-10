@@ -10,7 +10,12 @@ import pytest
 
 from oceanstream.multibeam.backscatter import AngularResponse
 from oceanstream.multibeam.grid import GridAccumulator, GridSpec, TileGrid, grid_points
-from oceanstream.multibeam.processor import build_mosaic, find_all_files, process_files
+from oceanstream.multibeam.processor import (
+    build_mosaic,
+    find_all_files,
+    process_files,
+    regrid_days,
+)
 from oceanstream.multibeam.soundings import (
     SoundingBatch,
     georeference,
@@ -118,6 +123,14 @@ def test_accumulator_in_batches_matches_one_pass() -> None:
             np.testing.assert_allclose(batched[key][var], a, rtol=1e-5, equal_nan=True)
 
 
+def test_tile_patches_group_touching_tiles() -> None:
+    from oceanstream.multibeam.quicklook import tile_patches  # noqa: PLC0415 - needs matplotlib
+
+    tiles = {(0, 0), (1, 1), (2, 1), (10, 10), (10, 11), (30, 0)}
+    patches = tile_patches(tiles)
+    assert patches == [[(0, 0), (1, 1), (2, 1)], [(10, 10), (10, 11)], [(30, 0)]]
+
+
 def test_angular_response_flattens_a_linear_trend() -> None:
     rng = np.random.default_rng(0)
     angle = rng.uniform(-70, 70, 200_000)
@@ -131,7 +144,17 @@ def test_angular_response_flattens_a_linear_trend() -> None:
     far = np.nanmedian(flat[np.abs(angle) > 60])
     assert abs(near - far) < 0.3
     d = ar.to_dict()
-    assert d["reference_db"] is not None and len(d["angle_deg"]) == 70
+    assert d["reference_db"] is not None and len(d["angle_deg_port_negative"]) == 140
+
+
+def test_angular_response_removes_a_port_starboard_offset() -> None:
+    rng = np.random.default_rng(1)
+    angle = rng.uniform(-60, 60, 200_000)
+    bs = -30.0 - 4.0 * (angle < 0) + rng.normal(0, 0.5, angle.size)
+    ar = AngularResponse()
+    ar.add(angle, bs)
+    flat = ar.flatten(angle, bs)
+    assert abs(np.median(flat[angle < 0]) - np.median(flat[angle > 0])) < 0.1
 
 
 def test_process_files_writes_grids_and_mosaic(tmp_path: Path) -> None:
@@ -165,6 +188,16 @@ def test_process_files_writes_grids_and_mosaic(tmp_path: Path) -> None:
     with rasterio.open(out / "grids" / "campaign" / "count.vrt") as src:
         assert src.crs.to_epsg() == 32618
         assert int(src.read(1).sum()) == 10000
+
+
+def test_regrid_days_reproduces_the_day_grid(tmp_path: Path) -> None:
+    pytest.importorskip("rasterio")
+    pytest.importorskip("pyproj")
+    out = tmp_path / "out"
+    first = process_files([], out, batches=[_batch(5000)], tile_px=200, quicklook=False)[0]
+    again = regrid_days(out, days=["2021-06-19"], quicklook=False)[0]
+    for key in ("cells_with_data", "cell_depth_m", "cell_backscatter_db", "pings", "soundings"):
+        assert again[key] == first[key]
 
 
 def test_process_files_rejects_a_different_grid(tmp_path: Path) -> None:
