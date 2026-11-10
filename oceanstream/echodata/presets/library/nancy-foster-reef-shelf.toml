@@ -3,7 +3,7 @@
 [preset]
 key = "nancy-foster-reef-shelf"
 name = "NOAA Ship Nancy Foster, reef and hard-bottom shelf, fast pings"
-status = "draft"
+status = "production"
 summary = "Impulse and attenuation filters for GPT 38, 70, 120 and 200 kHz at 0.128-0.256 ms, a ping every 0.12-0.14 s, over reefs and hard bottom in 10-35 m of water."
 description = """
 For the habitat-mapping and sanctuary cruises of NOAA Ship Nancy Foster with GPT transceivers recorded by EK80 software (2019-2022): 38 kHz at 0.256 ms and 70, 120 and 200 kHz at 0.128 ms, a ping every 0.12-0.14 s, 40-50 m of recorded range, hull-mounted transducers 3.57 m below the surface. Derived from reef-shelf-shallow, with a table for every channel.
@@ -22,17 +22,17 @@ region = "US south-east shelf: Georgia and the Carolinas"
 
 [[preset.validations]]
 cruise = "NF2205"
-days = ["2022-07-10", "2022-07-14"]
-outcome = "pending"
-notes = "EDITO test, 2026-11-09."
-reference = "https://doi.org/10.25921/2yjb-7d86"
+days = ["2022-07-08/2022-07-16"]
+outcome = "adopted"
+notes = "EDITO test 2026-11-09 on 2022-07-10 and 07-14 (inshore and offshore boxes), then all 9 days on MareNostrum 5 (job 48845890) and published, with --depth-offset 3.57 and the 2022-03-20 calibration. Seabed line on 100 % of pings every day; the attenuation filter removes 0.1-1.2 % of 38 kHz pings and under 0.5 % on the other channels. Not reviewed by the survey's authors."
+reference = "s3://oceanstream-bucket/hpc/products/NF2205/collection.json"
 
 [[preset.validations]]
 cruise = "NF2104"
-days = ["2021-06-17", "2021-06-19"]
-outcome = "pending"
-notes = "EDITO test, 2026-11-09."
-reference = "https://doi.org/10.25921/tt6p-ew65"
+days = ["2021-06-16/2021-06-28"]
+outcome = "adopted"
+notes = "EDITO test 2026-11-09 on 2021-06-17 (transit, 25-40 m of recorded range) and 06-19 (reefs off Cape Lookout), where the 6 dB attenuation threshold proved too low; then all 10 days on MareNostrum 5 (job 48846263) and published. Seabed line on 100 % of pings except 2021-06-17 (92.8 %: seabed beyond the recorded range); the attenuation filter removes 0-2.8 % of 38 kHz pings. Not reviewed by the survey's authors."
+reference = "s3://oceanstream-bucket/hpc/products/NF2104/collection.json"
 
 [echodata.denoise]
 methods = ["impulse", "attenuation"]
