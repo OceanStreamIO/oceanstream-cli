@@ -2396,12 +2396,20 @@ if typer:
     @process_app.command(
         "multibeam",
         help=(
-            "Process raw multibeam backscatter data using MB-System."
+            "Grid Kongsberg .all multibeam files into per-day soundings (Parquet), bathymetry "
+            "and backscatter tiles (COG + VRT), quick-looks and summaries; --mosaic then "
+            "combines the days. Reads the files with themachinethatgoesping (multibeam extra)."
         ),
     )
     def multibeam_command(
-        input_dir: Path = typer.Option(Path("raw_multibeam"), exists=True, file_okay=False, help="Directory with raw multibeam backscatter data."),
-        output_dir: Path = typer.Option(Path("out/multibeam"), help="Output directory for processed multibeam products."),
+        input_dir: Optional[Path] = typer.Option(None, exists=True, file_okay=False, help="Directory with Kongsberg .all files, searched recursively. Gzipped files must be unzipped first."),
+        output_dir: Path = typer.Option(Path("out/multibeam"), help="Output directory for soundings, grids, quick-looks and summaries."),
+        day: Optional[list[str]] = typer.Option(None, "--day", help="Keep only pings of this UTC day (YYYY-MM-DD); repeat for several days."),
+        resolution: float = typer.Option(1.0, help="Grid cell size in metres."),
+        tile_size: int = typer.Option(1000, help="Grid tile size in cells."),
+        epsg: Optional[int] = typer.Option(None, help="Projected CRS of the grids; default the UTM zone of the data, or the one already in --output-dir."),
+        mosaic: bool = typer.Option(False, "--mosaic", help="Combine the day grids already in --output-dir into grids/campaign instead of reading files."),
+        quicklook: bool = typer.Option(True, "--quicklook/--no-quicklook", help="Write greyscale PNG quick-looks of depth and backscatter."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
@@ -2409,14 +2417,24 @@ if typer:
         provider_obj = _provider_obj
         if provider_obj is None:
             provider_obj = get_provider("generic")
-        
-        multibeam.process(
-            provider=provider_obj,
-            input_dir=input_dir,
-            output_dir=output_dir,
-            verbose=verbose,
-            dry_run=dry_run,
-        )
+
+        try:
+            multibeam.process(
+                provider=provider_obj,
+                input_dir=input_dir,
+                output_dir=output_dir,
+                days=day or None,
+                resolution=resolution,
+                tile_px=tile_size,
+                epsg=epsg,
+                quicklook=quicklook,
+                mosaic=mosaic,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+        except (ImportError, FileNotFoundError, ValueError) as exc:
+            typer.echo(f"[multibeam] {exc}", err=True)
+            raise typer.Exit(code=2) from exc
 
     @process_app.command(
         "adcp",
