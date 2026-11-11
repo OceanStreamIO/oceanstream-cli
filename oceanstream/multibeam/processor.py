@@ -382,11 +382,55 @@ def process(  # noqa: PLR0913
     quicklook: bool = True,
     mosaic: bool = False,
     regrid: bool = False,
+    tiles: bool = False,
+    depth_colours: Sequence[str] = ("stretch",),
+    min_zoom: int = 8,
     verbose: bool = False,
     dry_run: bool = False,
 ) -> None:
-    """CLI entry: process .all files, regrid stored soundings, or build the mosaic."""
+    """CLI entry: process .all files, regrid stored soundings or build the mosaic, and
+    with ``tiles`` render the campaign mosaic's web tiles afterwards (or alone)."""
     log: Log = (lambda m: print(f"[multibeam] {m}", flush=True)) if verbose else _quiet
+    if tiles and input_dir is None and not (mosaic or regrid):
+        _tiles(output_dir, depth_colours, min_zoom, dry_run, log)
+        return
+    _process(provider, input_dir, output_dir, days=days, resolution=resolution,
+             tile_px=tile_px, epsg=epsg, quicklook=quicklook, mosaic=mosaic, regrid=regrid,
+             dry_run=dry_run, log=log)
+    if tiles:
+        _tiles(output_dir, depth_colours, min_zoom, dry_run, log)
+
+
+def _tiles(output_dir: Path, depth_colours: Sequence[str], min_zoom: int, dry_run: bool,
+           log: Log) -> None:
+    if dry_run:
+        print(f"[multibeam] Dry Run Summary: would render web tiles of {output_dir}"
+              f"/grids/campaign (depth {', '.join(depth_colours)}, backscatter) from "
+              f"z{min_zoom} into {output_dir}/tiles")
+        return
+    from .tiles import render_tiles  # noqa: PLC0415 - needs pmtiles and scipy
+
+    for t in render_tiles(output_dir, depth_colours=depth_colours, min_zoom=min_zoom, log=log):
+        zooms = sorted(int(z) for z in t["tiles_per_zoom"])
+        print(f"[multibeam] {Path(t['path']).name}: {t['tiles']} tiles, z{zooms[0]}-{zooms[-1]}, "
+              f"{t['bytes'] / 1e6:.1f} MB")
+
+
+def _process(  # noqa: PLR0913
+    provider: ProviderBase,
+    input_dir: Path | None,
+    output_dir: Path,
+    *,
+    days: Sequence[str] | None,
+    resolution: float,
+    tile_px: int,
+    epsg: int | None,
+    quicklook: bool,
+    mosaic: bool,
+    regrid: bool,
+    dry_run: bool,
+    log: Log,
+) -> None:
     if regrid:
         if dry_run:
             print("[multibeam] Dry Run Summary: would regrid the soundings in "
@@ -405,7 +449,7 @@ def process(  # noqa: PLR0913
               f"-> {output_dir}/grids/campaign")
         return
     if input_dir is None:
-        raise ValueError("--input-dir is required unless --mosaic is given.")
+        raise ValueError("--input-dir is required unless --mosaic, --regrid or --tiles is given.")
     files = find_all_files(input_dir)
     if dry_run:
         print("[multibeam] Dry Run Summary")

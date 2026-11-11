@@ -2398,7 +2398,8 @@ if typer:
         help=(
             "Grid Kongsberg .all multibeam files into per-day soundings (Parquet), bathymetry "
             "and backscatter tiles (COG + VRT), quick-looks and summaries; --mosaic then "
-            "combines the days. Reads the files with themachinethatgoesping (multibeam extra)."
+            "combines the days and --tiles renders the mosaic as web map tiles (PMTiles). "
+            "Reads the files with themachinethatgoesping (multibeam extra)."
         ),
     )
     def multibeam_command(
@@ -2411,6 +2412,9 @@ if typer:
         mosaic: bool = typer.Option(False, "--mosaic", help="Combine the day grids already in --output-dir into grids/campaign instead of reading files."),
         regrid: bool = typer.Option(False, "--regrid", help="Grid the soundings already in --output-dir/soundings again (all days, or --day), without the .all files."),
         quicklook: bool = typer.Option(True, "--quicklook/--no-quicklook", help="Write greyscale PNG quick-looks of depth and backscatter."),
+        tiles: bool = typer.Option(False, "--tiles", help="Render the campaign mosaic as web map tiles (PMTiles of WebP) into --output-dir/tiles: hillshaded depth and greyscale backscatter. Alone, or after --mosaic."),
+        depth_colours: Optional[list[str]] = typer.Option(None, "--depth-colours", help="Depth tile colours: 'stretch' (the basemap's sea ramp spread over the survey's depth range, default) or 'basemap' (the ramp as it is); repeat for both."),
+        min_zoom: int = typer.Option(8, help="Lowest zoom level of the web tiles; the highest is the grid's own resolution."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:
@@ -2431,6 +2435,9 @@ if typer:
                 quicklook=quicklook,
                 mosaic=mosaic,
                 regrid=regrid,
+                tiles=tiles,
+                depth_colours=depth_colours or ("stretch",),
+                min_zoom=min_zoom,
                 verbose=verbose,
                 dry_run=dry_run,
             )

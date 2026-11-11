@@ -129,6 +129,8 @@ erddapy = { version = ">=2.0", optional = true }
 # Pinned: its API is still 0.x. Its own dependencies include PySide6 for its viewers;
 # EDITO jobs install it with --no-deps to leave them out (see docs/multibeam.md).
 themachinethatgoesping = { version = "0.37.1", python = ">=3.12", optional = true }
+# Writes the web map tiles of the multibeam grids (`process multibeam --tiles`).
+pmtiles = { version = ">=3.4", optional = true }
 
 # Coastal optics (Lee inversion, QAA v6, Stumpf SDB, empirical attenuation).
 # rasterio/pyproj bring the geospatial IO; scipy is needed for regression fits;
@@ -157,7 +159,7 @@ echodata = [
 ]
 echodata-viz = ["matplotlib", "hvplot", "datashader", "holoviews", "panel", "bokeh"]
 
-multibeam = ["themachinethatgoesping", "numpy", "rasterio", "pyproj", "matplotlib"]
+multibeam = ["themachinethatgoesping", "numpy", "scipy", "rasterio", "pyproj", "matplotlib", "pmtiles"]
 adcp = ["dolfyn", "scipy", "setuptools", "xarray"]
 
 # Coastal optics (Lee inversion, QAA v6, Stumpf SDB, empirical attenuation).
