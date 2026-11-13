@@ -8,21 +8,262 @@ Ported from _echodata-legacy-code/saildrone-echodata-processing/process/plot.py
 
 from __future__ import annotations
 
-from oceanstream.echodata.products import open_product_uri
+import json
 import logging
 import os
 import re
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
+
+from oceanstream.echodata.products import open_product_uri
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
     import xarray as xr
 
 logger = logging.getLogger(__name__)
+
+
+SQUEEZE_GAPS_S = 600.0
+"""Recording gaps longer than this many seconds are drawn as a narrow hatched band."""
+
+ECHOGRAM_FACECOLOR = "#f9f9f9"
+"""Behind the data: what a cell without a value shows."""
+
+
+@dataclass
+class TimeAxis:
+    """Ping time to x, in seconds along the drawn axis, with long recording gaps squeezed.
+
+    *runs* hold ``(t0_ns, t1_ns, x0, x1)`` for each stretch drawn to scale, *gaps* the
+    same for each squeezed gap between two runs, whose band is narrower than the gap.
+    Without squeezing there is one run and x is seconds since the first ping.
+    """
+
+    runs: list[tuple[int, int, float, float]]
+    gaps: list[tuple[int, int, float, float]] = field(default_factory=list)
+
+    @property
+    def span_s(self) -> float:
+        return max(piece[3] for piece in self.runs + self.gaps)
+
+    def _knots(self) -> tuple[np.ndarray, np.ndarray]:
+        pieces = sorted(self.runs + self.gaps, key=lambda piece: (piece[0], piece[2]))
+        t = np.array([v for piece in pieces for v in piece[:2]], dtype=float)
+        x = np.array([v for piece in pieces for v in piece[2:]], dtype=float)
+        return t, x
+
+    def to_x(self, times: object) -> np.ndarray:
+        """x for each time; inside a squeezed gap, x moves evenly across its band."""
+        t = np.asarray(times, dtype="datetime64[ns]").astype(np.int64).astype(float)
+        kt, kx = self._knots()
+        return np.interp(t, kt, kx)
+
+    def to_time(self, x: object) -> np.ndarray:
+        kt, kx = self._knots()
+        t = np.interp(np.asarray(x, dtype=float), kx, kt)
+        return t.astype(np.int64).astype("datetime64[ns]")
+
+
+def time_axis(
+    times: object,
+    squeeze_s: Optional[float] = SQUEEZE_GAPS_S,
+    band_frac: float = 0.015,
+    min_band_s: float = 60.0,
+) -> TimeAxis:
+    """The x-axis for pings at *times*: gaps longer than *squeeze_s* drawn narrow.
+
+    Each squeezed gap gets a band of *band_frac* of the recorded time (at least
+    *min_band_s*, never more than the gap). On NF2104 2021-06-17 the echosounder
+    recorded 10.5 hours in three stretches, and the 8.5 hours between them took 37 %
+    of the panel's width as blank space. With *squeeze_s* None nothing is squeezed.
+    """
+    t = np.sort(np.asarray(times, dtype="datetime64[ns]").astype(np.int64))
+    if t.size == 0:
+        return TimeAxis(runs=[(0, 0, 0.0, 0.0)])
+    steps = np.diff(t)
+    breaks = (
+        np.flatnonzero(steps > squeeze_s * 1e9) if squeeze_s is not None else np.array([], int)
+    )
+    starts = np.r_[0, breaks + 1]
+    ends = np.r_[breaks, t.size - 1]
+    recorded_s = float(sum(t[e] - t[s] for s, e in zip(starts, ends))) / 1e9
+    band_s = max(min_band_s, band_frac * recorded_s)
+    runs: list[tuple[int, int, float, float]] = []
+    gaps: list[tuple[int, int, float, float]] = []
+    x = 0.0
+    for k, (s, e) in enumerate(zip(starts, ends)):
+        length = float(t[e] - t[s]) / 1e9
+        runs.append((int(t[s]), int(t[e]), x, x + length))
+        x += length
+        if k < breaks.size:
+            g0, g1 = int(t[e]), int(t[starts[k + 1]])
+            width = min(band_s, (g1 - g0) / 1e9)
+            gaps.append((g0, g1, x, x + width))
+            x += width
+    return TimeAxis(runs=runs, gaps=gaps)
+
+
+def time_ticks(axis: TimeAxis, max_ticks: int = 16) -> tuple[list[float], list[str]]:
+    """Tick positions and HH:MM labels at round times inside the drawn runs."""
+    import pandas as pd
+
+    span = max(axis.span_s, 1.0)
+    step_min = next(
+        (m for m in (1, 2, 5, 10, 15, 30, 60, 120, 180, 240, 360) if span / (m * 60) <= max_ticks),
+        720,
+    )
+    step = int(step_min * 60 * 1e9)
+    xs: list[float] = []
+    labels: list[str] = []
+    for t0, t1, _, _ in axis.runs:
+        for tt in range(-(-t0 // step) * step, t1 + 1, step):
+            x = float(axis.to_x(np.array([tt], dtype="datetime64[ns]"))[0])
+            if xs and x - xs[-1] < 0.5 * step_min * 60:
+                continue  # just after a squeezed gap, too close to the last tick
+            xs.append(x)
+            labels.append(pd.Timestamp(tt).strftime("%H:%M"))
+    return xs, labels
+
+
+def _gap_label(seconds: float) -> str:
+    hours, rest = divmod(int(round(seconds / 60)), 60)
+    return f"no data {hours} h {rest:02d} min" if hours else f"no data {rest} min"
+
+
+def draw_gaps(ax: "plt.Axes", axis: TimeAxis) -> None:
+    """Hatch each squeezed gap's band and write how long the gap was."""
+    from matplotlib.transforms import blended_transform_factory
+
+    trans = blended_transform_factory(ax.transData, ax.transAxes)
+    for g0, g1, x0, x1 in axis.gaps:
+        ax.axvspan(x0, x1, facecolor="#dddddd", edgecolor="#777777", hatch="///",
+                   linewidth=0, zorder=3)
+        for x in (x0, x1):
+            ax.axvline(x, color="#444444", lw=0.9, zorder=3)
+        ax.text((x0 + x1) / 2, 0.5, _gap_label((g1 - g0) / 1e9), transform=trans,
+                rotation=90, ha="center", va="center", fontsize=13, color="#222222",
+                bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none",
+                          alpha=0.9), zorder=6)
+
+
+def transducer_offset(ds: "xr.Dataset") -> float:
+    """Depth minus range at the first sample: the transducer's depth below the surface.
+
+    The seabed line is stored as range below the transducer; echograms plot depth.
+    0 when the dataset has no depth or no range.
+    """
+    if not {"depth", "echo_range"} <= set(getattr(ds, "data_vars", {})):
+        return 0.0
+    depth, rng = ds["depth"], ds["echo_range"]
+    for name in ("channel",):
+        if name in depth.dims:
+            depth, rng = depth.isel({name: 0}), rng.isel({name: 0})
+    vertical = next((d for d in depth.dims if d != "ping_time"), None)
+    if vertical is None:
+        return 0.0
+    sel: dict = {vertical: slice(0, 4)}
+    if "ping_time" in depth.dims:
+        step = max(1, depth.sizes["ping_time"] // 64)
+        sel["ping_time"] = slice(None, None, step)
+    diff = (np.asarray(depth.isel(sel).values, dtype=float)
+            - np.asarray(rng.isel(sel).values, dtype=float))
+    return float(np.nanmedian(diff)) if np.isfinite(diff).any() else 0.0
+
+
+def draw_seabed(ax: "plt.Axes", seabed_depth: "xr.DataArray", axis: TimeAxis) -> bool:
+    """Draw the seabed line (depth, per ping) as a black line with a white edge.
+
+    Black with a white edge stands out by lightness on every part of the colour scale,
+    not by hue. The line breaks where pings are more than a minute apart.
+    """
+    import matplotlib.patheffects as pe
+
+    times = np.asarray(seabed_depth["ping_time"].values, dtype="datetime64[ns]")
+    depth = np.asarray(seabed_depth.values, dtype=float)
+    if not np.isfinite(depth).any():
+        return False
+    step = max(1, times.size // 20000)
+    times, depth = times[::step], depth[::step]
+    apart = np.flatnonzero(np.diff(times.astype(np.int64)) > 60e9)
+    x = np.insert(axis.to_x(times), apart + 1, np.nan)
+    y = np.insert(depth, apart + 1, np.nan)
+    ax.plot(x, y, color="black", lw=1.4, zorder=4, label="Seabed line",
+            path_effects=[pe.Stroke(linewidth=3.6, foreground="white"), pe.Normal()])
+    return True
+
+
+def write_echogram_sidecar(
+    png_path: Path,
+    ax: "plt.Axes",
+    axis: TimeAxis,
+    *,
+    vertical: str,
+    cmap: object,
+    vmin: float,
+    vmax: float,
+    variable: str,
+    seabed_line: bool,
+) -> Path:
+    """Write ``<png>.json``: where the plot sits in the PNG and what its axes and colours mean.
+
+    A viewer maps a pixel to a time through ``time.runs`` and ``time.gaps`` (the x-axis is
+    not linear in time once gaps are squeezed), to depth linearly between
+    ``vertical.top`` and ``vertical.bottom``, and to Sv by finding the pixel's colour in
+    ``colour.lut``: entry *i* of *N* holds values from ``vmin + i * (vmax - vmin) / N``,
+    the first also everything below *vmin* and the last everything above *vmax*.
+    """
+    import matplotlib as mpl
+    from PIL import Image
+
+    with Image.open(png_path) as im:
+        width, height = im.size
+    pos = ax.get_position()
+    left, right = pos.x0 * width, pos.x1 * width
+    top, bottom = (1 - pos.y1) * height, (1 - pos.y0) * height
+    x_lo, x_hi = ax.get_xlim()
+
+    def px(x: float) -> float:
+        return round(left + (x - x_lo) / (x_hi - x_lo) * (right - left), 2)
+
+    def iso(ns: int) -> str:
+        return str(np.datetime_as_string(np.datetime64(int(ns), "ns"), unit="ms")) + "Z"
+
+    y_bottom, y_top = ax.get_ylim()
+    cm = mpl.colormaps[cmap] if isinstance(cmap, str) else cmap
+    lut = np.round(np.asarray(cm(np.arange(cm.N)))[:, :3] * 255).astype(int)
+    doc = {
+        "format": "oceanstream-echogram",
+        "version": 1,
+        "image": {"width": width, "height": height},
+        "plot_area": {"left": round(left, 2), "top": round(top, 2),
+                      "right": round(right, 2), "bottom": round(bottom, 2)},
+        "time": {
+            "runs": [{"x0": px(x0), "x1": px(x1), "t0": iso(t0), "t1": iso(t1)}
+                     for t0, t1, x0, x1 in axis.runs],
+            "gaps": [{"x0": px(x0), "x1": px(x1), "t0": iso(t0), "t1": iso(t1)}
+                     for t0, t1, x0, x1 in axis.gaps],
+        },
+        "vertical": {"name": vertical, "units": "m", "top": float(y_top),
+                     "bottom": float(y_bottom)},
+        "colour": {
+            "variable": variable,
+            "units": "dB re 1 m-1",
+            "vmin": float(vmin),
+            "vmax": float(vmax),
+            "colormap": getattr(cm, "name", str(cmap)),
+            "lut": [f"#{r:02x}{g:02x}{b:02x}" for r, g, b in lut],
+            "background": ECHOGRAM_FACECOLOR,
+        },
+        "seabed_line": bool(seabed_line),
+    }
+    out = Path(png_path).with_suffix(".json")
+    out.write_text(json.dumps(doc, separators=(",", ":")))
+    return out
 
 
 def _scratch_root() -> str:
@@ -122,6 +363,8 @@ def plot_sv_data(
     vmax: float = -50,
     dpi: int = 180,
     qc_windows: Optional[list] = None,
+    seabed_depth: Optional["xr.DataArray"] = None,
+    squeeze_gaps_s: Optional[float] = SQUEEZE_GAPS_S,
 ) -> list[Path]:
     """
     Plot Sv data for each channel and save the echogram plots.
@@ -138,9 +381,13 @@ def plot_sv_data(
         vmin: Minimum Sv value for color scale
         vmax: Maximum Sv value for color scale
         dpi: Output image resolution
-        
+        seabed_depth: Seabed line as depth below the surface per ping, drawn on every
+            panel whose vertical axis is depth (see ``plot_sv_channel``)
+        squeeze_gaps_s: Recording gaps longer than this are drawn narrow; None keeps
+            the time axis linear
+
     Returns:
-        List of file paths for the saved echograms
+        List of file paths for the saved echograms (each with a ``.json`` sidecar)
     """
     import matplotlib
     matplotlib.use('Agg')  # Non-interactive backend
@@ -164,6 +411,8 @@ def plot_sv_data(
                 vmax=vmax,
                 dpi=dpi,
                 qc_windows=qc_windows,
+                seabed_depth=seabed_depth,
+                squeeze_gaps_s=squeeze_gaps_s,
             )
             echogram_files.append(path)
         except Exception as e:
@@ -186,6 +435,8 @@ def plot_sv_data(
                     vmax=vmax,
                     dpi=dpi,
                     qc_windows=qc_windows,
+                    seabed_depth=seabed_depth,
+                    squeeze_gaps_s=squeeze_gaps_s,
                 )
                 echogram_files.append(path)
             except Exception as e:
@@ -214,10 +465,13 @@ def plot_sv_channel(
     min_aspect_short: float = 1.8,
     target_aspect_24h: float = 3.2,
     qc_windows: Optional[list] = None,
+    seabed_depth: Optional["xr.DataArray"] = None,
+    squeeze_gaps_s: Optional[float] = SQUEEZE_GAPS_S,
+    sidecar: bool = True,
 ) -> Path:
     """
     Plot and save echogram for a single channel.
-    
+
     Args:
         ds_Sv: xarray Dataset containing Sv data
         channel: Channel index to plot
@@ -240,21 +494,37 @@ def plot_sv_channel(
         qc_windows: Optional list of QCWindow objects to overlay on the plot
             (already filtered for this channel/category). See
             ``oceanstream.echodata.plot.qc`` for schema and helpers.
+        seabed_depth: Seabed line as depth below the surface, per ping. Drawn when the
+            panel's vertical axis is depth; the stored line is range below the
+            transducer, so add :func:`transducer_offset` first.
+        squeeze_gaps_s: Recording gaps longer than this many seconds are drawn as a
+            narrow hatched band labelled with their length (:func:`time_axis`); None
+            keeps the time axis linear.
+        sidecar: Also write ``<png>.json`` (:func:`write_echogram_sidecar`), which a
+            viewer needs to read times, depths and Sv off the image.
 
     Returns:
         Path to the saved echogram file
     """
     import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
+    import matplotlib.ticker as mticker
     import pandas as pd
-    
-    # Prepare data
+
     da_Sv, meta = prepare_channel_da(ds_Sv, channel, var_name=plot_var)
-    
-    # Calculate figure dimensions based on time span
-    t = pd.to_datetime(da_Sv[meta["xdim"]].values)
-    hours = max(1.0, (t[-1] - t[0]).total_seconds() / 3600.0)
-    
+
+    # The x-axis: seconds along the drawn axis, long recording gaps squeezed.
+    xdim = meta["xdim"]
+    recorded = da_Sv[xdim].values
+    if xdim in da_Sv.dims and da_Sv.sizes[xdim]:
+        other = [d for d in da_Sv.dims if d != xdim]
+        recorded = da_Sv[xdim].values[np.isfinite(da_Sv.values).any(
+            axis=tuple(i for i, d in enumerate(da_Sv.dims) if d in other))]
+        if recorded.size == 0:
+            recorded = da_Sv[xdim].values
+    axis = time_axis(recorded, squeeze_gaps_s)
+    da_Sv = da_Sv.assign_coords(plot_x=(xdim, axis.to_x(da_Sv[xdim].values)))
+
+    hours = max(1.0, axis.span_s / 3600.0)
     time_width = hours * inches_per_hour
     if hours <= 1.0:
         aspect_target = min_aspect_short
@@ -263,15 +533,14 @@ def plot_sv_channel(
     else:
         w0, w1 = min_aspect_short, target_aspect_24h
         aspect_target = w0 + (w1 - w0) * ((hours - 1.0) / (24.0 - 1.0))
-    
+
     width_in = max(time_width, min_width, aspect_target * height_in)
     width_in = min(width_in, max_width)
-    
+
     fig, ax = plt.subplots(figsize=(width_in, height_in))
-    
-    # Plot echogram
+
     da_Sv.T.plot.pcolormesh(
-        x=meta["xdim"],
+        x="plot_x",
         y=meta["ydim"],
         shading="auto",
         yincrease=False,
@@ -283,47 +552,63 @@ def plot_sv_channel(
         ax=ax,
         rasterized=True,
     )
-    
-    # Add hour grid lines if requested
-    if hour_grid and meta["xdim"] == "ping_time":
-        start = t[0].floor("1H")
-        end = t[-1].ceil("1H")
-        for dt in pd.date_range(start, end, freq="1H"):
-            ax.axvline(dt, color="k", lw=0.6, alpha=0.18, zorder=3)
+    mesh = ax.collections[0]
+    ax.set_xlim(0.0, max(axis.span_s, 1.0))
+    draw_gaps(ax, axis)
 
-    # Overlay QC flag bands (e.g. weather-induced dropouts, cross-talk bursts)
-    if qc_windows and meta["xdim"] == "ping_time":
+    if hour_grid:
+        for t0, t1, _, _ in axis.runs:
+            for hour in pd.date_range(pd.Timestamp(t0).ceil("1h"), pd.Timestamp(t1), freq="1h"):
+                ax.axvline(float(axis.to_x(np.array([hour.value], "datetime64[ns]"))[0]),
+                           color="k", lw=0.6, alpha=0.18, zorder=3)
+
+    if qc_windows and xdim == "ping_time":
         try:
             from oceanstream.echodata.plot.qc import draw_qc_overlay
+
+            first, last = pd.Timestamp(recorded.min()), pd.Timestamp(recorded.max())
             n = draw_qc_overlay(
-                ax, qc_windows,
-                ping_time_min=t[0], ping_time_max=t[-1],
+                ax, qc_windows, ping_time_min=first, ping_time_max=last,
+                to_x=lambda when: float(axis.to_x(np.array([pd.Timestamp(when).value],
+                                                           "datetime64[ns]"))[0]),
             )
             if n > 0:
                 logger.info("Drew %d QC flag(s) on echogram", n)
         except Exception as exc:
             logger.warning("QC overlay failed: %s", exc)
 
+    seabed_drawn = False
+    if seabed_depth is not None and meta["ydim"] == "depth":
+        try:
+            seabed_drawn = draw_seabed(ax, seabed_depth, axis)
+        except Exception as exc:
+            logger.warning("Seabed line overlay failed: %s", exc)
+    if seabed_drawn:
+        ax.legend(loc="lower right", fontsize=13, framealpha=0.92)
+
     # Styling
-    ax.set_facecolor("#f9f9f9")
+    ax.set_facecolor(ECHOGRAM_FACECOLOR)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_linewidth(1.0)
-    
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=18))
-    ax.xaxis.set_major_formatter(meta["x_formatter"])
-    
-    # Colorbar
+
+    ticks, labels = time_ticks(axis)
+    ax.xaxis.set_major_locator(mticker.FixedLocator(ticks))
+    ax.xaxis.set_major_formatter(mticker.FixedFormatter(labels))
+
     cbar_kw = dict(pad=0.08, shrink=0.8)
     if colorbar_orientation == "horizontal":
         cbar_kw.update(orientation="horizontal", aspect=40)
     else:
         cbar_kw.update(fraction=0.04, pad=0.02)
-    cbar = plt.colorbar(ax.collections[0], **cbar_kw)
+    cbar = plt.colorbar(mesh, **cbar_kw)
     cbar.set_label("Volume backscattering strength (Sv re 1 m⁻¹)", fontsize=12)
     cbar.ax.tick_params(labelsize=10)
-    
-    # Labels and title
-    ax.set_xlabel(meta["x_label"], fontsize=16, labelpad=14)
+
+    x_label = meta["x_label"]
+    if axis.gaps:
+        minutes = int(round((squeeze_gaps_s or 0) / 60))
+        x_label += f" — gaps of more than {minutes} min drawn narrow"
+    ax.set_xlabel(x_label, fontsize=16, labelpad=14)
     ax.set_ylabel(
         "Depth [m]" if meta["ydim"] != "range_sample" else "Sample #",
         fontsize=16,
@@ -339,14 +624,21 @@ def plot_sv_channel(
     )
     ax.tick_params(which="major", length=6, width=1, labelsize=11)
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
-    
+
     fig.tight_layout(pad=2)
-    
-    # Save figure
+
     out_path = Path(echogram_path) / f"{file_base_name}_{meta['safe_label']}.png"
     fig.savefig(out_path, dpi=dpi)
+    if sidecar:
+        try:
+            write_echogram_sidecar(
+                out_path, ax, axis, vertical=meta["ydim"], cmap=cmap, vmin=vmin,
+                vmax=vmax, variable=plot_var, seabed_line=seabed_drawn,
+            )
+        except Exception as exc:
+            logger.warning("Echogram sidecar failed for %s: %s", out_path.name, exc)
     plt.close(fig)
-    
+
     return out_path
 
 

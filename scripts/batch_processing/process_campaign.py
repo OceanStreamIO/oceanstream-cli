@@ -1924,6 +1924,44 @@ def _shutdown_paint_pool() -> None:
         _paint_pool = None
 
 
+def _seabed_line_for_echograms(
+    output_container: str,
+    day_key: str,
+    category: str,
+    source_zarr: str | None,
+    source_container: str,
+) -> "xr.DataArray | None":
+    """The day's seabed line as depth below the surface, for drawing on its echograms.
+
+    The masked store holds the line as range below the transducer; the echograms plot
+    depth, so the transducer's depth (from the source Sv) is added. None when the day
+    has no masked store or no line.
+    """
+    from oceanstream.echodata.plot.echogram import transducer_offset
+    from oceanstream.echodata.storage import open_sv_from_azure
+
+    try:
+        masked = open_sv_from_azure(
+            zarr_path=f"{day_key}/{day_key}--{category}--masked.zarr", container=output_container
+        )
+    except Exception as exc:
+        logger.info("  No seabed line for the %s/%s echograms: %s", day_key, category, exc)
+        return None
+    if "seabed_depth" not in masked.variables:
+        return None
+    line = masked["seabed_depth"].load()
+    offset = 0.0
+    if source_zarr:
+        try:
+            source = open_sv_from_azure(zarr_path=source_zarr, container=source_container)
+            offset = transducer_offset(source)
+        except Exception as exc:
+            logger.warning("  Transducer depth unknown (%s): seabed line drawn as range", exc)
+    logger.info("  Seabed line on the echograms: %d pings, transducer at %.2f m",
+                int(line.notnull().sum()), offset)
+    return line + offset
+
+
 def _plot_colormaps(
     ds: "xr.Dataset",
     cmap_variants: list,
@@ -1935,11 +1973,13 @@ def _plot_colormaps(
     cruise_id: str,
     qc_windows: list | None,
     label: str,
+    seabed_depth: "xr.DataArray | None" = None,
 ) -> list[str]:
     """Draw one product in each colormap and upload the panels.
 
     *file_base* and *title* map a colormap name to the file base name and the
     title template. Returns the same names ``plot_and_upload_echograms`` does.
+    Each panel's ``.json`` sidecar (axes, gaps, colour scale) goes up beside it.
     """
     import shutil
     from concurrent.futures.process import BrokenProcessPool
@@ -1959,6 +1999,7 @@ def _plot_colormaps(
                 cmap=cmap,
                 title_template=title(cmap_name),
                 qc_windows=qc_windows,
+                seabed_depth=seabed_depth,
             )
             jobs.append((cmap_name, kwargs, pool.submit(plot_sv_data, ds, **kwargs) if pool else None))
 
@@ -1979,6 +2020,11 @@ def _plot_colormaps(
                 name = Path(path).name
                 upload_file_to_blob(str(path), f"{upload_path}/{name}", output_container)
                 files.append(f"{cruise_id}/{kwargs['file_base_name']}/{name}")
+                sidecar = Path(path).with_suffix(".json")
+                if sidecar.exists():
+                    upload_file_to_blob(
+                        str(sidecar), f"{upload_path}/{sidecar.name}", output_container
+                    )
             all_files.extend(files)
             logger.info("  %s echograms [%s]: %d files", label, cmap_name, len(files))
         return all_files
@@ -2056,8 +2102,12 @@ def generate_echograms_day(
         return f"{base}--{cmap_name}" if include_cmap_suffix else base
 
     all_files = []
+    seabed = _seabed_line_for_echograms(
+        output_container, day_key, category, source_zarr, read_container
+    )
     common = dict(
-        output_container=output_container, cruise_id=cruise_id, qc_windows=qc_windows
+        output_container=output_container, cruise_id=cruise_id, qc_windows=qc_windows,
+        seabed_depth=seabed,
     )
 
     # Source Sv echograms — the pre-denoise reference panel. This is calibrated

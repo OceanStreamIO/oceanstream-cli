@@ -49,7 +49,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 if TYPE_CHECKING:
     import matplotlib.axes
@@ -176,6 +176,7 @@ def draw_qc_overlay(
     ping_time_min: Optional["pd.Timestamp"] = None,
     ping_time_max: Optional["pd.Timestamp"] = None,
     label_top: bool = True,
+    to_x: Optional[Callable[[Any], float]] = None,
 ) -> int:
     """Draw QC windows as translucent bands on an echogram.
 
@@ -195,6 +196,9 @@ def draw_qc_overlay(
         skipped; windows partially outside are clipped.
     label_top : bool
         Whether to write the flag type + cause as a caption at the top.
+    to_x : callable, optional
+        Maps a time to the axes' x value, for echograms whose x-axis is not plain
+        time (recording gaps squeezed, see ``oceanstream.echodata.plot.echogram``).
 
     Returns
     -------
@@ -221,23 +225,27 @@ def draw_qc_overlay(
             end = min(end, ping_time_max)
 
         color = _TYPE_COLORS.get(w.type, _TYPE_COLORS["flagged"])
+        x_start, x_end = (start, end) if to_x is None else (to_x(start), to_x(end))
+        x_on, x_off = (
+            (w.start_utc, w.end_utc) if to_x is None else (to_x(w.start_utc), to_x(w.end_utc))
+        )
 
         # Shaded band
         ax.axvspan(
-            start, end,
+            x_start, x_end,
             facecolor=color, alpha=0.18, zorder=4, edgecolor="none",
         )
 
         # Dashed boundary lines
-        ax.axvline(w.start_utc, color=color, lw=1.4, ls="--", alpha=0.85, zorder=5)
-        ax.axvline(w.end_utc, color=color, lw=1.4, ls="--", alpha=0.85, zorder=5)
+        ax.axvline(x_on, color=color, lw=1.4, ls="--", alpha=0.85, zorder=5)
+        ax.axvline(x_off, color=color, lw=1.4, ls="--", alpha=0.85, zorder=5)
 
         # Caption at top
         if label_top:
             label = w.type.replace("_", " ")
             if w.cause:
                 label = f"{label} — {w.cause.replace('_', ' ')}"
-            mid = start + (end - start) / 2
+            mid = start + (end - start) / 2 if to_x is None else (x_start + x_end) / 2
             ax.annotate(
                 label,
                 xy=(mid, 1.0), xycoords=("data", "axes fraction"),
