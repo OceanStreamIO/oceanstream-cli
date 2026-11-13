@@ -285,6 +285,7 @@ class _Run:
         cluster, cfg = self.cluster, self.cfg
         job = slurm.build(cluster.site, job_spec(cluster, cfg, days, self.preset,
                                                  self.calibration))
+        staging.clear_markers(cluster, cfg.container, days)
         jobid = slurm.submit(cluster, job)
         ok(f"Submitted job {jobid} ({job.name}, {len(days)} days)")
         for d in days:

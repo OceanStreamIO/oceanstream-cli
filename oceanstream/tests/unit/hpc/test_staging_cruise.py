@@ -288,3 +288,19 @@ def test_finished_days_come_from_the_done_markers(fake: FakeCluster) -> None:
     assert staging.finished_days(fake, "X", ["2022-06-21", "2022-06-22"]) == ["2022-06-21"]
     assert fake.commands[-1][1].startswith("ls -a /scratch/g/oceanstream/products/X")
 
+
+
+def test_markers_of_an_earlier_run_are_cleared_before_submitting(
+        tmp_path: Path, sim: ClusterSim, monkeypatch: pytest.MonkeyPatch) -> None:
+    # NF2104 2026-11-13: the old DONE markers made the first poll free the raw input
+    # of every day while the job was still pending.
+    d = _campaign(tmp_path, ["2022-06-21"])
+    _process(sim)
+    monkeypatch.setattr(cruise, "publish_campaign", lambda *a, **k: {})
+    cruise.run_cruise(sim, d)
+    cmds = [c for _, c, _ in sim.commands]
+    clear = next(i for i, c in enumerate(cmds)
+                 if c.startswith("rm -f ") and ".2022-06-21.DONE" in c)
+    submit = next(i for i, c in enumerate(cmds) if c.startswith("sbatch"))
+    assert clear < submit
+    assert ".2022-06-21.FAILED" in cmds[clear]

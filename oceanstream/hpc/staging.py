@@ -121,6 +121,21 @@ def unstage(cluster: Cluster, cruise: str, days: list[str]) -> None:
             warn(f"{day}: could not remove {path}")
 
 
+def clear_markers(cluster: Cluster, container: str, days: list[str]) -> None:
+    """Remove the days' ``DONE``/``FAILED`` markers left by an earlier run.
+
+    The driver frees a day's raw input as soon as its marker appears, and polls from the
+    moment the job is queued; the node step clears old markers only once it starts. On
+    the NF2104 rerun of 2026-11-13 the first poll found the 2026-11-09 markers and freed
+    every day's raw input while the job was still pending, so all ten days failed.
+    """
+    path = f"{cluster.site.products_dir}/{container}"
+    names = " ".join(shlex.quote(f"{path}/.{d}.{kind}") for d in check_days(days)
+                     for kind in ("DONE", "FAILED"))
+    if not cluster.xfer_ok(f"rm -f {names}"):
+        raise HpcError(f"Could not clear the run markers in {path}.")
+
+
 def finished_days(cluster: Cluster, container: str, days: list[str]) -> list[str]:
     """The *days* whose node step has finished: a ``.<day>.DONE`` marker by their products."""
     path = f"{cluster.site.products_dir}/{container}"
