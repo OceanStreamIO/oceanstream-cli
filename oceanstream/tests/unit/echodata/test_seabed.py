@@ -822,6 +822,74 @@ class TestSimultaneousSeabed:
         assert np.isnan(depth[300:]).all()
 
 
+class TestSeabedBeyondTheRange:
+    """No line where the seabed lies below the recorded range (NF2104 2021-06-17)."""
+
+    RANGE_M = np.arange(0, 40, 0.1)
+
+    @staticmethod
+    def water(n_pings: int, seed: int = 5) -> np.ndarray:
+        size = (n_pings, TestSeabedBeyondTheRange.RANGE_M.size)
+        return np.random.default_rng(seed).normal(-75, 2, size)
+
+    @staticmethod
+    def seabed(sv: np.ndarray, pings: slice, depth_m: float, peak_db: float = -5.0) -> None:
+        i = int(np.searchsorted(TestSeabedBeyondTheRange.RANGE_M, depth_m))
+        sv[pings, i : i + 20] = np.linspace(peak_db, peak_db - 25, 20)
+
+    def test_two_stray_detections_do_not_bridge_open_water(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Twenty minutes over water deeper than the range, with a minute of strong echo
+        # at either end: the old bridge drew a ramp from 38 to 20 m between them.
+        sv = self.water(1200)
+        self.seabed(sv, slice(0, 60), 38.0)
+        self.seabed(sv, slice(1140, 1200), 20.0)
+        ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
+        depth = detect_seabed_interleaved(ds, pick="edge", r0=3.0).seabed_depth.values
+        assert np.isnan(depth[200:1000]).all()
+        assert np.all(np.abs(depth[:60] - 38.0) <= 0.3)
+        assert np.all(np.abs(depth[1140:] - 20.0) <= 0.3)
+
+    def test_a_long_weak_stretch_is_bridged_where_its_echo_shows(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Seventeen minutes of a seabed echo too weak to back a line (-42 dB), on station.
+        sv = self.water(1200)
+        self.seabed(sv, slice(0, 100), 30.0)
+        self.seabed(sv, slice(100, 1100), 30.0, peak_db=-42.0)
+        self.seabed(sv, slice(1100, 1200), 30.0)
+        ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
+        depth = detect_seabed_interleaved(ds, pick="edge", r0=3.0).seabed_depth.values
+        assert np.isfinite(depth).all()
+        assert np.all(np.abs(depth - 30.0) <= 0.3)
+
+    def test_an_echo_at_the_end_of_the_range_makes_no_line(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # The seabed starts 0.3 m before the last sample, and after ping 150 the recorded
+        # range is 25 m and the seabed starts 0.2 m before its end.
+        sv = self.water(300)
+        sv[:, self.RANGE_M >= 39.7] = -8.0
+        sv[150:, self.RANGE_M >= 25.0] = np.nan
+        sv[150:, (self.RANGE_M >= 24.8) & (self.RANGE_M < 25.0)] = -8.0
+        ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
+        assert detect_seabed_interleaved(ds, pick="edge", r0=3.0).pings_detected == 0
+
+    def test_beside_an_unbridged_gap_the_line_is_held_not_sloped(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        sv = self.water(1200)
+        self.seabed(sv, slice(0, 300), 35.0)
+        self.seabed(sv, slice(900, 1200), 15.0)
+        ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
+        depth = detect_seabed_interleaved(ds, pick="edge", r0=3.0).seabed_depth.values
+        # Within two minutes after the last detection at 35 m the line stays at 35 m.
+        assert np.all(np.abs(depth[300:400] - 35.0) <= 0.3)
+        assert np.isnan(depth[500:760]).all()
+        assert np.all(np.abs(depth[800:900] - 15.0) <= 0.3)
+
+
 class TestSeabedRegion:
     """The seabed flag covers cells that an earlier step had already removed."""
 
