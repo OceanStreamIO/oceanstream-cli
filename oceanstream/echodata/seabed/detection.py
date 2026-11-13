@@ -1018,6 +1018,29 @@ def _supported_line(
     return np.where(backed & (near >= min_pings - 1e-9), line, np.nan)
 
 
+def _dense_line(
+    times_ns: np.ndarray, line: np.ndarray, window_s: float, min_frac: float
+) -> np.ndarray:
+    """*line* where at least *min_frac* of the pings within *window_s* either side stand too.
+
+    A seabed backs nearly every ping. Where it lies below the range, a few pings with a
+    strong echo near the composite line (a school, a spike) still stand, three of seven
+    within a second, and the line was then carried two minutes either side of them: on
+    NF2104 2021-06-17 short lines at 16-39 m of range, where the ship's multibeam put the
+    seabed at 46-51 m and the echo within 10 m of them peaked at -55 dB (median), against
+    0 to +3 dB on the day's real seabed.
+    """
+    if min_frac <= 0 or not np.isfinite(line).any():
+        return line
+    standing = np.isfinite(line).astype(float)
+    cum = np.concatenate([[0.0], np.cumsum(standing)])
+    w = int(window_s * 1e9)
+    lo = np.searchsorted(times_ns, times_ns - w, side="left")
+    hi = np.searchsorted(times_ns, times_ns + w, side="right")
+    frac = (cum[hi] - cum[lo]) / np.maximum(hi - lo, 1)
+    return np.where(frac >= min_frac, line, np.nan)
+
+
 def _drop_at_range_end(
     sv: np.ndarray, range_1d: np.ndarray, line: np.ndarray, margin_m: float
 ) -> np.ndarray:
@@ -1228,6 +1251,8 @@ def detect_seabed_interleaved(
     free_bridge_s: float = 300.0,
     bridge_evidence_sv: float = -45.0,
     range_margin_m: float = 0.5,
+    density_window_s: float = 30.0,
+    density_frac: float = 0.2,
     **kwargs,
 ) -> SeabedDetectionResult:
     """Seabed line on every ping when the channels transmit in turn.
@@ -1241,7 +1266,9 @@ def detect_seabed_interleaved(
     agree within *max_step_m* are bridged (:func:`_bridge_line`); one longer than
     *free_bridge_s* only where an echo of at least *bridge_evidence_sv* lies along it.
     A line within *range_margin_m* of a ping's last recorded sample does not stand
-    (:func:`_drop_at_range_end`): the seabed may lie anywhere below the range. The line
+    (:func:`_drop_at_range_end`): the seabed may lie anywhere below the range. A
+    detection stands only where at least *density_frac* of the pings within
+    *density_window_s* either side stand too (:func:`_dense_line`). The line
     is then interpolated in time onto every ping. A ping more than *max_gap_s* from the
     nearest standing detection gets no line, and one beside a gap that was not bridged
     takes the nearest detection's line rather than a slope drawn across the gap.
@@ -1280,12 +1307,14 @@ def detect_seabed_interleaved(
                            top_m=top_m)
     line = _drop_at_range_end(sv, range_1d, line, range_margin_m)
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
+    line = _dense_line(src, line, density_window_s, density_frac)
     line = _bridge_line(src, line, max_bridge_s, max_step_m, sv=sv, range_1d=range_1d,
                         free_s=free_bridge_s, evidence_sv=bridge_evidence_sv)
     edge = None if result.edge_depth is None else result.edge_depth.values.astype(float)
     if edge is not None:
         own = _supported_line(sv, range_1d, edge, min_seabed_sv, top_m=top_m)
         own = _drop_at_range_end(sv, range_1d, own, range_margin_m)
+        own = _dense_line(src, own, density_window_s, density_frac)
         line = np.where(np.isfinite(line) & (own < line), own, line)
     line = _echo_top(sv, range_1d, src, line, edge=edge, top_m=top_m)
 
@@ -1328,6 +1357,7 @@ def detect_seabed_interleaved(
                 "min_seabed_sv": min_seabed_sv, "max_bridge_s": max_bridge_s,
                 "max_step_m": max_step_m, "free_bridge_s": free_bridge_s,
                 "bridge_evidence_sv": bridge_evidence_sv, "range_margin_m": range_margin_m,
+                "density_window_s": density_window_s, "density_frac": density_frac,
                 "channel_pings": int(src.size),
                 "channel_pings_detected": int(found.sum())},
     )

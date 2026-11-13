@@ -876,6 +876,17 @@ class TestSeabedBeyondTheRange:
         ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
         assert detect_seabed_interleaved(ds, pick="edge", r0=3.0).pings_detected == 0
 
+    def test_brief_strong_echoes_in_open_water_make_no_line(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Twenty minutes over water deeper than the range, with five seconds of strong echo
+        # at 25 m every minute: each burst stands, and was carried two minutes either side.
+        sv = self.water(1200)
+        for start in range(0, 1200, 60):
+            self.seabed(sv, slice(start, start + 5), 25.0, peak_db=-20.0)
+        ds = TestSimultaneousSeabed.together(sv, self.RANGE_M)
+        assert detect_seabed_interleaved(ds, pick="edge", r0=3.0).pings_detected == 0
+
     def test_beside_an_unbridged_gap_the_line_is_held_not_sloped(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 
