@@ -273,3 +273,70 @@ def test_bin_sv_range_keeps_later_pings_of_a_channel_already_cut():
                             "range_sample": np.arange(n_samples)})
     assert pfr._bin_sv_range(ds, 0.1, cut_padding=False).sizes["range_sample"] == 4
     assert pfr._bin_sv_range(ds, 0.1).sizes["range_sample"] == 2  # the shared-grid cut
+
+
+class TestPassiveChannels:
+    """Falkor (too) records its 333 kHz channel in passive mode, out to about 6 km."""
+
+    class _EchoData(dict):
+        @property
+        def group_paths(self):
+            return list(self)
+
+        @property
+        def beam(self):
+            return self.get("Sonar/Beam_group1")
+
+    @classmethod
+    def _echodata(cls, modes, samples):
+        """Channels with *modes* per ping (0 active, 1 passive) recording *samples* each."""
+        channels = [f"WBT {i}" for i in range(len(modes))]
+        n_pings, n_max = len(modes[0]), max(samples)
+        data = np.full((len(modes), n_pings, n_max, 4), np.nan, dtype=np.float32)
+        for c, n in enumerate(samples):
+            data[c, :, :n] = 1.0
+        times = pd.date_range("2026-03-05", periods=n_pings, freq="10s")
+        coords = {"channel": channels, "ping_time": times, "range_sample": np.arange(n_max),
+                  "beam": np.arange(4)}
+        beam = xr.Dataset(
+            {"backscatter_r": (("channel", "ping_time", "range_sample", "beam"), data),
+             "backscatter_i": (("channel", "ping_time", "range_sample", "beam"), data.copy()),
+             "channel_mode": (("channel", "ping_time"), np.asarray(modes, dtype=float)),
+             "frequency_nominal": ("channel", np.arange(len(modes), dtype=float) * 1e5 + 18e3)},
+            coords=coords,
+        )
+        vendor = xr.Dataset({"gain_correction": ("channel", np.zeros(len(modes)))},
+                            coords={"channel": channels})
+        return cls._EchoData({"Sonar/Beam_group1": beam, "Vendor_specific": vendor,
+                              "Environment": xr.Dataset({"sound_speed_indicative": ((), 1500.0)})})
+
+    def test_a_channel_passive_on_every_ping_is_dropped_and_the_range_cut(self):
+        ed = self._echodata([[0, 0], [0, 0], [1, 1]], samples=[240, 180, 3350])
+        ed, dropped = pfr._drop_passive_channels(ed)
+        assert dropped == ["WBT 2"]
+        assert list(ed["Sonar/Beam_group1"]["channel"].values) == ["WBT 0", "WBT 1"]
+        assert list(ed["Vendor_specific"]["channel"].values) == ["WBT 0", "WBT 1"]
+        assert ed["Sonar/Beam_group1"].sizes["range_sample"] == 240
+
+    def test_passive_pings_of_an_active_channel_are_blanked(self):
+        ed = self._echodata([[0, 1, 0], [0, 0, 0]], samples=[50, 50])
+        ed, dropped = pfr._drop_passive_channels(ed)
+        assert dropped == []
+        data = ed["Sonar/Beam_group1"]["backscatter_r"].values
+        assert np.isnan(data[0, 1]).all()
+        assert np.isfinite(data[0, [0, 2], :50]).all() and np.isfinite(data[1]).all()
+
+    def test_channels_pinging_in_turn_are_kept(self):
+        # Multiplexed channels have no mode (NaN) on the other channels' pings.
+        ed = self._echodata([[0, np.nan, np.nan], [np.nan, 0, np.nan], [np.nan, np.nan, 0]],
+                            samples=[60, 50, 40])
+        ed, dropped = pfr._drop_passive_channels(ed)
+        assert dropped == []
+        assert ed["Sonar/Beam_group1"].sizes == {"channel": 3, "ping_time": 3, "range_sample": 60,
+                                                 "beam": 4}
+
+    def test_a_file_without_channel_modes_is_left_alone(self):
+        ed = self._echodata([[1, 1]], samples=[10])
+        ed["Sonar/Beam_group1"] = ed["Sonar/Beam_group1"].drop_vars("channel_mode")
+        out, dropped = pfr._drop_passive_channels(ed)
+        assert dropped == [] and out["Sonar/Beam_group1"].sizes["channel"] == 1

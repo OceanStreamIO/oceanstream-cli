@@ -448,6 +448,13 @@ def convert_and_save_echodata(
         logger.warning("  No beam data in %s — skipping", file_name)
         return "unknown", "", file_name
 
+    echodata, passive = _drop_passive_channels(echodata)
+    if passive:
+        logger.info("  Passive channels left out: %s", ", ".join(passive))
+    if echodata.beam is None or not echodata.beam.sizes.get("channel", 0):
+        logger.warning("  Only passive channels in %s — skipping", file_name)
+        return "unknown", "", file_name
+
     if cfg.raw.max_range_m > 0:
         echodata = _crop_echodata_range(echodata, cfg.raw.max_range_m)
 
@@ -470,6 +477,64 @@ def convert_and_save_echodata(
     _release_memory()
 
     return category, str(ed_zarr_path), file_name
+
+
+def _drop_passive_channels(echodata):
+    """Leave out the channels that only listen, and blank the passive pings of the others.
+
+    An EK80 channel in passive mode (``channel_mode`` other than 0) transmits nothing, so
+    its samples are noise and Sv computed from them as echoes means nothing. On Falkor (too)
+    the 333 kHz channel is passive on every 2026 cruise (and 120 and 200 kHz on FKt260415
+    2026-04-16/17); it records 335,069 samples a ping, about 6 km, against 23,932 for the
+    longest active channel (18 kHz, 1.5 km), and as ``range_sample`` is shared it made
+    every channel's pings 14 times larger.
+
+    A channel passive on every ping of the file is dropped from every group; on a channel
+    passive on some pings only, those pings are blanked. ``range_sample`` is then cut after
+    the last sample a remaining channel recorded. Returns the EchoData and the names of the
+    channels dropped.
+    """
+    import numpy as np
+
+    beam = echodata["Sonar/Beam_group1"]
+    if beam is None or "channel_mode" not in beam:
+        return echodata, []
+    mode = beam["channel_mode"]
+    passive_ping = mode.notnull() & (mode != 0)
+    active_ping = mode.notnull() & (mode == 0)
+    listens = passive_ping.any("ping_time").values & ~active_ping.any("ping_time").values
+    dropped = [str(c) for c, only in zip(beam["channel"].values, listens) if only]
+    if not dropped and not bool(passive_ping.any()):
+        return echodata, []
+    for group in echodata.group_paths:
+        ds = echodata[group]
+        if ds is None or "channel" not in ds.dims:
+            continue
+        drop = [c for c in ds["channel"].values if str(c) in dropped]
+        if drop:
+            echodata[group] = ds.drop_sel(channel=drop)
+    for group in ("Sonar/Beam_group1", "Sonar/Beam_group2"):
+        if group not in echodata.group_paths:
+            continue
+        ds = echodata[group]
+        if ds is None or "channel_mode" not in ds or "range_sample" not in ds.dims:
+            continue
+        m = ds["channel_mode"]
+        listening = m.notnull() & (m != 0)
+        if bool(listening.any()):
+            for name, var in ds.data_vars.items():
+                if "range_sample" in var.dims and {"channel", "ping_time"} <= set(var.dims):
+                    ds[name] = var.where(~listening).transpose(*var.dims).astype(var.dtype)
+        if "backscatter_r" in ds and ds.sizes.get("channel", 0):
+            data = ds["backscatter_r"]
+            recorded = data.notnull().any(dim=[d for d in data.dims if d != "range_sample"]).values
+            n_keep = int(np.flatnonzero(recorded)[-1]) + 1 if recorded.any() else 0
+            if n_keep < ds.sizes["range_sample"]:
+                logger.info("  %s: %d → %d range samples without the passive channels",
+                            group, ds.sizes["range_sample"], n_keep)
+                ds = ds.isel(range_sample=slice(0, n_keep))
+        echodata[group] = ds
+    return echodata, dropped
 
 
 def _crop_echodata_range(echodata, max_range_m: float):
