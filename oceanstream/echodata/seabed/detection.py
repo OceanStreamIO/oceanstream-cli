@@ -174,9 +174,14 @@ def _get_sv_2d(ds: xr.Dataset, channel: Optional[str] = None) -> tuple[np.ndarra
     else:
         range_1d = range_arr
     
-    # Extract 1D range (take first ping if 2D)
+    # A 1D range axis from the ping that recorded furthest. The recorded range can change
+    # during a day (EK80 auto range), and the first ping's NaN past its own range used to cut
+    # every ping short: on FKt260112 2026-01-22 the first ping reached 602 m, the others
+    # 1360-1500 m, and the seabed at 1040-1160 m was never searched.
     if range_1d.ndim > 1:
-        range_1d = range_1d.isel(ping_time=0)
+        other = [d for d in range_1d.dims if d != "ping_time"]
+        counts = np.isfinite(range_1d).sum(dim=other).values
+        range_1d = range_1d.isel(ping_time=int(np.argmax(counts)))
     
     # Compute arrays
     Sv_2d = Sv.values

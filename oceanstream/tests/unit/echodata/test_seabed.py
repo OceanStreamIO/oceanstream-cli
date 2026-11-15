@@ -1039,3 +1039,19 @@ def test_seabed_channel_without_38_khz_is_the_lowest_frequency():
     # A 38 kHz channel still wins.
     ds = ds.assign_coords(frequency_nominal=("channel", [200000.0, 38000.0]))
     assert find_optimal_seabed_channel(ds) == "WBT 400615-15 ES18_ES"
+
+
+def test_a_seabed_beyond_the_first_pings_range_is_found():
+    """FKt260112 2026-01-22: the first ping recorded to 602 m, the rest to 1400 m."""
+    from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+    range_m = np.arange(0, 1400, 0.5)
+    sv = np.random.default_rng(9).normal(-80, 2, (300, range_m.size))
+    top = int(np.searchsorted(range_m, 1060.0))
+    sv[:, top : top + 20] = np.linspace(-8, -40, 20)
+    sv[:3, range_m > 602] = np.nan  # the first pings' shorter recorded range
+    ds = TestSimultaneousSeabed.together(sv, range_m)
+    ds["echo_range"] = ds["echo_range"].where(np.isfinite(ds["Sv"]))
+    depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+    assert np.isfinite(depth[3:]).all()
+    assert np.all(np.abs(depth[3:] - 1060.0) <= 0.5)
