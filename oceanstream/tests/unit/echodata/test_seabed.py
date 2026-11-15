@@ -999,3 +999,18 @@ class TestSeabedRegion:
         assert region[:, :, rng >= 72.7].all()  # below the line, removed earlier or not
         assert not region[:, :, rng < 72.3].any()
 
+
+
+def test_seabed_channel_without_38_khz_is_the_lowest_frequency():
+    """Falkor (too) files with 18 kHz alone active still get a seabed channel."""
+    from oceanstream.echodata.seabed import find_optimal_seabed_channel
+
+    ds = xr.Dataset(
+        {"Sv": (("channel", "ping_time", "range_sample"), np.zeros((2, 3, 4)))},
+        coords={"channel": ["WBT 400640-15 ES200-7C_ES", "WBT 400615-15 ES18_ES"],
+                "frequency_nominal": ("channel", [200000.0, 18000.0])},
+    )
+    assert find_optimal_seabed_channel(ds) == "WBT 400615-15 ES18_ES"
+    # A 38 kHz channel still wins.
+    ds = ds.assign_coords(frequency_nominal=("channel", [200000.0, 38000.0]))
+    assert find_optimal_seabed_channel(ds) == "WBT 400615-15 ES18_ES"

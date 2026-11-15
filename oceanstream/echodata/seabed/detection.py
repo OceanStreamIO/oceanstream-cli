@@ -1769,7 +1769,9 @@ def find_optimal_seabed_channel(
     """Find the best channel for seabed detection (prefer 38 kHz).
 
     38 kHz penetrates deepest and is the standard choice for seabed
-    detection in fisheries acoustics.
+    detection in fisheries acoustics. Without one, the channel with the lowest
+    ``frequency_nominal`` is used: Falkor (too) files with 18 kHz alone active
+    (FKt260112 2026-01-29 21:13-22:02) left their seabed unmasked.
 
     Parameters
     ----------
@@ -1786,7 +1788,7 @@ def find_optimal_seabed_channel(
     Raises
     ------
     KeyError
-        If no 38 kHz channel is found.
+        If no 38 kHz channel is found and no channel has a nominal frequency.
     """
     if {"channel", "frequency"}.isdisjoint(ds.dims):
         # Single-channel dataset — return its channel label
@@ -1811,6 +1813,14 @@ def find_optimal_seabed_channel(
     for idx, val in enumerate(ds.coords[chan_dim].values):
         if _is_38khz(val, tol_hz):
             return str(val)
+
+    # Strategy 3: the lowest frequency, which reaches deepest.
+    if "frequency_nominal" in ds.data_vars or "frequency_nominal" in ds.coords:
+        fn = ds["frequency_nominal"]
+        if chan_dim in fn.dims:
+            fn_vals = np.asarray(fn.values, dtype=float)
+            if np.isfinite(fn_vals).any():
+                return str(ds.coords[chan_dim].values[int(np.nanargmin(fn_vals))])
 
     raise KeyError(
         f"Could not locate a 38 kHz channel. "
