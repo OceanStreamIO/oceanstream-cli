@@ -1062,6 +1062,7 @@ def _second_echo_line(
     window_s: float = 600.0,
     min_frac: float = 0.25,
     min_tested: int = 1,
+    dense_frac: float = 0.5,
 ) -> np.ndarray:
     """*line* without the stretches where twice its range is recorded but shows no second echo.
 
@@ -1073,9 +1074,9 @@ def _second_echo_line(
     above the line to 5 m below it, reaches *strong_sv* is backed whatever lies at twice
     its range: no layer or school is that strong, and over a deep slope the second echo
     goes astray (SE2204 2022-06-19 22:30-23:50, a -18 dB seabed at 560-580 m of range
-    with only -54 dB at twice that). Within *window_s* around each ping, if at least
-    *min_tested* pings were tested and fewer than *min_frac* of them are backed, the line
-    is dropped there.
+    with only -54 dB at twice that). Within *window_s* around each ping, if fewer than
+    *dense_frac* of the pings have a line of their own, at least *min_tested* were tested
+    and fewer than *min_frac* of those are backed, the line is dropped there.
 
     On FKt260415 2026-04-24 the line stood for an hour at 66-73 m on a night layer about
     16 m thick, peaking at -39 dB (median) with no sharp onset, and on 2026-04-20 for
@@ -1085,13 +1086,18 @@ def _second_echo_line(
     rough ground (SE2204) a quarter to a third of a real seabed's pings show no second
     echo of their own. A false stretch can stand on a few pings only (21 of 2327 on
     FKt260415 2026-04-24, -33 to -35 dB, just over the backing threshold), which the
-    bridge then joined into hour-long lines, so one tested ping is enough to judge.
+    bridge then joined into hour-long lines, so one tested ping is enough to judge. A
+    stretch where most pings stand on their own echo is a seabed whatever lies at twice
+    its range: in denoised Sv the second echo of real seabeds at 90-240 m was mostly gone
+    (HB1507, HB2401, HB2403: -55 to -67 dB), and an uncalibrated seabed can read weak
+    (FLx704-0003 2016-05-16, about -27 dB at 21 m, the line on 97 % of pings).
     """
     if min_frac <= 0 or not np.isfinite(line).any():
         return line
     end = _last_recorded_range(sv, range_1d)
     tested = np.zeros(line.size, dtype=bool)
     seen = np.zeros(line.size, dtype=bool)
+
     def reaches(p: int, lo: float, hi: float, level: float) -> bool:
         values = sv[p, (range_1d >= lo) & (range_1d <= hi)]
         return bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= level
@@ -1115,7 +1121,9 @@ def _second_echo_line(
     hi_i = np.searchsorted(times_ns, times_ns + half, side="right")
     n_tested = cum_tested[hi_i] - cum_tested[lo_i]
     n_seen = cum_seen[hi_i] - cum_seen[lo_i]
-    lacking = (n_tested >= min_tested) & (n_seen < min_frac * n_tested)
+    cum_line = np.concatenate([[0], np.cumsum(np.isfinite(line))])
+    sparse = (cum_line[hi_i] - cum_line[lo_i]) < dense_frac * (hi_i - lo_i)
+    lacking = sparse & (n_tested >= min_tested) & (n_seen < min_frac * n_tested)
     return np.where(lacking, np.nan, line)
 
 

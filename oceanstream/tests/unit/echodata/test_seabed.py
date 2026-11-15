@@ -966,22 +966,47 @@ class TestSecondEcho:
         assert np.isfinite(depth).all()
         assert np.all(np.abs(depth - 570.0) <= 0.5)
 
+    @staticmethod
+    def every_11_6_s(ds: xr.Dataset) -> xr.Dataset:
+        """The 38 kHz of Falkor (too), pinging every 11.6 s in turn with 18 and 70 kHz."""
+        return ds.assign_coords(ping_time=ds["ping_time"].values[0]
+                                + np.arange(ds.sizes["ping_time"]) * np.timedelta64(11600, "ms"))
+
     def test_the_second_echo_is_looked_for_below_twice_the_range_by_the_transducer_depth(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 
         # A transducer 7.8 m deep (Falkor (too)): the second echo of a seabed 30 m below it
         # starts at 67.8 m of range, out of the band around 60 m when the depth is unknown.
+        # The seabed is weak and backs its line on three pings in forty only, as the false
+        # lines of FKt260415 did, so the second echo decides.
         range_m = np.arange(0, 100, 0.1)
         sv = self.water(600, range_m)
         top, second = int(np.searchsorted(range_m, 30.0)), int(np.searchsorted(range_m, 67.8))
-        sv[:, top : top + 40] = np.linspace(-28, -38, 40)  # a weak seabed: tested
+        sv[:, top : top + 40] = np.linspace(-38, -44, 40)
+        for p in range(0, 600, 40):
+            sv[p : p + 3, top : top + 40] = np.linspace(-30, -40, 40)
         sv[:, second : second + 20] = -45.0
-        ds = TestSimultaneousSeabed.together(sv, range_m)
+        ds = self.every_11_6_s(TestSimultaneousSeabed.together(sv, range_m))
         assert detect_seabed_interleaved(ds, pick="edge").pings_detected == 0
         ds["depth"] = ds["echo_range"] + 7.8
         result = detect_seabed_interleaved(ds, pick="edge")
-        assert result.pings_detected == 600
+        off = detect_seabed_interleaved(ds, pick="edge", second_echo_frac=0)
+        assert result.pings_detected == off.pings_detected > 500
         assert result.params["transducer_depth_m"] == pytest.approx(7.8)
+
+    def test_a_weak_seabed_standing_on_most_pings_keeps_its_line_without_a_second_echo(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # FLx704-0003 2016-05-16: an uncalibrated seabed at 21 m reading about -27 dB, the
+        # line on 97 % of pings, nothing at twice its range in the denoised Sv.
+        range_m = np.arange(0, 60, 0.1)
+        sv = self.water(600, range_m)
+        top = int(np.searchsorted(range_m, 21.0))
+        sv[:, top : top + 40] = np.linspace(-27, -40, 40)
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.isfinite(depth).all()
+        assert np.all(np.abs(depth - 21.0) <= 0.2)
 
 
 class TestSeabedRegion:
