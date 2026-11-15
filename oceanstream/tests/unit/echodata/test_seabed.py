@@ -941,16 +941,30 @@ class TestSecondEcho:
         from oceanstream.echodata.seabed import detect_seabed_interleaved
 
         # Over steep or rough ground (SE2204) many pings show no second echo of their own.
+        # Without any, this weak seabed would lose its line.
         range_m = np.arange(0, 100, 0.1)
         n_pings = 600
         sv = self.water(n_pings, range_m)
         top, second = int(np.searchsorted(range_m, 30.0)), int(np.searchsorted(range_m, 60.0))
-        sv[:, top : top + 40] = np.linspace(-12, -38, 40)
-        sv[::3, second : second + 20] = -35.0
+        sv[:, top : top + 40] = np.linspace(-28, -38, 40)  # weaker than -25 dB: tested
+        sv[::3, second : second + 20] = -45.0
         ds = TestSimultaneousSeabed.together(sv, range_m)
         depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
         assert np.isfinite(depth).all()
         assert np.all(np.abs(depth - 30.0) <= 0.2)
+
+    def test_a_strong_seabed_on_a_deep_slope_keeps_its_line_without_a_second_echo(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # SE2204 2022-06-19 23:20: a -18 dB seabed at 570 m of range, only -54 dB at twice it.
+        range_m = np.arange(0, 1300, 0.5)
+        sv = self.water(600, range_m)
+        top = int(np.searchsorted(range_m, 570.0))
+        sv[:, top : top + 20] = np.linspace(-18, -40, 20)
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.isfinite(depth).all()
+        assert np.all(np.abs(depth - 570.0) <= 0.5)
 
     def test_the_second_echo_is_looked_for_below_twice_the_range_by_the_transducer_depth(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
@@ -960,8 +974,8 @@ class TestSecondEcho:
         range_m = np.arange(0, 100, 0.1)
         sv = self.water(600, range_m)
         top, second = int(np.searchsorted(range_m, 30.0)), int(np.searchsorted(range_m, 67.8))
-        sv[:, top : top + 40] = np.linspace(-12, -38, 40)
-        sv[:, second : second + 20] = -35.0
+        sv[:, top : top + 40] = np.linspace(-28, -38, 40)  # a weak seabed: tested
+        sv[:, second : second + 20] = -45.0
         ds = TestSimultaneousSeabed.together(sv, range_m)
         assert detect_seabed_interleaved(ds, pick="edge").pings_detected == 0
         ds["depth"] = ds["echo_range"] + 7.8

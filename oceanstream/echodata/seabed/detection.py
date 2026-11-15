@@ -1056,6 +1056,7 @@ def _second_echo_line(
     line: np.ndarray,
     transducer_depth_m: float = 0.0,
     second_sv: float = -50.0,
+    strong_sv: float = -25.0,
     tol_m: float = 3.0,
     tol_frac: float = 0.1,
     window_s: float = 600.0,
@@ -1068,9 +1069,13 @@ def _second_echo_line(
     again: a second echo starting between twice the seabed's range and that plus the
     transducer depth, 10-25 dB weaker than the first. A ping is tested where that band,
     widened by *tol_m* or *tol_frac* of the line's range, lies within its recorded range,
-    and shows the echo when Sv there reaches *second_sv*. Within *window_s* around each
-    ping, if at least *min_tested* pings were tested and fewer than *min_frac* of them
-    show it, the line is dropped there.
+    and shows the echo when Sv there reaches *second_sv*. A ping whose own echo, from 2 m
+    above the line to 5 m below it, reaches *strong_sv* is backed whatever lies at twice
+    its range: no layer or school is that strong, and over a deep slope the second echo
+    goes astray (SE2204 2022-06-19 22:30-23:50, a -18 dB seabed at 560-580 m of range
+    with only -54 dB at twice that). Within *window_s* around each ping, if at least
+    *min_tested* pings were tested and fewer than *min_frac* of them are backed, the line
+    is dropped there.
 
     On FKt260415 2026-04-24 the line stood for an hour at 66-73 m on a night layer about
     16 m thick, peaking at -39 dB (median) with no sharp onset, and on 2026-04-20 for
@@ -1087,14 +1092,20 @@ def _second_echo_line(
     end = _last_recorded_range(sv, range_1d)
     tested = np.zeros(line.size, dtype=bool)
     seen = np.zeros(line.size, dtype=bool)
+    def reaches(p: int, lo: float, hi: float, level: float) -> bool:
+        values = sv[p, (range_1d >= lo) & (range_1d <= hi)]
+        return bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= level
+
     for p in np.flatnonzero(np.isfinite(line)):
+        if reaches(p, line[p] - 2.0, line[p] + 5.0, strong_sv):
+            tested[p] = seen[p] = True
+            continue
         tol = max(tol_m, tol_frac * line[p])
         lo, hi = 2 * line[p] - tol, 2 * line[p] + transducer_depth_m + tol
         if hi > end[p]:
             continue
-        values = sv[p, (range_1d >= lo) & (range_1d <= hi)]
         tested[p] = True
-        seen[p] = bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= second_sv
+        seen[p] = reaches(p, lo, hi, second_sv)
     if not tested.any():
         return line
     cum_tested = np.concatenate([[0], np.cumsum(tested)])
