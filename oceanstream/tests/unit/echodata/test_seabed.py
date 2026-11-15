@@ -271,7 +271,8 @@ def create_fjord_dataset(
     """A shallow site: a seabed echo with a sharp leading edge at *seabed_m* and
     a tail whose length changes from ping to ping, as a buoy's does.
 
-    Pings in *dropout* have no seabed echo at all.
+    Where twice the seabed's range is recorded, the seabed's second echo (via the sea
+    surface) starts there at -30 dB. Pings in *dropout* have no seabed echo at all.
     """
     import pandas as pd
 
@@ -279,12 +280,14 @@ def create_fjord_dataset(
     gen = np.random.default_rng(0)
     sv = gen.normal(-75, 2, (n_pings, rng_m.size))
     top = int(np.searchsorted(rng_m, seabed_m))
+    second = int(np.searchsorted(rng_m, 2 * seabed_m))
     for p in range(n_pings):
         if dropout.start <= p < dropout.stop:
             continue
         tail = int(gen.uniform(30, 90))  # 3–9 m above −40 dB
         sv[p, top : top + tail] = np.linspace(-15, -38, tail)
         sv[p, top + tail :] = -55
+        sv[p, second : second + 20] = np.linspace(-30, -50, 20)[: max(0, rng_m.size - second)]
     return xr.Dataset(
         {
             "Sv": (["ping_time", "range_sample"], sv),
@@ -834,8 +837,13 @@ class TestSeabedBeyondTheRange:
 
     @staticmethod
     def seabed(sv: np.ndarray, pings: slice, depth_m: float, peak_db: float = -5.0) -> None:
-        i = int(np.searchsorted(TestSeabedBeyondTheRange.RANGE_M, depth_m))
+        """A seabed echo at *depth_m*, and its second echo 25 dB weaker at twice that."""
+        rng = TestSeabedBeyondTheRange.RANGE_M
+        i = int(np.searchsorted(rng, depth_m))
         sv[pings, i : i + 20] = np.linspace(peak_db, peak_db - 25, 20)
+        j = int(np.searchsorted(rng, 2 * depth_m))
+        if j < rng.size:
+            sv[pings, j : j + 20] = np.linspace(peak_db - 25, peak_db - 45, 20)[: rng.size - j]
 
     def test_two_stray_detections_do_not_bridge_open_water(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved
@@ -899,6 +907,67 @@ class TestSeabedBeyondTheRange:
         assert np.all(np.abs(depth[300:400] - 35.0) <= 0.3)
         assert np.isnan(depth[500:760]).all()
         assert np.all(np.abs(depth[800:900] - 15.0) <= 0.3)
+
+
+class TestSecondEcho:
+    """A line stands where twice its range is recorded only if a second echo shows there."""
+
+    @staticmethod
+    def water(n_pings: int, range_m: np.ndarray, seed: int = 7) -> np.ndarray:
+        return np.random.default_rng(seed).normal(-68, 2, (n_pings, range_m.size))
+
+    def test_a_night_layer_without_a_second_echo_makes_no_line(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # FKt260415 2026-04-24 01:00-07:00: water deeper than the 1250 m range, a layer
+        # 16 m thick at 64-80 m peaking at -39 dB (just over -35 dB on a few pings), and
+        # the water column's -60 to -65 dB at twice its range. It made hour-long lines.
+        range_m = np.arange(0, 300, 0.2)
+        n_pings = 1200
+        sv = self.water(n_pings, range_m)
+        layer = (range_m >= 64) & (range_m < 80)
+        sv[:, layer] = -39 - 0.5 * np.abs(range_m[layer] - 72) + np.random.default_rng(8).normal(
+            0, 1.5, (n_pings, int(layer.sum())))
+        for p in range(0, n_pings, 40):
+            sv[p : p + 3, (range_m >= 71) & (range_m < 73)] = -33.0
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        # The 38 kHz pinged every 11.6 s, in turn with 18 and 70 kHz.
+        ds = ds.assign_coords(ping_time=ds["ping_time"].values[0]
+                              + np.arange(n_pings) * np.timedelta64(11600, "ms"))
+        assert detect_seabed_interleaved(ds, pick="edge", second_echo_frac=0).pings_detected > 0
+        assert detect_seabed_interleaved(ds, pick="edge").pings_detected == 0
+
+    def test_a_seabed_showing_its_second_echo_on_a_third_of_its_pings_keeps_its_line(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # Over steep or rough ground (SE2204) many pings show no second echo of their own.
+        range_m = np.arange(0, 100, 0.1)
+        n_pings = 600
+        sv = self.water(n_pings, range_m)
+        top, second = int(np.searchsorted(range_m, 30.0)), int(np.searchsorted(range_m, 60.0))
+        sv[:, top : top + 40] = np.linspace(-12, -38, 40)
+        sv[::3, second : second + 20] = -35.0
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        depth = detect_seabed_interleaved(ds, pick="edge").seabed_depth.values
+        assert np.isfinite(depth).all()
+        assert np.all(np.abs(depth - 30.0) <= 0.2)
+
+    def test_the_second_echo_is_looked_for_below_twice_the_range_by_the_transducer_depth(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # A transducer 7.8 m deep (Falkor (too)): the second echo of a seabed 30 m below it
+        # starts at 67.8 m of range, out of the band around 60 m when the depth is unknown.
+        range_m = np.arange(0, 100, 0.1)
+        sv = self.water(600, range_m)
+        top, second = int(np.searchsorted(range_m, 30.0)), int(np.searchsorted(range_m, 67.8))
+        sv[:, top : top + 40] = np.linspace(-12, -38, 40)
+        sv[:, second : second + 20] = -35.0
+        ds = TestSimultaneousSeabed.together(sv, range_m)
+        assert detect_seabed_interleaved(ds, pick="edge").pings_detected == 0
+        ds["depth"] = ds["echo_range"] + 7.8
+        result = detect_seabed_interleaved(ds, pick="edge")
+        assert result.pings_detected == 600
+        assert result.params["transducer_depth_m"] == pytest.approx(7.8)
 
 
 class TestSeabedRegion:

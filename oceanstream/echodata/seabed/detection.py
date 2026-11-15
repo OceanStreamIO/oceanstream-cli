@@ -1041,6 +1041,88 @@ def _dense_line(
     return np.where(frac >= min_frac, line, np.nan)
 
 
+def _last_recorded_range(sv: np.ndarray, range_1d: np.ndarray) -> np.ndarray:
+    """Each ping's last finite sample in range, -inf for a ping without one."""
+    finite = np.isfinite(sv)
+    has = finite.any(axis=1)
+    last = sv.shape[1] - 1 - np.argmax(finite[:, ::-1], axis=1)
+    return np.where(has, range_1d[np.clip(last, 0, range_1d.size - 1)], -np.inf)
+
+
+def _second_echo_line(
+    sv: np.ndarray,
+    range_1d: np.ndarray,
+    times_ns: np.ndarray,
+    line: np.ndarray,
+    transducer_depth_m: float = 0.0,
+    second_sv: float = -50.0,
+    tol_m: float = 3.0,
+    tol_frac: float = 0.1,
+    window_s: float = 600.0,
+    min_frac: float = 0.25,
+    min_tested: int = 1,
+) -> np.ndarray:
+    """*line* without the stretches where twice its range is recorded but shows no second echo.
+
+    A seabed echo goes back up to the sea surface (or the hull) and down to the seabed
+    again: a second echo starting between twice the seabed's range and that plus the
+    transducer depth, 10-25 dB weaker than the first. A ping is tested where that band,
+    widened by *tol_m* or *tol_frac* of the line's range, lies within its recorded range,
+    and shows the echo when Sv there reaches *second_sv*. Within *window_s* around each
+    ping, if at least *min_tested* pings were tested and fewer than *min_frac* of them
+    show it, the line is dropped there.
+
+    On FKt260415 2026-04-24 the line stood for an hour at 66-73 m on a night layer about
+    16 m thick, peaking at -39 dB (median) with no sharp onset, and on 2026-04-20 for
+    minutes at 11-12 m on bubbles under the hull; twice their range peaked at -58 to -65
+    dB, the water column's level. Real seabeds show their second echo at -24 to -35 dB
+    (SD1022, SD1076, HB2401). The test is on the stretch, not the ping: over steep or
+    rough ground (SE2204) a quarter to a third of a real seabed's pings show no second
+    echo of their own. A false stretch can stand on a few pings only (21 of 2327 on
+    FKt260415 2026-04-24, -33 to -35 dB, just over the backing threshold), which the
+    bridge then joined into hour-long lines, so one tested ping is enough to judge.
+    """
+    if min_frac <= 0 or not np.isfinite(line).any():
+        return line
+    end = _last_recorded_range(sv, range_1d)
+    tested = np.zeros(line.size, dtype=bool)
+    seen = np.zeros(line.size, dtype=bool)
+    for p in np.flatnonzero(np.isfinite(line)):
+        tol = max(tol_m, tol_frac * line[p])
+        lo, hi = 2 * line[p] - tol, 2 * line[p] + transducer_depth_m + tol
+        if hi > end[p]:
+            continue
+        values = sv[p, (range_1d >= lo) & (range_1d <= hi)]
+        tested[p] = True
+        seen[p] = bool(np.isfinite(values).any()) and float(np.nanmax(values)) >= second_sv
+    if not tested.any():
+        return line
+    cum_tested = np.concatenate([[0], np.cumsum(tested)])
+    cum_seen = np.concatenate([[0], np.cumsum(seen)])
+    half = int(window_s / 2 * 1e9)
+    lo_i = np.searchsorted(times_ns, times_ns - half, side="left")
+    hi_i = np.searchsorted(times_ns, times_ns + half, side="right")
+    n_tested = cum_tested[hi_i] - cum_tested[lo_i]
+    n_seen = cum_seen[hi_i] - cum_seen[lo_i]
+    lacking = (n_tested >= min_tested) & (n_seen < min_frac * n_tested)
+    return np.where(lacking, np.nan, line)
+
+
+def _transducer_depth(ds: xr.Dataset, channel: str) -> float:
+    """The channel's transducer depth (``depth`` minus ``echo_range``), 0 when unknown."""
+    if "depth" not in ds or "echo_range" not in ds:
+        return 0.0
+    sub = ds[["depth", "echo_range"]]
+    if "channel" in sub.dims:
+        sub = sub.sel(channel=channel)
+    step = max(1, sub.sizes.get("ping_time", 1) // 200)
+    sub = sub.isel(ping_time=slice(None, None, step), range_sample=slice(0, 1))
+    diff = (sub["depth"] - sub["echo_range"]).values
+    if not np.isfinite(diff).any():
+        return 0.0
+    return max(0.0, float(np.nanmedian(diff)))
+
+
 def _drop_at_range_end(
     sv: np.ndarray, range_1d: np.ndarray, line: np.ndarray, margin_m: float
 ) -> np.ndarray:
@@ -1054,10 +1136,7 @@ def _drop_at_range_end(
     """
     if margin_m <= 0:
         return line
-    finite = np.isfinite(sv)
-    has = finite.any(axis=1)
-    last = sv.shape[1] - 1 - np.argmax(finite[:, ::-1], axis=1)
-    end = np.where(has, range_1d[np.clip(last, 0, range_1d.size - 1)], -np.inf)
+    end = _last_recorded_range(sv, range_1d)
     return np.where(np.isfinite(line) & (line >= end - margin_m), np.nan, line)
 
 
@@ -1253,6 +1332,9 @@ def detect_seabed_interleaved(
     range_margin_m: float = 0.5,
     density_window_s: float = 30.0,
     density_frac: float = 0.2,
+    second_echo_sv: float = -50.0,
+    second_echo_window_s: float = 600.0,
+    second_echo_frac: float = 0.25,
     **kwargs,
 ) -> SeabedDetectionResult:
     """Seabed line on every ping when the channels transmit in turn.
@@ -1268,7 +1350,10 @@ def detect_seabed_interleaved(
     A line within *range_margin_m* of a ping's last recorded sample does not stand
     (:func:`_drop_at_range_end`): the seabed may lie anywhere below the range. A
     detection stands only where at least *density_frac* of the pings within
-    *density_window_s* either side stand too (:func:`_dense_line`). The line
+    *density_window_s* either side stand too (:func:`_dense_line`). Where twice the
+    line's range is recorded, a stretch of *second_echo_window_s* in which fewer than
+    *second_echo_frac* of the pings show a second echo of at least *second_echo_sv*
+    does not stand (:func:`_second_echo_line`; 0 turns it off). The line
     is then interpolated in time onto every ping. A ping more than *max_gap_s* from the
     nearest standing detection gets no line, and one beside a gap that was not bridged
     takes the nearest detection's line rather than a slope drawn across the gap.
@@ -1308,6 +1393,10 @@ def detect_seabed_interleaved(
     line = _drop_at_range_end(sv, range_1d, line, range_margin_m)
     src = compact["ping_time"].values.astype("datetime64[ns]").astype(np.int64)
     line = _dense_line(src, line, density_window_s, density_frac)
+    transducer_depth = _transducer_depth(ds, channel)
+    line = _second_echo_line(sv, range_1d, src, line, transducer_depth_m=transducer_depth,
+                             second_sv=second_echo_sv, window_s=second_echo_window_s,
+                             min_frac=second_echo_frac)
     line = _bridge_line(src, line, max_bridge_s, max_step_m, sv=sv, range_1d=range_1d,
                         free_s=free_bridge_s, evidence_sv=bridge_evidence_sv)
     edge = None if result.edge_depth is None else result.edge_depth.values.astype(float)
@@ -1358,6 +1447,10 @@ def detect_seabed_interleaved(
                 "max_step_m": max_step_m, "free_bridge_s": free_bridge_s,
                 "bridge_evidence_sv": bridge_evidence_sv, "range_margin_m": range_margin_m,
                 "density_window_s": density_window_s, "density_frac": density_frac,
+                "second_echo_sv": second_echo_sv,
+                "second_echo_window_s": second_echo_window_s,
+                "second_echo_frac": second_echo_frac,
+                "transducer_depth_m": transducer_depth,
                 "channel_pings": int(src.size),
                 "channel_pings_detected": int(found.sum())},
     )
