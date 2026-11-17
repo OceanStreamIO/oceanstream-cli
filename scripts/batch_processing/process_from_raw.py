@@ -3166,12 +3166,20 @@ def parse_args() -> PipelineConfig:
 
         cfg.preset_toml = str(Path(args.denoise_config).resolve())
         echo_cfg = EchodataConfig.from_toml(Path(args.denoise_config))
-        from oceanstream.echodata.presets import PresetError, load_preset
+        from oceanstream.echodata.presets import (
+            PresetError,
+            integration_from_toml,
+            load_preset,
+        )
 
         try:
             cfg.integration_layers = load_preset(Path(args.denoise_config)).integration
         except PresetError:
-            cfg.integration_layers = {}  # a denoise config in the older format
+            # Not a complete preset (the Denoise Lab writes only the parameters its
+            # filters use), but its integration layer applies all the same.
+            cfg.integration_layers = integration_from_toml(Path(args.denoise_config))
+        if cfg.integration_layers:
+            logger.info("Integration layers from the denoise config: %s", cfg.integration_layers)
         cfg.denoise = type(cfg.denoise)(
             enabled=True,
             methods=echo_cfg.denoise.methods,

@@ -400,6 +400,33 @@ def load_preset(path: Path) -> Preset:
     return parse_preset(path.read_text(encoding="utf-8"), source=path)
 
 
+def integration_from_toml(path: Path) -> dict[int, dict[str, float]]:
+    """The ``[echodata.integration.<Hz>]`` tables of a denoise config, validated alone.
+
+    For configs that are not complete presets, such as the ones the Denoise Lab
+    writes with only the parameters its filters use: ``load_preset`` refuses
+    those, but their integration layer still applies. A table for a frequency
+    the config has no denoise parameters for is an error, as in a preset.
+    """
+    path = Path(path)
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise PresetError(f"{path}: {e}") from e
+    echodata = data.get("echodata", {})
+    frequencies = echodata.get("denoise", {}).get("frequency_params", {}) or {}
+    known: dict[int, Any] = {}
+    for raw in frequencies:
+        try:
+            known[int(raw)] = None
+        except ValueError as e:
+            raise PresetError(f"{path}: frequency key {raw!r} is not a number in Hz.") from e
+    try:
+        return _integration(echodata.get("integration"), known)
+    except PresetError as e:
+        raise PresetError(f"{path}: {e}") from e
+
+
 @cache
 def _library() -> dict[str, Preset]:
     presets = {}

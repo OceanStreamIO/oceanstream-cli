@@ -12,6 +12,7 @@ from oceanstream.echodata.config import EchodataConfig
 from oceanstream.echodata.presets import (
     PresetError,
     get_preset,
+    integration_from_toml,
     list_presets,
     load_preset,
     match_presets,
@@ -340,3 +341,60 @@ class TestIntegrationSection:
         assert plain.integration == {}
         assert plain.params_sha256 != layered.params_sha256
 
+
+
+class TestIntegrationFromToml:
+    """A Denoise Lab config is not a complete preset, but its integration layer applies."""
+
+    # As the lab writes a run's config: only the active transient detector's fields.
+    LAB = """
+[echodata]
+sonar_model = "EK80"
+
+[echodata.denoise]
+methods = ["impulse", "attenuation", "transient", "background"]
+use_frequency_specific = true
+cascade = true
+
+[echodata.denoise.frequency_params.38000]
+impulse = { vertical_bin_size = "5m", ping_lags = [1, 2], threshold_db = 12.0 }
+attenuation = { upper_limit_sl = 400.0, lower_limit_sl = 600.0, num_side_pings = 50, threshold = 4.0 }
+transient = { detector = "ryan2015", exclude_above = 500.0, block_pings = 50, block_height = 20.0, percentile = 15.0, threshold_db = 12.0, vertical_bin_size = 5.0 }
+background = { range_window = 30, ping_window = 50, SNR_threshold = "8.0dB", background_noise_max = "-125.0dB" }
+
+[echodata.denoise.frequency_params.200000]
+impulse = { vertical_bin_size = "2m", ping_lags = [1], threshold_db = 8.0 }
+attenuation = { upper_limit_sl = 50.0, lower_limit_sl = 150.0, num_side_pings = 60, threshold = 6.0 }
+transient = { detector = "fielding", exclude_above = 100.0, thr_dB = 9.0, thr_dB_stop = 6.0, n_pings = 30, depth_bin = 10.0, maxts = -35.0 }
+background = { range_window = 15, ping_window = 40, SNR_threshold = "6.0dB", background_noise_max = "-110.0dB" }
+"""  # noqa: E501
+
+    def _write(self, tmp_path: Path, tables: str = "") -> Path:
+        path = tmp_path / "preset.toml"
+        path.write_text(self.LAB + "\n" + tables)
+        return path
+
+    def test_the_layer_is_read_where_the_strict_loader_refuses_the_file(self, tmp_path):
+        path = self._write(tmp_path, "[echodata.integration.38000]\nstart_depth_m = 6.0\n\n"
+                           "[echodata.integration.200000]\nstart_depth_m = 6.0\n"
+                           "max_depth_m = 100.0\n")
+        with pytest.raises(PresetError):
+            load_preset(path)
+        assert integration_from_toml(path) == {
+            38000: {"start_depth_m": 6.0},
+            200000: {"start_depth_m": 6.0, "max_depth_m": 100.0},
+        }
+
+    def test_no_tables_means_no_layer(self, tmp_path):
+        assert integration_from_toml(self._write(tmp_path)) == {}
+
+    def test_bad_tables_are_still_errors(self, tmp_path):
+        upside_down = "[echodata.integration.38000]\nstart_depth_m = 50\nmax_depth_m = 10\n"
+        with pytest.raises(PresetError, match="deeper than start_depth_m"):
+            integration_from_toml(self._write(tmp_path, upside_down))
+        with pytest.raises(PresetError, match="no denoise parameters"):
+            integration_from_toml(self._write(tmp_path, "[echodata.integration.70000]\n"
+                                                        "start_depth_m = 6\n"))
+        with pytest.raises(PresetError, match="unknown key"):
+            integration_from_toml(self._write(tmp_path, "[echodata.integration.38000]\n"
+                                                        "end_depth_m = 6\n"))
