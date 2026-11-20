@@ -275,6 +275,53 @@ def test_bin_sv_range_keeps_later_pings_of_a_channel_already_cut():
     assert pfr._bin_sv_range(ds, 0.1).sizes["range_sample"] == 2  # the shared-grid cut
 
 
+def test_bin_sv_range_averages_the_absorption_loss_like_the_range():
+    """Sv corrected with casts keeps its absorption loss on the binned grid."""
+    r = np.broadcast_to(np.arange(1, 9) * 0.05, (1, 3, 8)).copy()
+    dims = ("channel", "ping_time", "range_sample")
+    ds = xr.Dataset({"Sv": (dims, np.full(r.shape, -60.0)), "echo_range": (dims, r),
+                     "absorption_loss": (dims, 2 * 0.07 * r)},
+                    coords={"channel": ["a"], "ping_time": np.arange(3),
+                            "range_sample": np.arange(8)})
+    out = pfr._bin_sv_range(ds, 0.1, cut_padding=False)
+    assert out.sizes["range_sample"] == r.shape[-1] // 2
+    np.testing.assert_allclose(out["absorption_loss"], 2 * 0.07 * out["echo_range"])
+
+
+def test_cast_corrected_sv_carries_the_loss_it_was_compensated_for():
+    """Sv rises by exactly what its absorption_loss adds over 2 x sound_absorption x range."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from oceanstream.echodata.environment.ctd_casts import cast_profiles  # noqa: PLC0415
+
+    t0 = np.datetime64("2023-10-09T00:00", "ns")
+    pressure = np.arange(0.0, 1001.0, 2.0)
+    warm_dbar = 100.0  # 29 °C above, 8 °C below
+    temp = np.where(pressure < warm_dbar, 29.0, 8.0)[None, :].repeat(2, 0)
+    casts = xr.Dataset({
+        "ctd_temperature": (("N_PROF", "N_LEVELS"), temp),
+        "ctd_salinity": (("N_PROF", "N_LEVELS"), np.full(temp.shape, 35.0)),
+        "pressure": (("N_PROF", "N_LEVELS"), np.tile(pressure, (2, 1))),
+        "time": (("N_PROF",), np.array([t0, t0 + np.timedelta64(1, "h")])),
+        "latitude": (("N_PROF",), np.zeros(2)), "longitude": (("N_PROF",), np.full(2, -166.0)),
+        "btm_depth": (("N_PROF",), np.full(2, 5000.0)),
+    })
+    profiles = cast_profiles(casts, [200000.0], max_depth_m=400)
+    r = np.broadcast_to(np.array([10.0, 50.0, 100.0, 200.0, 300.0]), (1, 3, 5)).copy()
+    times = t0 + np.arange(3) * np.timedelta64(20, "m")
+    dims = ("channel", "ping_time", "range_sample")
+    sv_ch = xr.Dataset({"Sv": (dims, np.full(r.shape, -70.0)), "echo_range": (dims, r),
+                        "sound_absorption": (("ping_time", "channel"), np.full((3, 1), 0.07))},
+                       coords={"channel": ["a"], "ping_time": times, "range_sample": np.arange(5)})
+    cfg = SimpleNamespace(raw=SimpleNamespace(depth_offset=0.0))
+    out = pfr._correct_absorption(sv_ch.copy(), profiles, 200000.0, np.full(3, 0.07), cfg)
+    assert out["absorption_loss"].dims == out["Sv"].dims
+    np.testing.assert_allclose(out["Sv"] - sv_ch["Sv"],
+                               out["absorption_loss"] - 2 * 0.07 * sv_ch["echo_range"], atol=1e-9)
+    per_metre = (out["absorption_loss"] / (2 * sv_ch["echo_range"])).isel(channel=0, ping_time=0)
+    assert np.all(np.diff(per_metre.values) < 0)  # the warm top 100 m absorbs more
+
+
 class TestPassiveChannels:
     """Falkor (too) records its 333 kHz channel in passive mode, out to about 6 km."""
 

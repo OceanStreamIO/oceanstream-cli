@@ -1300,6 +1300,14 @@ def _correct_absorption(sv_ch, ctd, freq: float, used, cfg: PipelineConfig):
         {**sv_ch["Sv"].attrs,
          "absorption": "Francois-Garrison absorption averaged from the transducer to each "
                        "sample, from CTD casts either side of the ping"})
+    # sound_absorption keeps the channel's one value per ping, which no longer describes
+    # this Sv; the noise estimators rebuild Sv's range terms from this instead.
+    sv_ch["absorption_loss"] = (
+        2 * sv_ch["sound_absorption"] * sv_ch["echo_range"] + correction
+    ).transpose(*sv_ch["echo_range"].dims).assign_attrs(
+        units="dB", long_name="Two-way absorption loss compensated in Sv",
+        comment="2 x the absorption integrated from the transducer to each sample; noise "
+                "estimates use it in place of 2 x sound_absorption x echo_range")
     return sv_ch
 
 
@@ -1395,8 +1403,10 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
 
     binned = []
     factors = {}
+    # Range quantities averaged arithmetically, like echo_range (absorption_loss with casts).
+    by_range = [v for v in ("echo_range", "absorption_loss") if v in ds_Sv]
     for ch in ds_Sv["channel"].values:
-        ds_ch = ds_Sv[["Sv", "echo_range"]].sel(channel=[ch])
+        ds_ch = ds_Sv[["Sv", *by_range]].sel(channel=[ch])
         spacing = float(np.nanmedian(
             ds_ch["echo_range"].isel(ping_time=slice(0, 50)).diff("range_sample").values
         ))
@@ -1406,8 +1416,9 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
         sv_binned = 10 * np.log10(
             sv_linear.coarsen(range_sample=factor, boundary="trim").mean()
         )
-        range_binned = ds_ch["echo_range"].coarsen(range_sample=factor, boundary="trim").mean()
-        ds_binned = xr.Dataset({"Sv": sv_binned, "echo_range": range_binned})
+        ds_binned = xr.Dataset({"Sv": sv_binned, **{
+            v: ds_ch[v].coarsen(range_sample=factor, boundary="trim").mean() for v in by_range
+        }})
         # A channel with a longer sample interval is NaN-padded along
         # range_sample; cut the padding off so it does not count as missing data.
         if cut_padding:
@@ -1431,7 +1442,8 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
         "range_bin_samples": str(factors),
         "cell_methods": "range_sample: mean (linear domain)",
     }
-    ds_out["echo_range"].attrs = dict(ds_Sv["echo_range"].attrs)
+    for v in by_range:
+        ds_out[v].attrs = dict(ds_Sv[v].attrs)
     ds_out["range_sample"].attrs = {"long_name": "Along-range bin number, base 0"}
     return ds_out
 
@@ -1813,7 +1825,7 @@ def compute_sv_day(
         ds_Sv[coord].encoding.clear()
 
     if cfg.raw.sv_float32:
-        for var in ("Sv", "echo_range", "depth"):
+        for var in ("Sv", "echo_range", "depth", "absorption_loss"):
             if var in ds_Sv:
                 ds_Sv[var] = ds_Sv[var].astype("float32", keep_attrs=True)
 

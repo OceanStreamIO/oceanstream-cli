@@ -367,3 +367,39 @@ def test_absolute_sources_need_no_container(tmp_path, source):
     assert rebuilt.sizes["ping_time"] == 10
     source_nans = int(source["Sv"].isel(ping_time=slice(10)).isnull().sum())
     assert int(rebuilt["Sv"].isnull().sum()) > source_nans
+
+
+def _absorbed_noise(level: float = -150.0) -> xr.Dataset:
+    """Pure noise in Sv whose absorption loss falls off with range, as in a warm surface layer."""
+    r = np.linspace(1.0, 300.0, 600)
+    loss = 2 * (0.09 * r - 0.0001 * r**2)
+    sv = np.broadcast_to(level + 20 * np.log10(r) + loss, (1, 40, r.size)).copy()
+    dims = ("channel", "ping_time", "range_sample")
+    return xr.Dataset(
+        {
+            "Sv": (dims, sv),
+            "echo_range": (dims, np.broadcast_to(r, sv.shape).copy()),
+            "absorption_loss": (dims, np.broadcast_to(loss, sv.shape).copy()),
+            # The channel's one value per ping: the path mean over the whole range.
+            "sound_absorption": (("channel", "ping_time"),
+                                 np.full((1, 40), loss[-1] / (2 * r[-1]))),
+        },
+        coords={"channel": ["EKA 2 ES200"],
+                "ping_time": pd.date_range("2023-10-09", periods=40, freq="1s"),
+                "range_sample": np.arange(r.size)},
+    )
+
+
+def test_noise_follows_the_absorption_loss_the_sv_carries():
+    """Sv corrected with casts: the noise built on its own absorption loss comes off entirely."""
+    ds = _absorbed_noise()
+    level = products.estimate_background_level(ds, ping_num=10, range_sample_num=20)
+    np.testing.assert_allclose(level.values, -150.0, atol=1e-9)
+    assert products.background_corrected(ds["Sv"], level, ds, snr_threshold=None).isnull().all()
+
+
+def test_one_absorption_per_ping_leaves_noise_as_backscatter():
+    """The fault the absorption loss fixes: the single path-mean value puts the curve too low."""
+    ds = _absorbed_noise().drop_vars("absorption_loss")
+    level = products.estimate_background_level(ds, ping_num=10, range_sample_num=20)
+    assert products.background_corrected(ds["Sv"], level, ds, snr_threshold=None).notnull().any()
