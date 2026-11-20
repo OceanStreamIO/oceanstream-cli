@@ -155,6 +155,20 @@ def _ensure_position_coords(ds) -> "xr.Dataset":
     return ds
 
 
+def _exclude_surface(ds, depth_m: float):
+    """*ds* with the samples shallower than *depth_m* masked, on the sample grid only.
+
+    ``Dataset.where`` would spread every per-ping and per-channel variable over the
+    sample grid as well: latitude, longitude and frequency_nominal then came out NaN
+    wherever a ping's top sample had no depth, which is every ping once an integration
+    layer starts below the exclusion, and each spread copy was rebuilt lazily from the
+    stores when read.
+    """
+    keep = ds["depth"] >= depth_m
+    grid = set(keep.dims)
+    return ds.assign({v: ds[v].where(keep) for v in ds.data_vars if grid <= set(ds[v].dims)})
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE 0: Dask cluster setup
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1573,7 +1587,7 @@ def compute_mvbs_day(
 
     # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
-        ds = ds.where(ds["depth"] >= surface_exclusion_depth)
+        ds = _exclude_surface(ds, surface_exclusion_depth)
         if marker is not None:
             marker = marker.where(marker["depth"] >= surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
@@ -1744,14 +1758,24 @@ def compute_nasc_day(
             fn = fn.isel({d: 0 for d in non_ch_dims})
         freq_nominal = fn.reset_coords(drop=True).load()
 
+    # NASC reads Sv and depth from the sample grid; the flags, masks and range terms there
+    # only built the view above.
+    grid = set(ds["depth"].dims)
+    ds = ds.drop_vars(
+        [v for v in ds.data_vars if v not in ("Sv", "depth") and grid <= set(ds[v].dims)]
+    )
+
     # Exclude near-surface bins
     if surface_exclusion_depth > 0 and "depth" in ds:
-        ds = ds.where(ds["depth"] >= surface_exclusion_depth)
+        ds = _exclude_surface(ds, surface_exclusion_depth)
         logger.info("  Surface exclusion: masked depth < %.1fm", surface_exclusion_depth)
 
-    # compute_nasc returns a lazy result: held here, the empty-bin check and both
-    # saves no longer recompute it from the Sv stores three times over.
+    # Held in memory first: compute_nasc reads depth and the positions several times
+    # (ranges, distance, position repair), and lazily each read went back to the stores
+    # and rebuilt the masks, 36 of 39 minutes on a full TPOS short-pulse day. The result
+    # is held too, so the empty-bin check and both saves reuse it.
     with dask.config.set(scheduler="threads"):
+        ds = ds.load()
         ds_nasc = compute_nasc(ds, range_bin=range_bin, dist_bin=dist_bin).load()
 
     # Re-attach the clean 1D (channel,) frequency_nominal.
