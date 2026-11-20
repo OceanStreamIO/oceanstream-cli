@@ -1,6 +1,6 @@
 # TPOS 2023: Sv with water properties from the globe
 
-20 November 2026. Saildrone TPOS 2023 (`SD_TPOS2023_v03`), EK80 at 38 and 200 kHz, 142 days from 30 May to 5 November 2023.
+20 November 2026. Saildrone TPOS 2023 (`SD_TPOS2023_v03`), EK80 at 38 and 200 kHz, 141 days with echosounder data from 31 May to 5 November 2023.
 
 ## Summary
 
@@ -127,9 +127,9 @@ The small losses in the upper 200 m at 38 kHz come from the depth compression (t
 
 Storing the absorption loss adds about 0.13 GB per day to the Sv stores (0.06 GB short pulse, 0.05 GB long pulse), about 18 GB over the campaign.
 
-The full run started on 20 November 2026 at about 15:00 UTC: four Jobs of 35–36 days each, Sv then denoising for each day before the next, written in place into `s3://oceanstream-bucket/hpc/products/SD_TPOS2023_v03/<day>/`. The file names match the published v03 products one for one; the run adds a denoising statistics file per pulse category and a JSON sidecar per echogram. The STAC Items are rewritten after the run. There are 142 days instead of 141: after the raw files were renamed by first ping (6 November), one file whose first ping is after midnight now forms 2023-06-03. The v03 products are overwritten and were not copied first; the shape of every v03 Sv store was recorded before the run (`~/work/hpc-runs/SD_TPOS2023_v03/v03-sv-shapes.json`) so that days with fewer pings can be found afterwards.
+The full run started on 20 November 2026 at about 15:30 UTC: four Jobs of 35–36 days each, Sv then denoising for each day before the next, written in place into `s3://oceanstream-bucket/hpc/products/SD_TPOS2023_v03/<day>/`. A first start at 15:05 UTC failed at denoising on its first day in every Job: with Sv and denoised products in the same folder, the pipeline refuses an explicit `--sv-source-container` naming that folder. By then the new Sv had replaced v03's for 2023-05-31, 07-22, 08-27 and 10-01 under their old denoised products. The Jobs were stopped, `run.sh` no longer passes the flag in that case (oceanstream-hpc-runs `d9bdee3`), each Job now stops at the first failed denoising, and the restart began with those four days. The file names match the published v03 products one for one; the run adds a denoising statistics file per pulse category and a JSON sidecar per echogram. The STAC Items are rewritten after the run. The run covers 141 days: 2023-05-30 is left out (below), and 2023-06-03 is new, because after the raw files were renamed by first ping (6 November) one file whose first ping is after midnight now forms that day. The v03 products are overwritten and were not copied first; the shape of every v03 Sv store was recorded before the run (`~/work/hpc-runs/SD_TPOS2023_v03/v03-sv-shapes.json`) so that days with fewer pings can be found afterwards.
 
-2023-05-30, the deployment day, has no echosounder data: its 98 non-empty files are all in passive mode (`channel_mode` 1). Their Sv rises steadily from −155 dB at 1 m to −83 dB at 1300 m, which is noise with gain applied and no transmit pulse. The pipeline has left passive channels out since oceanstream-cli `5b16277` (written for Falkor (too)), so the day fails and its v03 products, which are that noise processed as Sv, are left in place.
+2023-05-30, the deployment day, has no echosounder data: its 98 non-empty files are all in passive mode (`channel_mode` 1). Their Sv rises steadily from −155 dB at 1 m to −83 dB at 1300 m, which is noise with gain applied and no transmit pulse. The pipeline has left passive channels out since oceanstream-cli `5b16277` (written for Falkor (too)), so the day is left out of the run and its v03 products, which are that noise processed as Sv, stay in place. 2023-05-31 also starts with passive files (28 of them are left out), so its long-pulse Sv now holds about 17,100 pings instead of v03's 27,022.
 
 ## Other campaigns
 
@@ -184,7 +184,7 @@ Deciding which to redo needs the real water along each track. The globe can supp
 | What | Where |
 |---|---|
 | CLI fix | oceanstream-cli `bc334fa` (not pushed); tarball `s3://oceanstream-bucket/code/oceanstream-cli-bc334fa.tar.gz` |
-| Job script | oceanstream-hpc-runs `edito/ncei-sv/run.sh`: `CTD_S3_KEY`, `PRESET_S3_KEY`, `SEGMENT_STATS`, `LOG_PREFIX`, partitioned GPS (`290e5a3`, `81f754e`, not pushed) |
+| Job script | oceanstream-hpc-runs `edito/ncei-sv/run.sh`: `CTD_S3_KEY`, `PRESET_S3_KEY`, `SEGMENT_STATS`, `LOG_PREFIX`, partitioned GPS, one folder for Sv and denoised products (`290e5a3`, `81f754e`, `d9bdee3`, not pushed) |
 | Manifests | `~/work/hpc-runs/SD_TPOS2023_v03/` (`edito-job-pilot.yaml`, `edito-job-control.yaml`, `edito-job-full.yaml`) |
 | Casts | `s3://oceanstream-bucket/hpc/env/SD_TPOS2023_v03/casts-glorys12-hourly.nc` |
 | Lab preset as run | `s3://oceanstream-bucket/edito-tests/SD_TPOS2023_v03/preset/tpos-sd-2023.toml` |
