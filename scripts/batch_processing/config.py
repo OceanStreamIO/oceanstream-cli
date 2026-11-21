@@ -330,6 +330,17 @@ class RawConversionConfig:
     # Excludes env_params_file.
     ctd_file: str = ""
 
+    # Water columns along the GPS track from the OceanStream globe (/api/env/track),
+    # used like CTD casts (oceanstream.echodata.environment.globe). The model is the
+    # reanalysis where it covers the day ("auto"), or "glorys" / "anfc"; insitu lets the
+    # globe correct the model with measured profiles nearby. The globe's address can come
+    # from OCEANSTREAM_GLOBE_URL and its API key only from OCEANSTREAM_GLOBE_API_KEY.
+    # Excludes ctd_file and env_params_file.
+    water_from_globe: bool = False
+    globe_model: str = "auto"
+    globe_insitu: bool = True
+    globe_url: str = ""
+
     # <calibration><case kHz= g= SA= equivalentBeamAngle=/></calibration> XML (as published
     # with MFRI survey data). Its gain, Sa correction and equivalent beam angle replace the
     # values in the raw files (oceanstream.echodata.calibrate.case_xml).

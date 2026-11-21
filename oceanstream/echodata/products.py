@@ -192,9 +192,10 @@ def _lin2log(data):
 def _range_terms(ds: xr.Dataset) -> tuple[xr.DataArray, xr.DataArray]:
     """Spreading and absorption loss, exactly as ``echopype.clean`` computes them.
 
-    Sv corrected with CTD casts (``--ctd-file``) carries ``absorption_loss``, the loss it
-    was compensated for at each sample; one ``sound_absorption`` per ping would put the
-    noise curve up to several dB off it, at 200 kHz in a warm surface layer.
+    Sv corrected with water columns along the track (``--ctd-file``, ``--water-from-globe``)
+    carries ``absorption_loss``, the loss it was compensated for at each sample; one
+    ``sound_absorption`` per ping would put the noise curve up to several dB off it, at
+    200 kHz in a warm surface layer.
     """
     spreading_loss = 20 * np.log10(ds["echo_range"].where(ds["echo_range"] >= 1, other=1))
     if "absorption_loss" in ds:

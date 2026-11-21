@@ -1220,21 +1220,63 @@ def _interpolate_gps_linear(ds_Sv, gps_df: pd.DataFrame):
 NOMINAL_SOUND_SPEED = 1500.0
 
 
-def _load_ctd(cfg: PipelineConfig, ed):
-    """CastProfiles from ``cfg.raw.ctd_file`` for the day's channel frequencies and ranges."""
+def _globe_casts(cfg: PipelineConfig, ed, ed_zarr_path: str, gps_df: pd.DataFrame | None):
+    """The globe's water columns along the EchoData's track: (casts file, Sv note).
+
+    The track is *gps_df* over the EchoData's pings and an hour either side, else the raw
+    files' NMEA. The file is written next to the EchoData Zarr.
+    """
+    from datetime import timedelta
+
+    import numpy as np
+
+    from oceanstream.echodata.environment.globe import GlobeSettings, track_casts
+
+    times = pd.to_datetime(np.asarray(ed["Sonar/Beam_group1"]["ping_time"].values))
+    fixes = None
+    if gps_df is not None and not gps_df.empty:
+        start, end = times.min() - timedelta(hours=1), times.max() + timedelta(hours=1)
+        fixes = gps_df[(gps_df["dt"] >= start) & (gps_df["dt"] <= end)]
+    if fixes is None or fixes.empty:
+        fixes = _platform_gps(ed)
+    settings = GlobeSettings(url=cfg.raw.globe_url, model=cfg.raw.globe_model,
+                             insitu=cfg.raw.globe_insitu)
+    path = Path(ed_zarr_path).with_name(f"{Path(ed_zarr_path).name.removesuffix('.zarr')}"
+                                        "--globe-casts.nc")
+    casts = track_casts(fixes if fixes is not None else pd.DataFrame(columns=["dt", "lat", "lon"]),
+                        path, settings)
+    logger.info("  Water from the globe (%s, %s): %s", settings.url, casts.model,
+                ", ".join(f"{n} {kind}" for kind, n in casts.kinds.items() if n))
+    return str(path), casts.describe(settings.url)
+
+
+def _load_ctd(cfg: PipelineConfig, ed, ed_zarr_path: str = "",
+              gps_df: pd.DataFrame | None = None):
+    """CastProfiles for the day's channel frequencies and ranges, and the Sv note on them.
+
+    From ``cfg.raw.ctd_file``, or from the globe along the track (``--water-from-globe``).
+    """
     import numpy as np
 
     from oceanstream.echodata.environment.ctd_casts import load_cchdo_ctd
 
+    if cfg.raw.water_from_globe:
+        path, note = _globe_casts(cfg, ed, ed_zarr_path, gps_df)
+    else:
+        path, note = cfg.raw.ctd_file, ""
     beam = ed["Sonar/Beam_group1"]
     freqs = [float(f) for f in np.unique(beam["frequency_nominal"].values)]
     longest = float(beam.sizes["range_sample"] * np.nanmax(beam["sample_interval"].values)
                     * NOMINAL_SOUND_SPEED / 2)
-    profiles = load_cchdo_ctd(cfg.raw.ctd_file, freqs,
+    profiles = load_cchdo_ctd(path, freqs,
                               max_depth_m=cfg.raw.depth_offset + 1.05 * longest + 10)
-    logger.info("  CTD: %d casts from %s, %s to %s", profiles.time.size, cfg.raw.ctd_file,
+    logger.info("  CTD: %d casts from %s, %s to %s", profiles.time.size, path,
                 profiles.time.min(), profiles.time.max())
-    return profiles
+    if not note:
+        note = (f"Sound speed and absorption from {profiles.time.size} CTD casts in "
+                f"{os.path.basename(path)}; Mackenzie (1981) sound speed and "
+                "Francois-Garrison (1982) absorption, pH 8.0")
+    return profiles, note
 
 
 def _ctd_environment(ed_ch, channel: str, n_samples: int, ctd, cfg: PipelineConfig):
@@ -1504,8 +1546,12 @@ def _platform_gps(ed) -> pd.DataFrame | None:
     return df if not df.empty else None
 
 
-def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
-    """Sv of one combined EchoData Zarr: (ds_Sv, encode mode, GPS fixes from its NMEA)."""
+def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig,
+                     gps_df: pd.DataFrame | None = None):
+    """Sv of one combined EchoData Zarr: (ds_Sv, encode mode, GPS fixes from its NMEA).
+
+    *gps_df* is the track the globe is asked about with ``--water-from-globe``.
+    """
     import echopype as ep
 
     # Open combined EchoData lazily and chunk for out-of-core processing
@@ -1535,8 +1581,9 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
         if modes:
             import numpy as np
 
-            if cfg.raw.ctd_file or cfg.raw.cal_params_file:
-                raise ValueError("--ctd-file and --cal-params-file need one sample type per file; "
+            if cfg.raw.ctd_file or cfg.raw.water_from_globe or cfg.raw.cal_params_file:
+                raise ValueError("--ctd-file, --water-from-globe and --cal-params-file need one "
+                                 "sample type per file; "
                                  f"{Path(ed_zarr_path).name} mixes complex and power channels.")
             # Every channel, each calibrated from its own beam group.
             logger.info("  Channels of mixed sample types: %s", modes)
@@ -1567,8 +1614,9 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
         logger.info("  Environment parameters for %s: %s", day_key, env_params)
 
     ctd = None
-    if cfg.raw.ctd_file:
-        ctd = _load_ctd(cfg, ed)
+    environment = ""
+    if cfg.raw.ctd_file or cfg.raw.water_from_globe:
+        ctd, environment = _load_ctd(cfg, ed, ed_zarr_path, gps_df)
         if not by_channel:
             # The CTD correction works one channel at a time.
             import numpy as np
@@ -1589,11 +1637,7 @@ def _sv_for_echodata(ed_zarr_path: str, day_key: str, cfg: PipelineConfig):
         ds_Sv = _compute_sv_by_channel(ed_zarr_path, by_channel, compute_kwargs, cfg, ctd=ctd,
                                        cal=cal, modes=modes)
         if ctd is not None:
-            ds_Sv.attrs["environment"] = (
-                f"Sound speed and absorption from {ctd.time.size} CTD casts in "
-                f"{os.path.basename(cfg.raw.ctd_file)}; Mackenzie (1981) sound speed and "
-                "Francois-Garrison (1982) absorption, pH 8.0"
-            )
+            ds_Sv.attrs["environment"] = environment
     else:
         if cal is not None:
             compute_kwargs["cal_params"] = case_cal_params(ed["Sonar/Beam_group1"], cal)
@@ -1720,7 +1764,7 @@ def _sv_for_file(ed_zarr_path: str, file_record: dict, cfg: PipelineConfig, echo
 
     start = file_record.get("file_start_time") or ""
     day_key = start[:10] if start else (datetime.now().strftime("%Y-%m-%d"))
-    ds_Sv, encode_mode, nmea = _sv_for_echodata(ed_zarr_path, day_key, cfg)
+    ds_Sv, encode_mode, nmea = _sv_for_echodata(ed_zarr_path, day_key, cfg, gps_df)
     gps = gps_df if gps_df is not None and not gps_df.empty else nmea
     if gps is not None:
         ds_Sv = _interpolate_gps_linear(ds_Sv, gps)
@@ -1785,7 +1829,7 @@ def compute_sv_day(
             gps_df = None  # positions were added file by file
             ds_Sv = _fill_missing_positions(ds_Sv)
     else:
-        parts = [_sv_for_echodata(path, day_key, cfg) for path in paths]
+        parts = [_sv_for_echodata(path, day_key, cfg, gps_df) for path in paths]
         ds_Sv = parts[0][0] if len(parts) == 1 else _join_sv_parts([p[0] for p in parts])
         if cfg.raw.single_pulse and len(parts) > 1:
             ds_Sv = _blank_minor_pulses(ds_Sv, paths)
@@ -2843,6 +2887,29 @@ def parse_args() -> PipelineConfig:
              "--env-params-file.",
     )
     parser.add_argument(
+        "--water-from-globe", action="store_true",
+        help="Take sound speed and absorption from the OceanStream globe: ocean-model water "
+             "columns along the day's GPS track, corrected with measured profiles nearby, used "
+             "like CTD casts (Sv corrected to the mean absorption along each sample's path). "
+             "Needs the globe reachable from where the pipeline runs; an API key in "
+             "OCEANSTREAM_GLOBE_API_KEY reaches waters outside the globe's mirror. Excludes "
+             "--ctd-file and --env-params-file.",
+    )
+    parser.add_argument(
+        "--globe-model", choices=["auto", "glorys", "anfc"], default="auto",
+        help="With --water-from-globe: the ocean model. auto (default) takes the GLORYS12 "
+             "reanalysis where it covers the day, else the analysis and forecast (anfc).",
+    )
+    parser.add_argument(
+        "--globe-no-insitu", action="store_true",
+        help="With --water-from-globe: model columns only, not corrected with measured profiles.",
+    )
+    parser.add_argument(
+        "--globe-url", default="",
+        help="With --water-from-globe: the globe's address. Default: $OCEANSTREAM_GLOBE_URL, "
+             "else https://globe.oceanstream.io.",
+    )
+    parser.add_argument(
         "--sv-per-file", action="store_true",
         help="Compute Sv for each file right after conversion and join the day's Sv in time, "
              "instead of combining a day's EchoData first. Needs far less disk for large days.",
@@ -3115,8 +3182,16 @@ def parse_args() -> PipelineConfig:
     cfg.raw.sv_workers = max(1, args.sv_workers)
     if cfg.raw.sv_workers > 1 and not cfg.raw.sv_per_file:
         parser.error("--sv-workers needs --sv-per-file.")
-    if cfg.raw.ctd_file and cfg.raw.env_params_file:
-        parser.error("--ctd-file and --env-params-file both set the environment; use one.")
+    cfg.raw.water_from_globe = args.water_from_globe
+    cfg.raw.globe_model = args.globe_model
+    cfg.raw.globe_insitu = not args.globe_no_insitu
+    cfg.raw.globe_url = args.globe_url
+    if sum(map(bool, (cfg.raw.ctd_file, cfg.raw.env_params_file, cfg.raw.water_from_globe))) > 1:
+        parser.error("--ctd-file, --env-params-file and --water-from-globe each set the water "
+                     "properties; use one.")
+    if (args.globe_model != "auto" or args.globe_no_insitu or args.globe_url) \
+            and not cfg.raw.water_from_globe:
+        parser.error("--globe-model, --globe-no-insitu and --globe-url need --water-from-globe.")
     cfg.apply_seabed_mask = args.seabed_mask
     cfg.seabed_mask_offset = args.seabed_mask_offset
     cfg.seabed_line = args.seabed_line
