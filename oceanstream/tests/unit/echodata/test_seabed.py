@@ -267,6 +267,7 @@ def create_fjord_dataset(
     n_pings: int = 300,
     seabed_m: float = 73.0,
     dropout: slice = slice(0, 0),
+    max_range_m: float = 100.0,
 ) -> xr.Dataset:
     """A shallow site: a seabed echo with a sharp leading edge at *seabed_m* and
     a tail whose length changes from ping to ping, as a buoy's does.
@@ -276,7 +277,7 @@ def create_fjord_dataset(
     """
     import pandas as pd
 
-    rng_m = np.arange(0, 100, 0.1)
+    rng_m = np.arange(0, max_range_m, 0.1)
     gen = np.random.default_rng(0)
     sv = gen.normal(-75, 2, (n_pings, rng_m.size))
     top = int(np.searchsorted(rng_m, seabed_m))
@@ -356,6 +357,48 @@ class TestDetectSeabedComposite:
         rng_m = ds["echo_range"].values[0]
         ds["Sv"][:, rng_m < 12.0] = 5.0
         line = detect_seabed(ds, method="composite", pick="edge", r0=10).seabed_depth.values
+        assert np.all(np.abs(line - 73.0) <= 0.2)
+
+    @staticmethod
+    def far_noise(ds: xr.Dataset) -> xr.Dataset:
+        """Range-compensated noise over the last 15 % of the range, stronger than the seabed
+        (EX2501)."""
+        rng_m = ds["echo_range"].values[0]
+        far = rng_m >= 0.85 * rng_m[-1]
+        ds["Sv"][:, far] = np.linspace(-30.0, -5.0, int(far.sum()))
+        return ds
+
+    def test_far_noise_stronger_than_the_seabed_does_not_take_the_pick(self):
+        ds = self.far_noise(create_fjord_dataset(max_range_m=400.0))
+        line = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
+        assert np.all(np.abs(line - 73.0) <= 0.2)
+
+    def test_without_a_strong_level_the_pick_starts_in_the_noise(self):
+        ds = self.far_noise(create_fjord_dataset(max_range_m=400.0))
+        result = detect_seabed(ds, method="composite", pick="edge", strong_sv=None)
+        assert np.median(result.seabed_depth.values) > 300.0
+
+    def test_noise_rising_past_the_strong_level_keeps_the_strongest_pick(self):
+        # Deep water (EX2402): no seabed in range, and the noise crosses -25 dB on its way to
+        # the end of the range. Its first -25 dB sample is no echo; the pick stays as it was.
+        ds = self.far_noise(create_fjord_dataset(dropout=slice(0, 300), max_range_m=400.0))
+        new = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
+        old = detect_seabed(ds, method="composite", pick="edge", strong_sv=None).seabed_depth.values
+        np.testing.assert_array_equal(new, old)
+
+    def test_noise_close_below_a_seabed_keeps_the_strongest_pick(self):
+        # Stronger noise within half the seabed's range below it: the first strong echo does
+        # not end before it, so nothing changes; the line is lifted later (_echo_top).
+        ds = self.far_noise(create_fjord_dataset())
+        new = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
+        old = detect_seabed(ds, method="composite", pick="edge", strong_sv=None).seabed_depth.values
+        np.testing.assert_array_equal(new, old)
+
+    def test_a_school_weaker_than_the_strong_level_does_not_take_the_pick(self):
+        ds = self.far_noise(create_fjord_dataset(max_range_m=400.0))
+        rng_m = ds["echo_range"].values[0]
+        ds["Sv"][:, (rng_m >= 40.0) & (rng_m < 48.0)] = -30.0
+        line = detect_seabed(ds, method="composite", pick="edge").seabed_depth.values
         assert np.all(np.abs(line - 73.0) <= 0.2)
 
     def test_unknown_pick(self):
@@ -810,6 +853,22 @@ class TestSimultaneousSeabed:
         result = detect_seabed_interleaved(ds, pick="edge")
         assert result.pings_detected == 300
         assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+
+    def test_far_noise_stronger_than_the_seabed_leaves_the_line_on_every_ping(self):
+        from oceanstream.echodata.seabed import detect_seabed_interleaved
+
+        # EX2501 2024-11-11: banks at 290-670 m recorded to 5 km, noise at 4-5 km as strong
+        # as the seabed. The line stood on 27 % of the pings; here the noise lies too far
+        # below the seabed, and not at a multiple of its range, for the line to be raised to it
+        # (_echo_top).
+        fjord = create_fjord_dataset(n_pings=300, max_range_m=400.0)
+        fjord = TestDetectSeabedComposite.far_noise(fjord)
+        ds = self.together(fjord["Sv"].values, fjord["echo_range"].values[0])
+        result = detect_seabed_interleaved(ds, pick="edge")
+        assert result.pings_detected == 300
+        assert np.all(np.abs(result.seabed_depth.values - 73.0) <= 0.2)
+        old = detect_seabed_interleaved(ds, pick="edge", strong_sv=None).seabed_depth.values
+        assert not np.all(np.abs(old - 73.0) <= 0.2)
 
     def test_a_school_in_deep_water_does_not_become_hours_of_seabed(self):
         from oceanstream.echodata.seabed import detect_seabed_interleaved

@@ -613,13 +613,39 @@ def detect_seabed_ariza(
 
 
 def _leading_edge(
-    sv: np.ndarray, cand: np.ndarray, thr: np.ndarray, top: int = 0
+    sv: np.ndarray,
+    cand: np.ndarray,
+    thr: np.ndarray,
+    top: int = 0,
+    strong: Optional[float] = None,
+    range_1d: Optional[np.ndarray] = None,
+    below_frac: float = 0.5,
 ) -> np.ndarray:
     """Per ping, the sample where the seabed echo starts, or -1 with no candidate.
 
     Starts at the ping's strongest candidate — the seabed echo itself rather
     than its tail — and steps up while Sv stays above the ping's threshold.
     A NaN sample ends the step, as a sample below the threshold does.
+
+    With *strong*, a ping holding a candidate of at least *strong* dB starts at the
+    strongest sample of the shallowest such candidate's run instead: an echo no fish
+    school makes (see :func:`_echo_top`), so the seabed, even where something deeper is
+    stronger. On EX2501 2024-11-10 to 11-12 the ship recorded to about 5 km over banks at
+    290-670 m, and at 4-5 km the range-compensated noise read -10 to -22 dB in denoised
+    Sv, as strong as the seabed: the strongest candidate lay in the noise on most pings,
+    the line stood on 27 % of them, and the seabed under the rest was integrated as
+    water column (up to 2.1 million m2 nmi-2 in a 0.5 nmi bin).
+
+    That run must be an echo that ends: the ping must record *below_frac* of its range
+    further (*range_1d*, else sample indices), and nothing there below the run may be
+    stronger than its peak. Where the noise itself rises past *strong* on its way to the
+    end of a long range, the first such candidate is the noise, not an echo, and the ping
+    keeps the strongest candidate: over 4.4-5.5 km of water on EX2402, EX2404, EX2503 and
+    EX2506 the first -25 dB candidate lay 1-2.6 km above the seabed (GEBCO), where the
+    noise crossed -25 dB within the last 700 m of a 4 km range. It only ever moves the
+    start up: where the strongest candidate is shallower, it stays (on SE2204 2022-06-18
+    a gap of removed impulse noise inside the seabed echo held the strongest candidate,
+    and the first -25 dB run below the gap stepped up only to the gap, 9 m into the echo).
 
     The step stays below *top*, the start of the search gate. A candidate whose
     echo stays above the threshold all the way up to *top* is the surface layer or
@@ -636,6 +662,29 @@ def _leading_edge(
         cand = cand & (cols >= first_quiet[:, np.newaxis])
     has = cand.any(axis=1)
     peak = np.argmax(np.where(cand, sv, -np.inf), axis=1)
+    if strong is not None:
+        rng = np.arange(n_samples, dtype=float) if range_1d is None else np.asarray(range_1d, float)
+        # In blocks of pings: each step holds a few full-size temporaries.
+        for a in range(0, sv.shape[0], 2048):
+            rows = slice(a, a + 2048)
+            c, v = cand[rows], sv[rows]
+            hit = c & (v >= strong)
+            hits = hit.any(axis=1)
+            if not hits.any():
+                continue
+            first = np.argmax(hit, axis=1)[:, np.newaxis]
+            gap = ~c & (cols > first)
+            end = np.where(gap.any(axis=1), np.argmax(gap, axis=1), n_samples)[:, np.newaxis]
+            finite = np.isfinite(v)
+            run = (cols >= first) & (cols < end) & finite
+            run_peak = np.argmax(np.where(run, v, -np.inf), axis=1)
+            peak_sv = v[np.arange(v.shape[0]), run_peak]
+            reach = (1.0 + below_frac) * rng[first[:, 0]]
+            after = (cols >= end) & (rng[np.newaxis, :] <= reach[:, np.newaxis]) & finite
+            after_max = np.max(np.where(after, v, -np.inf), axis=1)
+            last = n_samples - 1 - np.argmax(finite[:, ::-1], axis=1)
+            ends = (reach <= rng[last]) & after.any(axis=1) & (peak_sv >= after_max)
+            peak[rows] = np.where(hits & ends & (run_peak < peak[rows]), run_peak, peak[rows])
     below = ~(sv > thr[:, np.newaxis]) & (cols < peak[:, np.newaxis]) & (cols >= top)
     last_below = n_samples - 1 - np.argmax(below[:, ::-1], axis=1)
     edge = np.where(below.any(axis=1), last_below + 1, -1 if top > 0 else 0)
@@ -679,6 +728,7 @@ def detect_seabed_composite(
     savgol_polyorder: int = 1,
     max_index_jump: int = 5,
     pick: Literal["deepest", "edge"] = "deepest",
+    strong_sv: Optional[float] = -25.0,
 ) -> SeabedDetectionResult:
     """Detect seabed using a robust 11-step composite algorithm.
 
@@ -729,6 +779,11 @@ def detect_seabed_composite(
             surface, and smooths it with a running median of
             ``savgol_window`` pings, which drops a short excursion where a
             moving average would spread it into a ramp.
+        strong_sv: With ``pick="edge"``, a ping whose candidates reach this Sv
+            starts its leading edge from the shallowest of them rather than the
+            strongest, which can lie in range-compensated noise far below the
+            seabed, provided that echo ends before the noise rises past it (see
+            :func:`_leading_edge`). ``None`` always starts from the strongest.
 
     Returns:
         SeabedDetectionResult with seabed depth line and diagnostics.
@@ -813,9 +868,11 @@ def detect_seabed_composite(
         # ── 9–11. Leading edge, falling back to the candidates before ───
         # morphology, then a running median. A ping with no candidate at
         # all takes its neighbours' line, not the bottom of the range.
-        idx_primary = _leading_edge(Sv_filt, cand, thr_per_ping, i0)
+        idx_primary = _leading_edge(Sv_filt, cand, thr_per_ping, i0, strong=strong_sv,
+                                    range_1d=range_1d)
         has_primary = idx_primary >= 0
-        idx_fallback = _leading_edge(Sv_filt, fallback_mask, thr_per_ping, i0)
+        idx_fallback = _leading_edge(Sv_filt, fallback_mask, thr_per_ping, i0, strong=strong_sv,
+                                     range_1d=range_1d)
         idx = np.where(has_primary, idx_primary, idx_fallback).astype(float)
         idx[idx < 0] = np.nan
         line = _running_median_line(idx, win)
@@ -905,6 +962,7 @@ def detect_seabed_composite(
             "continuity_window": continuity_window,
             "savgol_window": savgol_window,
             "pick": pick,
+            "strong_sv": strong_sv if pick == "edge" else None,
         },
         edge_depth=None if edge_depth is None else xr.DataArray(
             edge_depth, dims=["ping_time"], coords={"ping_time": ping_times}, name="edge_depth"
@@ -1393,6 +1451,12 @@ def detect_seabed_interleaved(
 
     On RR2205 at 38 kHz the seabed's strongest echo reached -21 to -3 dB in 90 % of
     pings, while in water deeper than the range 90 % of pings peaked below -48 dB.
+
+    The composite detector's leading edge starts from the shallowest echo reaching
+    ``strong_sv`` (-25 dB unless given; ``None`` for the strongest candidate) that ends
+    before anything stronger below it, so noise amplified at the far end of a long
+    recorded range does not draw the line down to it (EX2501 2024-11-11, see
+    :func:`_leading_edge`).
 
     It suits channels that ping together as well (every ping is then the channel's own),
     and the pipeline uses it for both: in deep water the composite detector alone joined
