@@ -52,11 +52,34 @@ logger = logging.getLogger(__name__)
 SENSOR_ID_GNSS = "gnss-navigation"
 
 
-def parse_nmea_line(line: str) -> dict[str, Any] | None:
+SUPPORTED_SENTENCE_TYPES = ["GGA", "RMC", "GNS", "VTG", "ZDA"]
+
+
+def normalize_sentence_types(sentence_types: list[str] | None) -> list[str]:
+    """Sentence types to read, upper-cased; "GGA,RMC" and ["GGA", "RMC"] are the same.
+
+    Raises:
+        ValueError: If a type is not one the reader extracts data from.
+    """
+    if not sentence_types:
+        return list(SUPPORTED_SENTENCE_TYPES)
+    types = [t.strip().upper() for item in sentence_types for t in item.split(",") if t.strip()]
+    unknown = sorted(set(types) - set(SUPPORTED_SENTENCE_TYPES))
+    if unknown:
+        raise ValueError(
+            f"Unsupported NMEA sentence type(s): {', '.join(unknown)}. "
+            f"Supported: {', '.join(SUPPORTED_SENTENCE_TYPES)}"
+        )
+    return list(dict.fromkeys(types))
+
+
+def parse_nmea_line(line: str, sentence_types: list[str] | None = None) -> dict[str, Any] | None:
     """Parse a single NMEA line and extract relevant data.
 
     Args:
         line: Line in format "<ISO8601_timestamp> <NMEA_sentence>"
+        sentence_types: Sentence types to read (e.g. ['GGA', 'RMC']); other
+            sentences are skipped. None reads all supported types.
 
     Returns:
         Dictionary with parsed data or None if line cannot be parsed
@@ -85,6 +108,9 @@ def parse_nmea_line(line: str) -> dict[str, Any] | None:
         msg = pynmea2.parse(nmea_sentence)
     except pynmea2.ParseError as e:
         logger.debug(f"Failed to parse NMEA sentence: {nmea_sentence} - {e}")
+        return None
+
+    if sentence_types is not None and getattr(msg, "sentence_type", None) not in sentence_types:
         return None
 
     # Extract data based on sentence type
@@ -243,8 +269,7 @@ def process_nmea_raw(
     Returns:
         Dictionary with processing statistics including decimation info
     """
-    if sentence_types is None:
-        sentence_types = ["GGA", "RMC", "GNS", "VTG", "ZDA"]
+    sentence_types = normalize_sentence_types(sentence_types)
 
     logger.info(f"Processing NMEA raw data: {input_path}")
     logger.info(f"Output CSV: {output_path}")
@@ -260,13 +285,16 @@ def process_nmea_raw(
     with open(input_path, "r", encoding="utf-8") as f:
         for line in f:
             lines_read += 1
-            parsed = parse_nmea_line(line)
+            parsed = parse_nmea_line(line, sentence_types)
             if parsed:
                 lines_parsed += 1
                 data_points.append(parsed)
 
     if not data_points:
-        raise ValueError(f"No valid NMEA data found in {input_path}")
+        raise ValueError(
+            f"No valid NMEA data found in {input_path} "
+            f"for sentence types {', '.join(sentence_types)}"
+        )
 
     # Merge data points by timestamp
     # (Multiple sentences can have same timestamp)

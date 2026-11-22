@@ -196,7 +196,20 @@ class TestProcessNmeaRaw:
         stats = process_nmea_raw(sample_nmea_data, output_file, sentence_types=["GGA"])
         
         assert output_file.exists()
-        assert stats["lines_parsed"] > 0
+        assert stats["lines_parsed"] == 3  # the three $GPGGA lines
+        rows = list(csv.DictReader(output_file.open()))
+        # Speed and course come only from RMC/VTG, which were skipped
+        assert all(row["speed_over_ground"] == "" for row in rows)
+        assert all(row["gps_quality"] for row in rows)
+
+    def test_sentence_types_as_comma_list(self, sample_nmea_data: Path, tmp_path: Path):
+        """The CLI's GGA,RMC form selects the same types as ['GGA', 'RMC']."""
+        stats = process_nmea_raw(sample_nmea_data, tmp_path / "out.csv", sentence_types=["gga,RMC"])
+        assert stats["lines_parsed"] == 5
+
+    def test_unsupported_sentence_type_is_rejected(self, sample_nmea_data: Path, tmp_path: Path):
+        with pytest.raises(ValueError, match="HDT"):
+            process_nmea_raw(sample_nmea_data, tmp_path / "out.csv", sentence_types=["GGA", "HDT"])
     
     def test_process_with_sampling(self, sample_nmea_data: Path, tmp_path: Path):
         """Test processing with sampling interval."""
