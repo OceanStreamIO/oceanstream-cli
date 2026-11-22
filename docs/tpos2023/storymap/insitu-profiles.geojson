@@ -1,0 +1,3106 @@
+{
+ "type": "FeatureCollection",
+ "name": "TPOS 2023-10-09: in-situ profiles behind the globe's correction",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -167.4348,
+     -1.1849
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905768:2023-10-11T00:05",
+    "platform_id": "tac:5905768",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-11T00:05Z",
+    "lat": -1.1849,
+    "lon": -167.4348,
+    "deepest_m": 1497.8,
+    "has_salinity": false,
+    "closest_km": 179.0,
+    "hours_from_track": 23.6,
+    "columns_weighed": 26,
+    "weight_max": 0.465,
+    "weight_share_pct": 22.5,
+    "T10": 29.616,
+    "dT10": 0.246,
+    "T50": 29.417,
+    "dT50": 0.164,
+    "T100": 28.982,
+    "dT100": 0.374,
+    "T150": 23.976,
+    "dT150": -0.729,
+    "T200": 15.453,
+    "dT200": 0.047,
+    "T300": 11.584,
+    "dT300": -0.14,
+    "T500": 8.469,
+    "dT500": 0.03,
+    "T1000": 4.693,
+    "dT1000": -0.003,
+    "kind": "insitu_profile",
+    "wmo": "5905768",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905768"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -167.4366,
+     -1.1859
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905768:2023-10-11T00:22",
+    "platform_id": "tac:5905768",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-11T00:22Z",
+    "lat": -1.1859,
+    "lon": -167.4366,
+    "deepest_m": 1498.7,
+    "has_salinity": false,
+    "closest_km": 179.2,
+    "hours_from_track": 23.9,
+    "columns_weighed": 26,
+    "weight_max": 0.4636,
+    "weight_share_pct": 22.4,
+    "T10": 29.635,
+    "dT10": 0.265,
+    "T50": 29.471,
+    "dT50": 0.203,
+    "T100": 29.188,
+    "dT100": 0.553,
+    "T150": 24.198,
+    "dT150": -0.295,
+    "T200": 17.131,
+    "dT200": 0.625,
+    "T300": 11.76,
+    "dT300": 0.314,
+    "T500": 8.404,
+    "dT500": 0.031,
+    "T1000": 4.633,
+    "dT1000": -0.011,
+    "kind": "insitu_profile",
+    "wmo": "5905768",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905768"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -165.0221,
+     -1.6219
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906683:2023-10-12T07:29",
+    "platform_id": "tac:5906683",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-12T07:29Z",
+    "lat": -1.6219,
+    "lon": -165.0221,
+    "deepest_m": 1498.7,
+    "has_salinity": true,
+    "closest_km": 211.1,
+    "hours_from_track": 80.0,
+    "columns_weighed": 26,
+    "weight_max": 0.2216,
+    "weight_share_pct": 13.0,
+    "T10": 29.589,
+    "dT10": 0.314,
+    "T50": 29.411,
+    "dT50": 0.181,
+    "T100": 28.983,
+    "dT100": -0.192,
+    "T150": 20.918,
+    "dT150": -2.504,
+    "T200": 12.567,
+    "dT200": -2.009,
+    "T300": 11.372,
+    "dT300": -0.211,
+    "T500": 8.898,
+    "dT500": -0.221,
+    "T1000": 4.692,
+    "dT1000": 0.094,
+    "kind": "insitu_profile",
+    "wmo": "5906683",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906683"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -163.973,
+     1.416
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903758:2023-10-10T20:18",
+    "platform_id": "tac:4903758",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-10T20:18Z",
+    "lat": 1.416,
+    "lon": -163.973,
+    "deepest_m": 1485.1,
+    "has_salinity": true,
+    "closest_km": 270.7,
+    "hours_from_track": 43.8,
+    "columns_weighed": 26,
+    "weight_max": 0.1649,
+    "weight_share_pct": 8.7,
+    "T10": 29.115,
+    "dT10": -0.022,
+    "T50": 28.976,
+    "dT50": -0.027,
+    "T100": 28.166,
+    "dT100": 0.111,
+    "T150": 20.176,
+    "dT150": 0.214,
+    "T200": 14.107,
+    "dT200": 0.32,
+    "T300": 11.451,
+    "dT300": -0.125,
+    "T500": 8.012,
+    "dT500": -0.494,
+    "T1000": 4.594,
+    "dT1000": 0.031,
+    "kind": "insitu_profile",
+    "wmo": "4903758",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903758"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.5414,
+     1.4886
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906682:2023-10-09T03:46",
+    "platform_id": "tac:5906682",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-09T03:46Z",
+    "lat": 1.4886,
+    "lon": -168.5414,
+    "deepest_m": 1498.5,
+    "has_salinity": true,
+    "closest_km": 293.0,
+    "hours_from_track": -20.7,
+    "columns_weighed": 26,
+    "weight_max": 0.1422,
+    "weight_share_pct": 6.8,
+    "T10": 29.68,
+    "dT10": 0.221,
+    "T50": 29.5,
+    "dT50": 0.106,
+    "T100": 28.861,
+    "dT100": -0.532,
+    "T150": 19.88,
+    "dT150": -1.539,
+    "T200": 13.513,
+    "dT200": -1.161,
+    "T300": 11.84,
+    "dT300": -0.126,
+    "T500": 8.845,
+    "dT500": -0.0,
+    "T1000": 4.607,
+    "dT1000": 0.019,
+    "kind": "insitu_profile",
+    "wmo": "5906682",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906682"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.2887,
+     -1.8651
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906747:2023-10-12T01:36",
+    "platform_id": "tac:5906747",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-12T01:36Z",
+    "lat": -1.8651,
+    "lon": -168.2887,
+    "deepest_m": 1499.8,
+    "has_salinity": true,
+    "closest_km": 299.3,
+    "hours_from_track": 49.1,
+    "columns_weighed": 26,
+    "weight_max": 0.1081,
+    "weight_share_pct": 4.5,
+    "T10": 29.712,
+    "dT10": 0.22,
+    "T50": 29.547,
+    "dT50": 0.105,
+    "T100": 29.533,
+    "dT100": 0.18,
+    "T150": 24.215,
+    "dT150": -0.421,
+    "T200": 14.603,
+    "dT200": -2.028,
+    "T300": 11.555,
+    "dT300": 0.165,
+    "T500": 9.111,
+    "dT500": 0.166,
+    "T1000": 4.713,
+    "dT1000": 0.014,
+    "kind": "insitu_profile",
+    "wmo": "5906747",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906747"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.2911,
+     -1.8666
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906747:2023-10-12T01:56",
+    "platform_id": "tac:5906747",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-12T01:56Z",
+    "lat": -1.8666,
+    "lon": -168.2911,
+    "deepest_m": 1498.8,
+    "has_salinity": true,
+    "closest_km": 299.6,
+    "hours_from_track": 49.4,
+    "columns_weighed": 26,
+    "weight_max": 0.1073,
+    "weight_share_pct": 4.5,
+    "T10": 29.683,
+    "dT10": 0.19,
+    "T50": 29.547,
+    "dT50": 0.102,
+    "T100": 29.538,
+    "dT100": 0.185,
+    "T150": 24.165,
+    "dT150": -1.136,
+    "T200": 13.493,
+    "dT200": -2.271,
+    "T300": 11.714,
+    "dT300": 0.214,
+    "T500": 9.29,
+    "dT500": 0.488,
+    "T1000": 4.677,
+    "dT1000": -0.022,
+    "kind": "insitu_profile",
+    "wmo": "5906747",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906747"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -166.0414,
+     -3.4125
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906698:2023-10-07T17:29",
+    "platform_id": "tac:5906698",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-07T17:29Z",
+    "lat": -3.4125,
+    "lon": -166.0414,
+    "deepest_m": 1498.2,
+    "has_salinity": true,
+    "closest_km": 380.3,
+    "hours_from_track": -40.0,
+    "columns_weighed": 26,
+    "weight_max": 0.0358,
+    "weight_share_pct": 2.0,
+    "T10": 29.613,
+    "dT10": 0.044,
+    "T50": 29.623,
+    "dT50": 0.096,
+    "T100": 29.329,
+    "dT100": 0.218,
+    "T150": 22.834,
+    "dT150": -2.883,
+    "T200": 13.568,
+    "dT200": -1.215,
+    "T300": 10.876,
+    "dT300": -0.275,
+    "T500": 9.468,
+    "dT500": 0.134,
+    "T1000": 4.767,
+    "dT1000": -0.002,
+    "kind": "insitu_profile",
+    "wmo": "5906698",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906698"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -165.1686,
+     -1.5634
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906683:2023-10-02T14:15",
+    "platform_id": "tac:5906683",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-02T14:15Z",
+    "lat": -1.5634,
+    "lon": -165.1686,
+    "deepest_m": 1498.9,
+    "has_salinity": true,
+    "closest_km": 197.6,
+    "hours_from_track": -153.2,
+    "columns_weighed": 26,
+    "weight_max": 0.0436,
+    "weight_share_pct": 1.7,
+    "T10": 29.411,
+    "dT10": 0.106,
+    "T50": 29.291,
+    "dT50": 0.041,
+    "T100": 29.121,
+    "dT100": 0.055,
+    "T150": 23.34,
+    "dT150": -0.701,
+    "T200": 12.592,
+    "dT200": -1.953,
+    "T300": 11.327,
+    "dT300": 0.022,
+    "T500": 8.619,
+    "dT500": -0.463,
+    "T1000": 4.592,
+    "dT1000": 0.003,
+    "kind": "insitu_profile",
+    "wmo": "5906683",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906683"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.8141,
+     -0.4095
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903189:2023-10-08T07:59",
+    "platform_id": "tac:4903189",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-08T07:59Z",
+    "lat": -0.4095,
+    "lon": -169.8141,
+    "deepest_m": 1498.3,
+    "has_salinity": true,
+    "closest_km": 387.1,
+    "hours_from_track": -40.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0305,
+    "weight_share_pct": 1.3,
+    "T10": 29.672,
+    "dT10": 0.096,
+    "T50": 29.559,
+    "dT50": 0.012,
+    "T100": 27.959,
+    "dT100": -0.478,
+    "T150": 23.492,
+    "dT150": 0.986,
+    "T200": 15.776,
+    "dT200": -0.672,
+    "T300": 12.066,
+    "dT300": -0.297,
+    "T500": 8.068,
+    "dT500": 0.099,
+    "T1000": 4.571,
+    "dT1000": 0.069,
+    "kind": "insitu_profile",
+    "wmo": "4903189",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903189"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-09",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-09T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -12.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0257,
+    "weight_share_pct": 1.0,
+    "T10": 29.709,
+    "dT10": 0.105,
+    "T50": 29.566,
+    "dT50": -0.003,
+    "T100": 28.055,
+    "dT100": 0.053,
+    "T150": 21.731,
+    "dT150": 0.094,
+    "T200": 15.674,
+    "dT200": 0.215,
+    "T300": 12.486,
+    "dT300": 0.108,
+    "T500": 8.273,
+    "dT500": 0.513,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-10",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-10T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 11.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0258,
+    "weight_share_pct": 1.0,
+    "T10": 29.7,
+    "dT10": 0.045,
+    "T50": 29.473,
+    "dT50": -0.104,
+    "T100": 27.494,
+    "dT100": -0.176,
+    "T150": 19.665,
+    "dT150": -1.032,
+    "T200": 14.808,
+    "dT200": -0.001,
+    "T300": 12.263,
+    "dT300": 0.077,
+    "T500": 8.152,
+    "dT500": 0.555,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-08",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-08T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -36.5,
+    "columns_weighed": 26,
+    "weight_max": 0.023,
+    "weight_share_pct": 1.0,
+    "T10": 29.735,
+    "dT10": 0.19,
+    "T50": 29.646,
+    "dT50": 0.127,
+    "T100": 27.921,
+    "dT100": -0.513,
+    "T150": 21.91,
+    "dT150": -0.12,
+    "T200": 15.743,
+    "dT200": 0.042,
+    "T300": 12.468,
+    "dT300": 0.111,
+    "T500": 8.31,
+    "dT500": 0.393,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-07",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-07T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -60.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0184,
+    "weight_share_pct": 0.8,
+    "T10": 29.73,
+    "dT10": 0.199,
+    "T50": 29.66,
+    "dT50": 0.194,
+    "T100": 28.002,
+    "dT100": 0.132,
+    "T150": 22.122,
+    "dT150": 0.797,
+    "T200": 15.415,
+    "dT200": 0.357,
+    "T300": 12.328,
+    "dT300": 0.085,
+    "T500": 8.219,
+    "dT500": 0.2,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -162.8784,
+     -1.5746
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906696:2023-10-05T19:55",
+    "platform_id": "tac:5906696",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-05T19:55Z",
+    "lat": -1.5746,
+    "lon": -162.8784,
+    "deepest_m": 1498.3,
+    "has_salinity": true,
+    "closest_km": 387.0,
+    "hours_from_track": -75.6,
+    "columns_weighed": 26,
+    "weight_max": 0.0206,
+    "weight_share_pct": 0.8,
+    "T10": 29.253,
+    "dT10": 0.052,
+    "T50": 29.238,
+    "dT50": 0.063,
+    "T100": 28.792,
+    "dT100": -0.375,
+    "T150": 20.096,
+    "dT150": -1.361,
+    "T200": 13.118,
+    "dT200": -1.44,
+    "T300": 11.539,
+    "dT300": 0.106,
+    "T500": 8.278,
+    "dT500": -0.235,
+    "T1000": 4.653,
+    "dT1000": 0.05,
+    "kind": "insitu_profile",
+    "wmo": "5906696",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906696"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-11",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-11T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 35.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0231,
+    "weight_share_pct": 0.8,
+    "T10": 29.773,
+    "dT10": 0.083,
+    "T50": 29.524,
+    "dT50": -0.051,
+    "T100": 27.593,
+    "dT100": -0.433,
+    "T150": 20.443,
+    "dT150": -0.786,
+    "T200": 15.579,
+    "dT200": 0.275,
+    "T300": 12.518,
+    "dT300": 0.342,
+    "T500": 8.312,
+    "dT500": 0.694,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-06",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-06T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -84.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0131,
+    "weight_share_pct": 0.6,
+    "T10": 29.71,
+    "dT10": 0.188,
+    "T50": 29.637,
+    "dT50": 0.176,
+    "T100": 27.918,
+    "dT100": 0.221,
+    "T150": 21.319,
+    "dT150": 0.1,
+    "T200": 15.273,
+    "dT200": 0.268,
+    "T300": 12.159,
+    "dT300": -0.045,
+    "T500": 8.275,
+    "dT500": 0.252,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.9607,
+     -0.0075
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906675:2023-10-06T09:40",
+    "platform_id": "tac:5906675",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-06T09:40Z",
+    "lat": -0.0075,
+    "lon": -169.9607,
+    "deepest_m": 1498.3,
+    "has_salinity": true,
+    "closest_km": 400.6,
+    "hours_from_track": -86.8,
+    "columns_weighed": 26,
+    "weight_max": 0.0137,
+    "weight_share_pct": 0.6,
+    "T10": 29.752,
+    "dT10": 0.228,
+    "T50": 29.69,
+    "dT50": 0.258,
+    "T100": 27.95,
+    "dT100": 0.318,
+    "T150": 20.371,
+    "dT150": -0.779,
+    "T200": 14.732,
+    "dT200": -0.437,
+    "T300": 12.17,
+    "dT300": -0.067,
+    "T500": 8.383,
+    "dT500": 0.415,
+    "T1000": 4.568,
+    "dT1000": -0.089,
+    "kind": "insitu_profile",
+    "wmo": "5906675",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906675"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-12",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-12T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 59.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0186,
+    "weight_share_pct": 0.6,
+    "T10": 29.744,
+    "dT10": 0.045,
+    "T50": 29.588,
+    "dT50": 0.038,
+    "T100": 27.987,
+    "dT100": -0.174,
+    "T150": 22.461,
+    "dT150": 0.094,
+    "T200": 17.036,
+    "dT200": 0.923,
+    "T300": 12.811,
+    "dT300": 0.476,
+    "T500": 8.473,
+    "dT500": 0.633,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.768,
+     0.506
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903742:2023-10-13T22:23",
+    "platform_id": "tac:4903742",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-13T22:23Z",
+    "lat": 0.506,
+    "lon": -169.768,
+    "deepest_m": 991.8,
+    "has_salinity": true,
+    "closest_km": 383.1,
+    "hours_from_track": 93.9,
+    "columns_weighed": 26,
+    "weight_max": 0.0164,
+    "weight_share_pct": 0.5,
+    "T10": 29.776,
+    "dT10": 0.01,
+    "T50": 29.499,
+    "dT50": 0.029,
+    "T100": 28.063,
+    "dT100": 0.243,
+    "T150": 21.397,
+    "dT150": -1.15,
+    "T200": 17.501,
+    "dT200": 0.552,
+    "T300": 12.289,
+    "dT300": -0.281,
+    "T500": 8.276,
+    "dT500": -0.185,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": "4903742",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903742"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -167.4528,
+     -1.2227
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905768:2023-10-01T01:07",
+    "platform_id": "tac:5905768",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-01T01:07Z",
+    "lat": -1.2227,
+    "lon": -167.4528,
+    "deepest_m": 1498.4,
+    "has_salinity": false,
+    "closest_km": 183.5,
+    "hours_from_track": -215.4,
+    "columns_weighed": 26,
+    "weight_max": 0.0108,
+    "weight_share_pct": 0.5,
+    "T10": 29.603,
+    "dT10": 0.134,
+    "T50": 29.416,
+    "dT50": 0.034,
+    "T100": 28.71,
+    "dT100": 0.116,
+    "T150": 21.267,
+    "dT150": -1.057,
+    "T200": 14.654,
+    "dT200": -0.671,
+    "T300": 11.696,
+    "dT300": 0.106,
+    "T500": 8.315,
+    "dT500": -0.225,
+    "T1000": 4.496,
+    "dT1000": -0.101,
+    "kind": "insitu_profile",
+    "wmo": "5905768",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905768"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -167.4509,
+     -1.2237
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905768:2023-10-01T00:49",
+    "platform_id": "tac:5905768",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-01T00:49Z",
+    "lat": -1.2237,
+    "lon": -167.4509,
+    "deepest_m": 1498.7,
+    "has_salinity": false,
+    "closest_km": 183.4,
+    "hours_from_track": -215.7,
+    "columns_weighed": 26,
+    "weight_max": 0.0107,
+    "weight_share_pct": 0.5,
+    "T10": 29.545,
+    "dT10": 0.075,
+    "T50": 29.408,
+    "dT50": 0.028,
+    "T100": 28.126,
+    "dT100": -0.148,
+    "T150": 20.366,
+    "dT150": -1.478,
+    "T200": 13.734,
+    "dT200": -0.862,
+    "T300": 11.729,
+    "dT300": 0.111,
+    "T500": 8.472,
+    "dT500": -0.144,
+    "T1000": 4.526,
+    "dT1000": -0.085,
+    "kind": "insitu_profile",
+    "wmo": "5905768",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905768"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-05",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-05T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -108.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0084,
+    "weight_share_pct": 0.4,
+    "T10": 29.676,
+    "dT10": 0.152,
+    "T50": 29.612,
+    "dT50": 0.162,
+    "T100": 27.784,
+    "dT100": -0.161,
+    "T150": 19.571,
+    "dT150": -1.768,
+    "T200": 14.75,
+    "dT200": -0.519,
+    "T300": 12.066,
+    "dT300": -0.112,
+    "T500": 8.335,
+    "dT500": 0.392,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-13",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-13T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 83.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0133,
+    "weight_share_pct": 0.4,
+    "T10": 29.729,
+    "dT10": 0.01,
+    "T50": 29.566,
+    "dT50": 0.007,
+    "T100": 28.094,
+    "dT100": -0.168,
+    "T150": 22.744,
+    "dT150": -0.326,
+    "T200": 17.045,
+    "dT200": 0.457,
+    "T300": 12.508,
+    "dT300": 0.224,
+    "T500": 8.344,
+    "dT500": 0.523,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.2165,
+     -1.8819
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906747:2023-10-01T23:22",
+    "platform_id": "tac:5906747",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-01T23:22Z",
+    "lat": -1.8819,
+    "lon": -168.2165,
+    "deepest_m": 1499.0,
+    "has_salinity": true,
+    "closest_km": 295.0,
+    "hours_from_track": -193.1,
+    "columns_weighed": 26,
+    "weight_max": 0.006,
+    "weight_share_pct": 0.3,
+    "T10": 29.66,
+    "dT10": 0.01,
+    "T50": 29.532,
+    "dT50": -0.047,
+    "T100": 29.401,
+    "dT100": 0.356,
+    "T150": 21.887,
+    "dT150": -1.901,
+    "T200": 12.389,
+    "dT200": -2.138,
+    "T300": 11.682,
+    "dT300": 0.396,
+    "T500": 9.115,
+    "dT500": 0.613,
+    "T1000": 4.539,
+    "dT1000": -0.165,
+    "kind": "insitu_profile",
+    "wmo": "5906747",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906747"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-14",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-14T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 107.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0086,
+    "weight_share_pct": 0.3,
+    "T10": 29.811,
+    "dT10": 0.034,
+    "T50": 29.47,
+    "dT50": -0.12,
+    "T100": 27.746,
+    "dT100": -0.539,
+    "T150": 19.76,
+    "dT150": -1.704,
+    "T200": 15.935,
+    "dT200": -0.265,
+    "T300": 12.177,
+    "dT300": -0.001,
+    "T500": 8.239,
+    "dT500": 0.252,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.2153,
+     -1.8823
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906747:2023-10-01T23:04",
+    "platform_id": "tac:5906747",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-01T23:04Z",
+    "lat": -1.8823,
+    "lon": -168.2153,
+    "deepest_m": 1471.5,
+    "has_salinity": true,
+    "closest_km": 294.9,
+    "hours_from_track": -193.4,
+    "columns_weighed": 26,
+    "weight_max": 0.006,
+    "weight_share_pct": 0.3,
+    "T10": 29.678,
+    "dT10": 0.03,
+    "T50": 29.527,
+    "dT50": -0.041,
+    "T100": 29.396,
+    "dT100": 0.421,
+    "T150": 21.652,
+    "dT150": -2.284,
+    "T200": 12.709,
+    "dT200": -1.845,
+    "T300": 11.699,
+    "dT300": 0.4,
+    "T500": 9.043,
+    "dT500": 0.496,
+    "T1000": 4.593,
+    "dT1000": -0.138,
+    "kind": "insitu_profile",
+    "wmo": "5906747",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906747"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.5373,
+     -1.7503
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905669:2023-10-14T07:39",
+    "platform_id": "tac:5905669",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-14T07:39Z",
+    "lat": -1.7503,
+    "lon": -169.5373,
+    "deepest_m": 1498.3,
+    "has_salinity": false,
+    "closest_km": 404.0,
+    "hours_from_track": 103.2,
+    "columns_weighed": 26,
+    "weight_max": 0.0095,
+    "weight_share_pct": 0.3,
+    "T10": 29.904,
+    "dT10": 0.161,
+    "T50": 29.625,
+    "dT50": 0.058,
+    "T100": 29.514,
+    "dT100": 0.201,
+    "T150": 24.572,
+    "dT150": -0.154,
+    "T200": 14.274,
+    "dT200": -1.743,
+    "T300": 11.495,
+    "dT300": -0.025,
+    "T500": 9.104,
+    "dT500": 0.119,
+    "T1000": 4.634,
+    "dT1000": -0.098,
+    "kind": "insitu_profile",
+    "wmo": "5905669",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905669"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.4081,
+     -2.0122
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5905669:2023-10-04T07:01",
+    "platform_id": "tac:5905669",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-04T07:01Z",
+    "lat": -2.0122,
+    "lon": -169.4081,
+    "deepest_m": 1498.1,
+    "has_salinity": false,
+    "closest_km": 406.9,
+    "hours_from_track": -137.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0041,
+    "weight_share_pct": 0.2,
+    "T10": 29.822,
+    "dT10": 0.128,
+    "T50": 29.756,
+    "dT50": 0.096,
+    "T100": 29.567,
+    "dT100": 0.185,
+    "T150": 22.74,
+    "dT150": -0.901,
+    "T200": 12.085,
+    "dT200": -2.165,
+    "T300": 11.408,
+    "dT300": -0.113,
+    "T500": 8.966,
+    "dT500": 0.025,
+    "T1000": 4.598,
+    "dT1000": 0.002,
+    "kind": "insitu_profile",
+    "wmo": "5905669",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5905669"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-15",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-15T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 131.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0049,
+    "weight_share_pct": 0.2,
+    "T10": 29.774,
+    "dT10": -0.094,
+    "T50": 29.45,
+    "dT50": -0.156,
+    "T100": 27.86,
+    "dT100": -0.552,
+    "T150": 20.132,
+    "dT150": -1.266,
+    "T200": 15.248,
+    "dT200": -0.397,
+    "T300": 12.062,
+    "dT300": -0.104,
+    "T500": 8.225,
+    "dT500": 0.235,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -163.9567,
+     -2.8157
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:6902920:2023-10-16T01:26",
+    "platform_id": "tac:6902920",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-16T01:26Z",
+    "lat": -2.8157,
+    "lon": -163.9567,
+    "deepest_m": 1499.1,
+    "has_salinity": true,
+    "closest_km": 386.9,
+    "hours_from_track": 169.9,
+    "columns_weighed": 26,
+    "weight_max": 0.003,
+    "weight_share_pct": 0.2,
+    "T10": 29.671,
+    "dT10": 0.159,
+    "T50": 29.54,
+    "dT50": 0.033,
+    "T100": 29.28,
+    "dT100": -0.13,
+    "T150": 23.157,
+    "dT150": -1.487,
+    "T200": 13.347,
+    "dT200": -0.682,
+    "T300": 11.586,
+    "dT300": -0.025,
+    "T500": 9.352,
+    "dT500": 0.051,
+    "T1000": 4.889,
+    "dT1000": 0.23,
+    "kind": "insitu_profile",
+    "wmo": "6902920",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/6902920"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.5393,
+     0.5381
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906675:2023-10-16T10:22",
+    "platform_id": "tac:5906675",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-16T10:22Z",
+    "lat": 0.5381,
+    "lon": -169.5393,
+    "deepest_m": 1498.5,
+    "has_salinity": true,
+    "closest_km": 358.5,
+    "hours_from_track": 153.9,
+    "columns_weighed": 26,
+    "weight_max": 0.0059,
+    "weight_share_pct": 0.2,
+    "T10": 30.061,
+    "dT10": 0.165,
+    "T50": 29.363,
+    "dT50": -0.049,
+    "T100": 28.41,
+    "dT100": 0.486,
+    "T150": 22.543,
+    "dT150": -0.205,
+    "T200": 17.047,
+    "dT200": -0.113,
+    "T300": 12.181,
+    "dT300": -0.264,
+    "T500": 8.459,
+    "dT500": -0.016,
+    "T1000": 4.736,
+    "dT1000": 0.033,
+    "kind": "insitu_profile",
+    "wmo": "5906675",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906675"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-04",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-04T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -132.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0048,
+    "weight_share_pct": 0.2,
+    "T10": 29.706,
+    "dT10": 0.176,
+    "T50": 29.611,
+    "dT50": 0.216,
+    "T100": 28.047,
+    "dT100": 0.042,
+    "T150": 21.286,
+    "dT150": -0.453,
+    "T200": 15.273,
+    "dT200": 0.131,
+    "T300": 12.051,
+    "dT300": -0.154,
+    "T500": 8.326,
+    "dT500": 0.365,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.139,
+     -0.057
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903742:2023-10-03T18:30",
+    "platform_id": "tac:4903742",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-03T18:30Z",
+    "lat": -0.057,
+    "lon": -170.139,
+    "deepest_m": 740.6,
+    "has_salinity": true,
+    "closest_km": 420.5,
+    "hours_from_track": -150.0,
+    "columns_weighed": 16,
+    "weight_max": 0.0022,
+    "weight_share_pct": 0.1,
+    "T10": 29.739,
+    "dT10": 0.155,
+    "T50": 29.702,
+    "dT50": 0.309,
+    "T100": 28.296,
+    "dT100": 0.085,
+    "T150": 23.025,
+    "dT150": 0.769,
+    "T200": 16.522,
+    "dT200": -0.233,
+    "T300": 12.269,
+    "dT300": -0.183,
+    "T500": 8.297,
+    "dT500": 0.176,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": "4903742",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903742"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-03",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-03T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -156.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0025,
+    "weight_share_pct": 0.1,
+    "T10": 29.677,
+    "dT10": 0.146,
+    "T50": 29.572,
+    "dT50": 0.272,
+    "T100": 28.05,
+    "dT100": 0.098,
+    "T150": 22.267,
+    "dT150": -0.043,
+    "T200": 15.557,
+    "dT200": -0.153,
+    "T300": 12.065,
+    "dT300": -0.189,
+    "T500": 8.377,
+    "dT500": 0.207,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -162.5329,
+     0.0349
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:3902370:2023-10-02T08:31",
+    "platform_id": "tac:3902370",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-02T08:31Z",
+    "lat": 0.0349,
+    "lon": -162.5329,
+    "deepest_m": 1485.4,
+    "has_salinity": true,
+    "closest_km": 382.3,
+    "hours_from_track": -159.0,
+    "columns_weighed": 26,
+    "weight_max": 0.0034,
+    "weight_share_pct": 0.1,
+    "T10": 29.073,
+    "dT10": 0.082,
+    "T50": 28.834,
+    "dT50": 0.291,
+    "T100": 26.423,
+    "dT100": -0.178,
+    "T150": 20.63,
+    "dT150": -0.635,
+    "T200": 14.197,
+    "dT200": -0.76,
+    "T300": 11.823,
+    "dT300": -0.445,
+    "T500": 8.278,
+    "dT500": 0.246,
+    "T1000": 4.611,
+    "dT1000": 0.069,
+    "kind": "insitu_profile",
+    "wmo": "3902370",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/3902370"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -164.41,
+     1.576
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903758:2023-09-30T15:03",
+    "platform_id": "tac:4903758",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-09-30T15:03Z",
+    "lat": 1.576,
+    "lon": -164.41,
+    "deepest_m": 1485.4,
+    "has_salinity": false,
+    "closest_km": 244.6,
+    "hours_from_track": -201.4,
+    "columns_weighed": 16,
+    "weight_max": 0.0055,
+    "weight_share_pct": 0.1,
+    "T10": 29.494,
+    "dT10": 0.293,
+    "T50": 29.35,
+    "dT50": 0.242,
+    "T100": 28.811,
+    "dT100": 0.42,
+    "T150": 18.777,
+    "dT150": -0.223,
+    "T200": 12.307,
+    "dT200": -0.949,
+    "T300": 11.297,
+    "dT300": -0.214,
+    "T500": 8.764,
+    "dT500": -0.234,
+    "T1000": 4.784,
+    "dT1000": -0.041,
+    "kind": "insitu_profile",
+    "wmo": "4903758",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903758"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -167.0814,
+     -3.3324
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906698:2023-10-17T12:54",
+    "platform_id": "tac:5906698",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-17T12:54Z",
+    "lat": -3.3324,
+    "lon": -167.0814,
+    "deepest_m": 1498.2,
+    "has_salinity": true,
+    "closest_km": 380.4,
+    "hours_from_track": 180.4,
+    "columns_weighed": 26,
+    "weight_max": 0.0017,
+    "weight_share_pct": 0.1,
+    "T10": 30.245,
+    "dT10": 0.18,
+    "T50": 29.689,
+    "dT50": -0.178,
+    "T100": 29.393,
+    "dT100": -0.104,
+    "T150": 22.483,
+    "dT150": -1.842,
+    "T200": 13.366,
+    "dT200": -0.964,
+    "T300": 10.605,
+    "dT300": -0.631,
+    "T500": 9.061,
+    "dT500": -0.09,
+    "T1000": 4.772,
+    "dT1000": -0.023,
+    "kind": "insitu_profile",
+    "wmo": "5906698",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906698"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-02",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-02T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -180.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0011,
+    "weight_share_pct": 0.1,
+    "T10": 29.613,
+    "dT10": 0.077,
+    "T50": 29.493,
+    "dT50": 0.218,
+    "T100": 27.514,
+    "dT100": -0.064,
+    "T150": 21.604,
+    "dT150": -0.16,
+    "T200": 15.191,
+    "dT200": -0.598,
+    "T300": 12.104,
+    "dT300": 0.045,
+    "T500": 8.376,
+    "dT500": 0.234,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-16",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-16T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 155.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0025,
+    "weight_share_pct": 0.1,
+    "T10": 29.921,
+    "dT10": -0.023,
+    "T50": 29.479,
+    "dT50": -0.091,
+    "T100": 28.663,
+    "dT100": -0.313,
+    "T150": 24.098,
+    "dT150": 0.58,
+    "T200": 16.79,
+    "dT200": 1.032,
+    "T300": 12.312,
+    "dT300": 0.046,
+    "T500": 8.405,
+    "dT500": 0.186,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -169.2339,
+     -0.1338
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:4903189:2023-10-18T09:07",
+    "platform_id": "tac:4903189",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-18T09:07Z",
+    "lat": -0.1338,
+    "lon": -169.2339,
+    "deepest_m": 1498.4,
+    "has_salinity": true,
+    "closest_km": 320.2,
+    "hours_from_track": 200.6,
+    "columns_weighed": 16,
+    "weight_max": 0.0021,
+    "weight_share_pct": 0.0,
+    "T10": 29.927,
+    "dT10": -0.014,
+    "T50": 29.436,
+    "dT50": -0.071,
+    "T100": 27.541,
+    "dT100": -1.554,
+    "T150": 22.275,
+    "dT150": -1.392,
+    "T200": 18.036,
+    "dT200": 0.621,
+    "T300": 12.304,
+    "dT300": -0.153,
+    "T500": 8.223,
+    "dT500": -0.159,
+    "T1000": 4.655,
+    "dT1000": -0.005,
+    "kind": "insitu_profile",
+    "wmo": "4903189",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/4903189"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -168.7064,
+     1.4452
+    ]
+   },
+   "properties": {
+    "profile_id": "tac:5906682:2023-10-18T23:10",
+    "platform_id": "tac:5906682",
+    "platform_type": "argo",
+    "source": "cora",
+    "time_utc": "2023-10-18T23:10Z",
+    "lat": 1.4452,
+    "lon": -168.7064,
+    "deepest_m": 1498.6,
+    "has_salinity": true,
+    "closest_km": 305.8,
+    "hours_from_track": 214.7,
+    "columns_weighed": 2,
+    "weight_max": 0.0015,
+    "weight_share_pct": 0.0,
+    "T10": 30.302,
+    "dT10": 0.113,
+    "T50": 29.747,
+    "dT50": -0.111,
+    "T100": 27.75,
+    "dT100": -0.591,
+    "T150": 21.006,
+    "dT150": -1.404,
+    "T200": 13.246,
+    "dT200": -0.998,
+    "T300": 11.464,
+    "dT300": -0.365,
+    "T500": 8.779,
+    "dT500": -0.125,
+    "T1000": 4.595,
+    "dT1000": -0.031,
+    "kind": "insitu_profile",
+    "wmo": "5906682",
+    "links": [
+     {
+      "label": "Float page (Euro-Argo)",
+      "url": "https://fleetmonitoring.euro-argo.eu/float/5906682"
+     },
+     {
+      "label": "Copernicus Marine In Situ product",
+      "url": "https://data.marine.copernicus.eu/product/INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030/description"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-01",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-01T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -204.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0005,
+    "weight_share_pct": 0.0,
+    "T10": 29.61,
+    "dT10": 0.073,
+    "T50": 29.47,
+    "dT50": 0.148,
+    "T100": 26.826,
+    "dT100": -0.569,
+    "T150": 21.728,
+    "dT150": 0.316,
+    "T200": 15.598,
+    "dT200": -0.066,
+    "T300": 11.951,
+    "dT300": 0.096,
+    "T500": 8.266,
+    "dT500": 0.188,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-09-30",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-09-30T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": -228.5,
+    "columns_weighed": 13,
+    "weight_max": 0.0002,
+    "weight_share_pct": 0.0,
+    "T10": 29.596,
+    "dT10": 0.115,
+    "T50": 29.463,
+    "dT50": 0.097,
+    "T100": 27.937,
+    "dT100": 0.161,
+    "T150": 21.614,
+    "dT150": 0.837,
+    "T200": 15.391,
+    "dT200": 0.052,
+    "T300": 11.969,
+    "dT300": 0.159,
+    "T500": 8.202,
+    "dT500": 0.073,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-17",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-17T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 179.5,
+    "columns_weighed": 26,
+    "weight_max": 0.0012,
+    "weight_share_pct": 0.0,
+    "T10": 30.001,
+    "dT10": 0.028,
+    "T50": 29.475,
+    "dT50": -0.031,
+    "T100": 28.413,
+    "dT100": -0.744,
+    "T150": 23.991,
+    "dT150": 0.244,
+    "T200": 17.971,
+    "dT200": 1.647,
+    "T300": 12.416,
+    "dT300": 0.129,
+    "T500": 8.417,
+    "dT500": 0.182,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -170.0,
+     0.0
+    ]
+   },
+   "properties": {
+    "profile_id": "tao:0n170w:2023-10-18",
+    "platform_id": "tao:0n170w",
+    "platform_type": "mooring",
+    "source": "tao",
+    "time_utc": "2023-10-18T12:00Z",
+    "lat": 0.0,
+    "lon": -170.0,
+    "deepest_m": 500.0,
+    "has_salinity": true,
+    "closest_km": 405.0,
+    "hours_from_track": 203.5,
+    "columns_weighed": 13,
+    "weight_max": 0.0005,
+    "weight_share_pct": 0.0,
+    "T10": 30.002,
+    "dT10": -0.013,
+    "T50": 29.478,
+    "dT50": -0.079,
+    "T100": 28.294,
+    "dT100": -0.989,
+    "T150": 22.541,
+    "dT150": -1.027,
+    "T200": 16.399,
+    "dT200": 0.411,
+    "T300": 12.333,
+    "dT300": 0.02,
+    "T500": 8.344,
+    "dT500": 0.174,
+    "T1000": null,
+    "dT1000": null,
+    "kind": "insitu_profile",
+    "wmo": null,
+    "links": [
+     {
+      "label": "TAO/TRITON array (NOAA PMEL)",
+      "url": "https://www.pmel.noaa.gov/gtmba/pmel-theme/pacific-ocean-tao/"
+     },
+     {
+      "label": "Daily data (NOAA ERDDAP)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/tabledap/pmelTaoDyT.html?station,longitude,latitude,time,depth,T_20,QT_5020&station=%220n170w%22"
+     }
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -164.804,
+       0.0169
+      ],
+      [
+       -164.8091,
+       0.1345
+      ],
+      [
+       -164.8245,
+       0.2511
+      ],
+      [
+       -164.85,
+       0.366
+      ],
+      [
+       -164.8853,
+       0.4783
+      ],
+      [
+       -164.9304,
+       0.587
+      ],
+      [
+       -164.9847,
+       0.6914
+      ],
+      [
+       -165.0479,
+       0.7906
+      ],
+      [
+       -165.1196,
+       0.884
+      ],
+      [
+       -165.1991,
+       0.9708
+      ],
+      [
+       -165.2859,
+       1.0503
+      ],
+      [
+       -165.3792,
+       1.1219
+      ],
+      [
+       -165.4785,
+       1.1851
+      ],
+      [
+       -165.5829,
+       1.2395
+      ],
+      [
+       -165.6916,
+       1.2845
+      ],
+      [
+       -165.8038,
+       1.3199
+      ],
+      [
+       -165.9187,
+       1.3454
+      ],
+      [
+       -166.0354,
+       1.3607
+      ],
+      [
+       -166.153,
+       1.3659
+      ],
+      [
+       -166.2705,
+       1.3607
+      ],
+      [
+       -166.3872,
+       1.3454
+      ],
+      [
+       -166.5021,
+       1.3199
+      ],
+      [
+       -166.6143,
+       1.2845
+      ],
+      [
+       -166.7231,
+       1.2395
+      ],
+      [
+       -166.8275,
+       1.1851
+      ],
+      [
+       -166.9267,
+       1.1219
+      ],
+      [
+       -167.0201,
+       1.0503
+      ],
+      [
+       -167.1068,
+       0.9708
+      ],
+      [
+       -167.1863,
+       0.884
+      ],
+      [
+       -167.258,
+       0.7906
+      ],
+      [
+       -167.3212,
+       0.6914
+      ],
+      [
+       -167.3756,
+       0.587
+      ],
+      [
+       -167.4206,
+       0.4783
+      ],
+      [
+       -167.456,
+       0.366
+      ],
+      [
+       -167.4815,
+       0.2511
+      ],
+      [
+       -167.4968,
+       0.1345
+      ],
+      [
+       -167.5019,
+       0.0169
+      ],
+      [
+       -167.4968,
+       -0.1007
+      ],
+      [
+       -167.4815,
+       -0.2174
+      ],
+      [
+       -167.456,
+       -0.3323
+      ],
+      [
+       -167.4206,
+       -0.4445
+      ],
+      [
+       -167.3756,
+       -0.5532
+      ],
+      [
+       -167.3212,
+       -0.6576
+      ],
+      [
+       -167.258,
+       -0.7569
+      ],
+      [
+       -167.1863,
+       -0.8502
+      ],
+      [
+       -167.1068,
+       -0.937
+      ],
+      [
+       -167.0201,
+       -1.0165
+      ],
+      [
+       -166.9267,
+       -1.0881
+      ],
+      [
+       -166.8275,
+       -1.1514
+      ],
+      [
+       -166.7231,
+       -1.2057
+      ],
+      [
+       -166.6143,
+       -1.2507
+      ],
+      [
+       -166.5021,
+       -1.2861
+      ],
+      [
+       -166.3872,
+       -1.3116
+      ],
+      [
+       -166.2705,
+       -1.327
+      ],
+      [
+       -166.153,
+       -1.3321
+      ],
+      [
+       -166.0354,
+       -1.327
+      ],
+      [
+       -165.9187,
+       -1.3116
+      ],
+      [
+       -165.8038,
+       -1.2861
+      ],
+      [
+       -165.6916,
+       -1.2507
+      ],
+      [
+       -165.5829,
+       -1.2057
+      ],
+      [
+       -165.4785,
+       -1.1514
+      ],
+      [
+       -165.3792,
+       -1.0881
+      ],
+      [
+       -165.2859,
+       -1.0165
+      ],
+      [
+       -165.1991,
+       -0.937
+      ],
+      [
+       -165.1196,
+       -0.8502
+      ],
+      [
+       -165.0479,
+       -0.7569
+      ],
+      [
+       -164.9847,
+       -0.6576
+      ],
+      [
+       -164.9304,
+       -0.5532
+      ],
+      [
+       -164.8853,
+       -0.4445
+      ],
+      [
+       -164.85,
+       -0.3323
+      ],
+      [
+       -164.8245,
+       -0.2174
+      ],
+      [
+       -164.8091,
+       -0.1007
+      ],
+      [
+       -164.804,
+       0.0169
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "kind": "reach",
+    "radius_km": 150,
+    "label": "150 km: the correction's length scale",
+    "centre_time_utc": "2023-10-09T12:30Z"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -162.106,
+       0.0169
+      ],
+      [
+       -162.1214,
+       0.3696
+      ],
+      [
+       -162.1675,
+       0.7196
+      ],
+      [
+       -162.2439,
+       1.0643
+      ],
+      [
+       -162.3501,
+       1.401
+      ],
+      [
+       -162.4852,
+       1.7272
+      ],
+      [
+       -162.6482,
+       2.0404
+      ],
+      [
+       -162.8379,
+       2.3381
+      ],
+      [
+       -163.0528,
+       2.6182
+      ],
+      [
+       -163.2913,
+       2.8785
+      ],
+      [
+       -163.5516,
+       3.117
+      ],
+      [
+       -163.8317,
+       3.332
+      ],
+      [
+       -164.1295,
+       3.5216
+      ],
+      [
+       -164.4427,
+       3.6847
+      ],
+      [
+       -164.7688,
+       3.8198
+      ],
+      [
+       -165.1055,
+       3.9259
+      ],
+      [
+       -165.4502,
+       4.0024
+      ],
+      [
+       -165.8003,
+       4.0484
+      ],
+      [
+       -166.153,
+       4.0638
+      ],
+      [
+       -166.5057,
+       4.0484
+      ],
+      [
+       -166.8557,
+       4.0024
+      ],
+      [
+       -167.2004,
+       3.9259
+      ],
+      [
+       -167.5371,
+       3.8198
+      ],
+      [
+       -167.8633,
+       3.6847
+      ],
+      [
+       -168.1764,
+       3.5216
+      ],
+      [
+       -168.4742,
+       3.332
+      ],
+      [
+       -168.7543,
+       3.117
+      ],
+      [
+       -169.0146,
+       2.8785
+      ],
+      [
+       -169.2531,
+       2.6182
+      ],
+      [
+       -169.468,
+       2.3381
+      ],
+      [
+       -169.6577,
+       2.0404
+      ],
+      [
+       -169.8207,
+       1.7272
+      ],
+      [
+       -169.9559,
+       1.401
+      ],
+      [
+       -170.062,
+       1.0643
+      ],
+      [
+       -170.1384,
+       0.7196
+      ],
+      [
+       -170.1845,
+       0.3696
+      ],
+      [
+       -170.1999,
+       0.0169
+      ],
+      [
+       -170.1845,
+       -0.3358
+      ],
+      [
+       -170.1384,
+       -0.6859
+      ],
+      [
+       -170.062,
+       -1.0305
+      ],
+      [
+       -169.9559,
+       -1.3672
+      ],
+      [
+       -169.8207,
+       -1.6934
+      ],
+      [
+       -169.6577,
+       -2.0066
+      ],
+      [
+       -169.468,
+       -2.3043
+      ],
+      [
+       -169.2531,
+       -2.5844
+      ],
+      [
+       -169.0146,
+       -2.8447
+      ],
+      [
+       -168.7543,
+       -3.0832
+      ],
+      [
+       -168.4742,
+       -3.2982
+      ],
+      [
+       -168.1764,
+       -3.4879
+      ],
+      [
+       -167.8633,
+       -3.6509
+      ],
+      [
+       -167.5371,
+       -3.786
+      ],
+      [
+       -167.2004,
+       -3.8922
+      ],
+      [
+       -166.8557,
+       -3.9686
+      ],
+      [
+       -166.5057,
+       -4.0147
+      ],
+      [
+       -166.153,
+       -4.0301
+      ],
+      [
+       -165.8003,
+       -4.0147
+      ],
+      [
+       -165.4502,
+       -3.9686
+      ],
+      [
+       -165.1055,
+       -3.8922
+      ],
+      [
+       -164.7688,
+       -3.786
+      ],
+      [
+       -164.4427,
+       -3.6509
+      ],
+      [
+       -164.1295,
+       -3.4879
+      ],
+      [
+       -163.8317,
+       -3.2982
+      ],
+      [
+       -163.5516,
+       -3.0832
+      ],
+      [
+       -163.2913,
+       -2.8447
+      ],
+      [
+       -163.0528,
+       -2.5844
+      ],
+      [
+       -162.8379,
+       -2.3043
+      ],
+      [
+       -162.6482,
+       -2.0066
+      ],
+      [
+       -162.4852,
+       -1.6934
+      ],
+      [
+       -162.3501,
+       -1.3672
+      ],
+      [
+       -162.2439,
+       -1.0305
+      ],
+      [
+       -162.1675,
+       -0.6859
+      ],
+      [
+       -162.1214,
+       -0.3358
+      ],
+      [
+       -162.106,
+       0.0169
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "kind": "reach",
+    "radius_km": 450,
+    "label": "450 km: the farthest a profile counts",
+    "centre_time_utc": "2023-10-09T12:30Z"
+   }
+  }
+ ]
+}

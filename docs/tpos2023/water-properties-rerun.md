@@ -2,6 +2,8 @@
 
 20 November 2026. Saildrone TPOS 2023 (`SD_TPOS2023_v03`), EK80 at 38 and 200 kHz, 141 days with echosounder data from 31 May to 5 November 2023.
 
+Since 22 November 2026 the pipeline fetches the same columns itself with `--water-from-globe`, corrected by nearby measured profiles: [water-from-globe-2023-10-09.md](water-from-globe-2023-10-09.md) repeats this day that way.
+
 ## Summary
 
 - Every published TPOS Sv used one fixed set of water values from the raw files: 25.55 °C, salinity 34.64 and 1535.3 m/s, on all days and at all depths. The real column at the equator has a 29 °C surface layer, a thermocline near 150 m and 8 °C water at 500 m.
