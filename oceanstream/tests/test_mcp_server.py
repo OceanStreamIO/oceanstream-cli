@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 import pytest
 
+try:  # the server is an optional extra: pip install "oceanstream[mcp]"
+    import mcp.server.fastmcp  # noqa: F401
+    _HAS_MCP = True
+except ImportError:
+    _HAS_MCP = False
 
+requires_mcp = pytest.mark.skipif(not _HAS_MCP, reason="mcp<2 extra not installed")
+
+
+@requires_mcp
 def test_mcp_server_import():
     """MCP server module can be imported."""
     from oceanstream.mcp_server import mcp_app as mcp
@@ -13,6 +22,7 @@ def test_mcp_server_import():
     assert mcp.name == "OceanStream"
 
 
+@requires_mcp
 def test_info_tools_registered():
     """All info tools are registered on the MCP server."""
     from oceanstream.mcp_server import mcp_app as mcp
@@ -27,6 +37,7 @@ def test_info_tools_registered():
     assert "get_supported_file_formats" in tool_names
 
 
+@requires_mcp
 def test_processing_tools_registered():
     """Processing tools are registered on the MCP server."""
     from oceanstream.mcp_server import mcp_app as mcp
@@ -38,6 +49,7 @@ def test_processing_tools_registered():
     assert "adcp_process" in tool_names
 
 
+@requires_mcp
 def test_list_providers_returns_data():
     """list_providers tool returns provider data."""
     from oceanstream.mcp_server.tools.info import list_providers
@@ -53,6 +65,7 @@ def test_list_providers_returns_data():
     assert "is_stationary" in first
 
 
+@requires_mcp
 def test_list_instruments_returns_data():
     """list_instruments tool returns sensor catalogue data."""
     from oceanstream.mcp_server.tools.info import list_instruments
@@ -68,6 +81,7 @@ def test_list_instruments_returns_data():
     assert "variables" in first
 
 
+@requires_mcp
 def test_get_instrument_details_valid():
     """get_instrument_details returns full info for a known sensor."""
     from oceanstream.mcp_server.tools.info import get_instrument_details
@@ -79,6 +93,7 @@ def test_get_instrument_details_valid():
     assert "variables" in result
 
 
+@requires_mcp
 def test_get_instrument_details_unknown():
     """get_instrument_details returns error for unknown sensor."""
     from oceanstream.mcp_server.tools.info import get_instrument_details
@@ -87,6 +102,7 @@ def test_get_instrument_details_unknown():
     assert "error" in result
 
 
+@requires_mcp
 def test_detect_provider_file_not_found():
     """detect_provider returns error for non-existent file."""
     from oceanstream.mcp_server.tools.info import detect_provider
@@ -96,6 +112,7 @@ def test_detect_provider_file_not_found():
     assert "not found" in result["error"].lower()
 
 
+@requires_mcp
 def test_detect_sensors_with_variables():
     """detect_sensors identifies instruments from variable names."""
     from oceanstream.mcp_server.tools.info import detect_sensors
@@ -105,6 +122,7 @@ def test_detect_sensors_with_variables():
     assert isinstance(result, list)
 
 
+@requires_mcp
 def test_list_processing_commands_structure():
     """list_processing_commands returns properly structured data."""
     from oceanstream.mcp_server.tools.info import list_processing_commands
@@ -120,6 +138,7 @@ def test_list_processing_commands_structure():
     assert "multibeam" in modules
 
 
+@requires_mcp
 def test_get_supported_file_formats():
     """get_supported_file_formats returns format info."""
     from oceanstream.mcp_server.tools.info import get_supported_file_formats
@@ -133,6 +152,7 @@ def test_get_supported_file_formats():
     assert ".raw" in result["echodata"]["extensions"]
 
 
+@requires_mcp
 def test_geotrack_convert_file_not_found():
     """geotrack_convert returns error for non-existent input."""
     from oceanstream.mcp_server.tools.geotrack import geotrack_convert
@@ -141,6 +161,7 @@ def test_geotrack_convert_file_not_found():
     assert "error" in result
 
 
+@requires_mcp
 def test_echodata_convert_file_not_found():
     """echodata_convert returns error for non-existent input."""
     from oceanstream.mcp_server.tools.echodata import echodata_convert
@@ -149,6 +170,7 @@ def test_echodata_convert_file_not_found():
     assert "error" in result
 
 
+@requires_mcp
 def test_adcp_process_file_not_found():
     """adcp_process returns error for non-existent input."""
     from oceanstream.mcp_server.tools.adcp import adcp_process
