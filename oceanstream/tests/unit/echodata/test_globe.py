@@ -29,6 +29,8 @@ SOURCES = {
 HOURS = 3
 #: Pressure (dbar) above which the test casts are warm.
 MIXED_DBAR = 100
+#: The rate limit's answer, which says when to come back.
+TOO_MANY = 429
 
 
 def fixes(start="2023-10-09T00:00", minutes=180, lat=0.03, lon=-165.98):
@@ -64,15 +66,16 @@ def casts_file(points, kinds=None) -> bytes:
 class FakeGlobe:
     """Serves /api/env/sources and /api/env/track?format=cchdo, recording what it was asked."""
 
-    def __init__(self, kinds=None, refuse=0):
-        self.requests, self.kinds, self.refuse = [], kinds, refuse
+    def __init__(self, kinds=None, refuse=0, code=TOO_MANY):
+        self.requests, self.kinds, self.refuse, self.code = [], kinds, refuse, code
 
     def __call__(self, req, timeout=None):
         self.requests.append(req)
         if self.refuse:
             self.refuse -= 1
+            headers = {"Retry-After": "1"} if self.code == TOO_MANY else {}
             raise urllib.error.HTTPError(
-                req.full_url, 429, "busy", {"Retry-After": "1"}, io.BytesIO(b"slow down")
+                req.full_url, self.code, "busy", headers, io.BytesIO(b"slow down")
             )
         if req.full_url.endswith("/api/env/sources"):
             return io.BytesIO(json.dumps(SOURCES).encode())
@@ -173,6 +176,22 @@ class TestRequest:
         monkeypatch.setattr(globe.time, "sleep", waits.append)
         globe.track_casts(fixes(), tmp_path / "c.nc", globe.GlobeSettings(model="glorys"))
         assert waits == [1.0, 1.0] and len(server.requests) == 3  # noqa: PLR2004 - two refusals, then the answer
+
+    def test_a_failing_replica_is_retried(self, monkeypatch, tmp_path):
+        server = FakeGlobe(refuse=2, code=500)
+        monkeypatch.setattr(globe.urllib.request, "urlopen", server)
+        waits = []
+        monkeypatch.setattr(globe.time, "sleep", waits.append)
+        globe.track_casts(fixes(), tmp_path / "c.nc", globe.GlobeSettings(model="glorys"))
+        assert waits == [10.0, 20.0]
+
+    def test_gives_up_after_the_last_attempt(self, monkeypatch, tmp_path):
+        server = FakeGlobe(refuse=globe.ATTEMPTS, code=500)
+        monkeypatch.setattr(globe.urllib.request, "urlopen", server)
+        monkeypatch.setattr(globe.time, "sleep", lambda s: None)
+        with pytest.raises(globe.GlobeError, match="HTTP 500"):
+            globe.track_casts(fixes(), tmp_path / "c.nc", globe.GlobeSettings(model="glorys"))
+        assert len(server.requests) == globe.ATTEMPTS
 
     def test_other_errors_are_reported(self, monkeypatch):
         def refuse(req, timeout=None):

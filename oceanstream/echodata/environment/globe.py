@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import time
 import urllib.error
@@ -33,12 +34,17 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_URL = "https://globe.oceanstream.io"
 URL_ENV = "OCEANSTREAM_GLOBE_URL"
 KEY_ENV = "OCEANSTREAM_GLOBE_API_KEY"
 MODELS = ("auto", "glorys", "anfc")
 #: Attempts at a request the globe refused for the moment (rate limit, restart, timeout).
-ATTEMPTS = 4
+ATTEMPTS = 6
+#: Answers worth another attempt. 500 is among them: the globe runs as several replicas, and
+#: one that fails a request (as one did every in-situ request on 2026-11-22) is not the next.
+RETRY_CODES = (429, 500, 502, 503, 504)
 TIMEOUT_S = 300
 #: ``cast_source`` flag values in the globe's casts file.
 CAST_KINDS = {0: "model", 1: "model corrected by nearby profiles", 2: "measured profile"}
@@ -130,7 +136,7 @@ def _request(req: urllib.request.Request) -> bytes:
                 return resp.read()
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:500]
-            if e.code not in (429, 502, 503, 504) or attempt == ATTEMPTS:
+            if e.code not in RETRY_CODES or attempt == ATTEMPTS:
                 raise GlobeError(f"{req.full_url}: HTTP {e.code}: {detail}") from e
             wait = float(e.headers.get("Retry-After") or 10 * attempt)
         except (urllib.error.URLError, TimeoutError) as e:
@@ -140,7 +146,15 @@ def _request(req: urllib.request.Request) -> bytes:
                     "the pipeline runs (not from MareNostrum 5)."
                 ) from e
             wait = 10.0 * attempt
-        time.sleep(min(wait, 120.0))
+        wait = min(wait, 120.0)
+        logger.warning(
+            "Globe: attempt %d of %d at %s failed, again in %.0f s",
+            attempt,
+            ATTEMPTS,
+            req.full_url,
+            wait,
+        )
+        time.sleep(wait)
     raise AssertionError("unreachable")
 
 
