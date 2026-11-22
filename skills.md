@@ -59,7 +59,6 @@ External tools: PMTiles need `tippecanoe` and `pmtiles` on `PATH`. Heatmaps need
 
 ## Running OceanStream From an Agent
 
-- Set `OCEANSTREAM_NO_MCP_PROMPT=1`: otherwise every command prints a hint line when the `mcp` package is missing.
 - `process geotrack convert` asks `Proceed with processing? [Y/n]` before writing. Pass `--yes` (`yes=True` in Python). Without a terminal the prompt reads end-of-file and the run ends with `Processing cancelled.`
 - `campaign create` without an ID starts an interactive wizard, `configure` is always interactive, and `campaign delete` prompts unless given `--yes`.
 - These cases print a message and exit with status 0 without writing anything: input files already processed, a campaign registered at another output location, no campaign id found (printed as `ERROR`), a cancelled prompt. Look for `✓ Completed successfully` in the output. Exceptions during processing print `[geotrack] ERROR: ...` and exit with status 1.
@@ -703,7 +702,6 @@ alias_table = ""         # custom alias table (JSON)
 | `SEMANTIC_CF_TABLE`, `SEMANTIC_ALIAS_TABLE` | Paths of custom semantic tables | built-in |
 | `OCEANSTREAM_METADATA_DIR` | Folder of the SHA256 records (used as given) | `~/.oceanstream/metadata` |
 | `OCEANSTREAM_CAMPAIGNS_DIR` | Campaign registry folder | `~/.oceanstream/campaigns` |
-| `OCEANSTREAM_NO_MCP_PROMPT` | `1` hides the hint line | unset |
 | `AZURE_CONNECTION_STRING`, or `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` | Credentials for `az://` output when `storage.json` has none | unset |
 
 Boolean variables accept `1`, `true` or `yes`.
@@ -844,7 +842,6 @@ cat ~/.oceanstream/campaigns/TPOS_2023/campaign.json
 | Python: convert | `convert(provider=get_provider("noaa_pmel"), input_source=..., output_dir=..., campaign_id=..., yes=True)` |
 | Python: get provider | `from oceanstream.providers import get_provider` |
 | Read output | `pd.read_parquet("./out/ID", ignore_prefixes=[".", "_", "stac", "heatmaps"])` |
-| Quiet agent runs | `export OCEANSTREAM_NO_MCP_PROMPT=1` |
 
 ---
 

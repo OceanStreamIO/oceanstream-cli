@@ -54,7 +54,6 @@ exclude = [
 
 [tool.poetry.scripts]
 oceanstream = "oceanstream.cli:app"
-oceanstream-mcp = "oceanstream.mcp_server.server:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
@@ -96,9 +95,6 @@ bottleneck = { version = "1.5.0", optional = true }
 openpyxl = { version = ">=3.0", optional = true }
 adlfs = { version = ">=2024.4.0", optional = true }
 
-# MCP server
-mcp = { version = ">=1.9,<2", extras = ["cli"], optional = true }  # 2.x renamed FastMCP
-
 # ADCP processing (dolfyn for RDI binary files)
 dolfyn = { version = ">=1.3", optional = true }
 scipy = { version = ">=1.12", optional = true }
@@ -132,17 +128,11 @@ themachinethatgoesping = { version = "0.37.1", python = ">=3.12", optional = tru
 # Writes the web map tiles of the multibeam grids (`process multibeam --tiles`).
 pmtiles = { version = ">=3.4", optional = true }
 
-# Coastal optics (Lee inversion, QAA v6, Stumpf SDB, empirical attenuation).
-# rasterio/pyproj bring the geospatial IO; scipy is needed for regression fits;
-# scikit-learn is needed by the reef_calibration clustering and by
-# classify.classify_bottom. requests + pystac-client + planetary-computer
-# power the OPTIONAL scene-fetch helpers (coastal-acquire extra).
+# Raster IO and projections: multibeam grids and geotrack heatmaps.
 rasterio = { version = ">=1.3", optional = true }
 pyproj = { version = ">=3.6", optional = true }
-scikit-learn = { version = ">=1.3", optional = true }
+# HTTP downloads: seabed bathymetry lookups and the raw-data mirrors in oceanstream/sources.
 requests = { version = ">=2.31", optional = true }
-pystac-client = { version = ">=0.7", optional = true }
-planetary-computer = { version = ">=1.0", optional = true }
 
 [tool.poetry.extras]
 # Processing module extras
@@ -162,18 +152,6 @@ echodata-viz = ["matplotlib", "hvplot", "datashader", "holoviews", "panel", "bok
 multibeam = ["themachinethatgoesping", "numpy", "scipy", "rasterio", "pyproj", "matplotlib", "pmtiles"]
 adcp = ["dolfyn", "scipy", "setuptools", "xarray"]
 
-# Coastal optics (Lee inversion, QAA v6, Stumpf SDB, empirical attenuation).
-# ACOLITE is intentionally NOT declared here — it runs as a subprocess with
-# its own environment; the user installs it separately. See docs/lee_inversion/.
-coastal = [
-    "numpy", "scipy", "scikit-learn", "xarray",
-    "rasterio", "pyproj", "geopandas", "shapely",
-]
-# Optional scene-fetch helpers (Sentinel-2 discovery via CDSE + PC). In
-# production this is provided by EarthStudio; the extra exists for
-# standalone/CLI/test use.
-coastal-acquire = ["requests", "pystac-client", "planetary-computer", "copernicusmarine"]
-
 # Convenience extras
 all = [
     "geopandas", "shapely", "pynmea2", "seabirdscientific",
@@ -182,10 +160,8 @@ all = [
     "copernicusmarine", "gsw", "matplotlib", "hvplot", "datashader",
     "holoviews", "panel", "bokeh", "haversine", "erddapy",
     "dolfyn", "scipy", "setuptools",
-    "rasterio", "pyproj", "scikit-learn",
-    "requests", "pystac-client", "planetary-computer",
+    "rasterio", "pyproj", "requests",
 ]
-mcp = ["mcp"]
 geo = ["geopandas", "shapely", "pynmea2", "seabirdscientific"]  # Legacy alias for geotrack
 
 [tool.poetry.group.dev.dependencies]

@@ -10,7 +10,6 @@ OceanStream converts oceanographic records (Saildrone and R2R CSV/GeoCSV, NMEA l
 ```bash
 source venv/bin/activate                  # Python 3.11–3.13 (lint/type targets: 3.12)
 pip install -e ".[geotrack,echodata]"     # or ".[all]"; `make install` installs no extras
-export OCEANSTREAM_NO_MCP_PROMPT=1        # every CLI call otherwise prints an MCP setup hint
 make test-unit                            # pytest -q oceanstream/tests/unit
 make test-integration                     # pytest -q oceanstream/tests/integration (not e2e/)
 make test-slow                            # pytest -m slow: the tests every other target leaves out
@@ -29,7 +28,7 @@ The `Makefile` targets `run-cli-sample`, `dry-run`, `schema` and `list-columns` 
 
 | Module | Purpose |
 |--------|---------|
-| `oceanstream/cli.py` | Typer CLI: `process` (`geotrack`, `echodata` with `presets`, `multibeam`, `adcp`), `campaign` (commands registered from `campaign/cli.py`), `hpc` (`hpc/cli.py`), `providers`, `configure`, `mcp` |
+| `oceanstream/cli.py` | Typer CLI: `process` (`geotrack`, `echodata` with `presets`, `multibeam`, `adcp`), `campaign` (commands registered from `campaign/cli.py`), `hpc` (`hpc/cli.py`), `providers`, `configure` |
 | `oceanstream/geotrack/processor.py` | Geotrack pipeline: scan → process files → detect sensors → enrich → dedup → Parquet → STAC; `convert()` is the entry point |
 | `oceanstream/echodata/processor.py` | `EchodataProcessor.run()`: convert → calibrate → environment → daily concat → Sv → denoise → seabed → shoals → MVBS/NASC → echograms. No CLI command runs the whole pipeline; the CLI runs each step separately |
 | `oceanstream/providers/` | Data source adapters: implement the `ProviderBase` protocol (`base.py`), register in `factory.py` |
@@ -106,7 +105,7 @@ raise ValueError("Missing campaign_id")  # ❌
 
 ## Testing
 
-Test root: `oceanstream/tests/` (`unit/`, `integration/`, `e2e/`). Markers registered in `pytest.ini`: `integration`, and `slow`, which `addopts` leaves out of every run that doesn't pass its own `-m` (the SBE911 tests that decode a `.hex` cast, about 35 s); some tests also use an unregistered `e2e` marker. Inputs come from `raw_data/` at the repo root. `oceanstream/tests/data/` is gitignored apart from a few tracked fixtures, so a test that reads `oceanstream/tests/data/raw_data/` fails on a fresh clone; generate small inputs in `tmp_path` instead.
+Test root: `oceanstream/tests/` (`unit/`, `integration/`, `e2e/`). Markers registered in `pytest.ini`: `integration`, and `slow`, which `addopts` leaves out of every run that doesn't pass its own `-m` (the SBE911 tests that decode a `.hex` cast, about 35 s); some tests also use an unregistered `e2e` marker. Inputs come from `raw_data/` at the repo root. `oceanstream/tests/data/` is gitignored, so a test that reads `oceanstream/tests/data/raw_data/` fails on a fresh clone; generate small inputs in `tmp_path` instead.
 
 **CLI test pattern**:
 ```python
@@ -133,7 +132,7 @@ Bins are 2°×2°, with latitude clamped to ±15° (`geotrack/binning.py`). `wri
 
 Config lookup: `--config-file` → `./oceanstream.toml` → internal defaults. Environment variables override the TOML. `oceanstream/config/settings.py` loads `.env` via python-dotenv.
 
-Key env vars: `OCEANSTREAM_METADATA_DIR`, `OCEANSTREAM_CAMPAIGNS_DIR`, `OCEANSTREAM_NO_MCP_PROMPT`, `SEMANTIC_ENABLE` (default false), `SEMANTIC_GENERATE_STAC` (needs `SEMANTIC_ENABLE`), and for `az://` output `AZURE_CONNECTION_STRING`, or `AZURE_STORAGE_ACCOUNT` with `AZURE_STORAGE_KEY`. `RAW_DATA_PATH` and `OUTPUT_PATH` are read only by the legacy `oceanstream/app.py`.
+Key env vars: `OCEANSTREAM_METADATA_DIR`, `OCEANSTREAM_CAMPAIGNS_DIR`, `SEMANTIC_ENABLE` (default false), `SEMANTIC_GENERATE_STAC` (needs `SEMANTIC_ENABLE`), and for `az://` output `AZURE_CONNECTION_STRING`, or `AZURE_STORAGE_ACCOUNT` with `AZURE_STORAGE_KEY`. `RAW_DATA_PATH` and `OUTPUT_PATH` are read only by the legacy `oceanstream/app.py`.
 
 PMTiles generation calls the external `tippecanoe` and `pmtiles` executables.
 

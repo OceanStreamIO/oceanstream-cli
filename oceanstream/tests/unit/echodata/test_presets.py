@@ -262,8 +262,7 @@ class TestCli:
     runner = CliRunner()
 
     def _run(self, *args: str):
-        return self.runner.invoke(cli_module.app, ["process", "echodata", "presets", *args],
-                                  env={"OCEANSTREAM_NO_MCP_PROMPT": "1"})
+        return self.runner.invoke(cli_module.app, ["process", "echodata", "presets", *args])
 
     def test_list(self):
         result = self._run("list")

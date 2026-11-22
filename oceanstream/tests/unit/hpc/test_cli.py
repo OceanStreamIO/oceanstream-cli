@@ -19,8 +19,7 @@ runner = CliRunner()
 def _env(tmp_path: Path) -> dict[str, str]:
     key = tmp_path / "id_test"
     key.write_text("not a key")
-    return {**SITE, "HPC_SSH_KEY": str(key), "HPC_SITE_FILE": str(tmp_path / "none.env"),
-            "OCEANSTREAM_NO_MCP_PROMPT": "1"}
+    return {**SITE, "HPC_SSH_KEY": str(key), "HPC_SITE_FILE": str(tmp_path / "none.env")}
 
 
 def test_submit_render_only_prints_the_node_job(tmp_path: Path) -> None:
