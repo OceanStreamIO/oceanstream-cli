@@ -266,13 +266,35 @@ def test_bin_sv_range_keeps_later_pings_of_a_channel_already_cut():
     sv = np.full((1, n_pings, n_samples), np.nan)
     sv[0, :50, :4] = -60.0
     sv[0, 50:, :8] = -60.0
-    echo_range = np.broadcast_to(np.arange(n_samples) * 0.05, (1, n_pings, n_samples)).copy()
+    # echopype leaves echo_range NaN where the samples are.
+    echo_range = np.where(np.isnan(sv), np.nan, np.arange(n_samples) * 0.05)
     ds = xr.Dataset({"Sv": (("channel", "ping_time", "range_sample"), sv),
                      "echo_range": (("channel", "ping_time", "range_sample"), echo_range)},
                     coords={"channel": ["a"], "ping_time": np.arange(n_pings),
                             "range_sample": np.arange(n_samples)})
     assert pfr._bin_sv_range(ds, 0.1, cut_padding=False).sizes["range_sample"] == 4
-    assert pfr._bin_sv_range(ds, 0.1).sizes["range_sample"] == 2  # the shared-grid cut
+    # The shared-grid cut keeps what any ping recorded (NF2409 2024-08-21: 43 m, then 228 m).
+    out = pfr._bin_sv_range(ds, 0.1)
+    assert out.sizes["range_sample"] == n_samples // 2
+    assert out["Sv"].isel(ping_time=-1).notnull().all()
+
+
+def test_bin_sv_range_cuts_the_padding_of_a_coarser_channel():
+    """A channel sampled 4 times coarser is NaN-padded on the shared grid; its padding goes."""
+    n_pings, n_samples = 5, 16
+    spacing = np.array([0.025, 0.1])[:, None, None]
+    recorded = np.array([16, 4])[:, None, None]
+    idx = np.arange(n_samples)[None, None, :]
+    echo_range = np.broadcast_to(np.where(idx < recorded, idx * spacing, np.nan),
+                                 (2, n_pings, n_samples)).copy()
+    sv = np.where(np.isnan(echo_range), np.nan, -60.0)
+    dims = ("channel", "ping_time", "range_sample")
+    ds = xr.Dataset({"Sv": (dims, sv), "echo_range": (dims, echo_range)},
+                    coords={"channel": ["fine", "coarse"], "ping_time": np.arange(n_pings),
+                            "range_sample": np.arange(n_samples)})
+    out = pfr._bin_sv_range(ds, 0.1)
+    assert out.sizes["range_sample"] == 4  # 16 fine samples / 4, and the 4 coarse ones
+    assert out["Sv"].notnull().all()
 
 
 def test_bin_sv_range_averages_the_absorption_loss_like_the_range():

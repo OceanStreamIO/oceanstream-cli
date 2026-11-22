@@ -1437,8 +1437,8 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
     count closest to *target_bin_m*), averaging Sv in the linear domain and
     echo_range arithmetically. Heavily oversampled channels (e.g. a 200 kHz
     short pulse sampled at 9 mm) shrink enough for a full day to be denoised
-    in memory. *cut_padding* removes trailing bins empty in the first 50 pings;
-    a channel already cut to its own range (``select_channel``) needs no cut.
+    in memory. *cut_padding* removes trailing bins empty in every ping of the
+    day; a channel already cut to its own range (``select_channel``) needs no cut.
     """
     import numpy as np
     import xarray as xr
@@ -1447,6 +1447,15 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
     factors = {}
     # Range quantities averaged arithmetically, like echo_range (absorption_loss with casts).
     by_range = [v for v in ("echo_range", "absorption_loss") if v in ds_Sv]
+    # Samples each channel recorded in any ping of the day. echopype leaves echo_range NaN where
+    # the samples are, so this reads the raw samples once but skips the calibration. The first
+    # pings are not enough: on NF2409 2024-08-21 they recorded 43 m and later files 228 m.
+    n_recorded = {}
+    if cut_padding:
+        recorded = ds_Sv["echo_range"].notnull().any("ping_time").compute()
+        for ch in ds_Sv["channel"].values:
+            row = recorded.sel(channel=ch).values
+            n_recorded[str(ch)] = int(np.flatnonzero(row).max()) + 1 if row.any() else 0
     for ch in ds_Sv["channel"].values:
         ds_ch = ds_Sv[["Sv", *by_range]].sel(channel=[ch])
         spacing = float(np.nanmedian(
@@ -1464,11 +1473,7 @@ def _bin_sv_range(ds_Sv, target_bin_m: float, cut_padding: bool = True):
         # A channel with a longer sample interval is NaN-padded along
         # range_sample; cut the padding off so it does not count as missing data.
         if cut_padding:
-            has_data = (
-                ds_binned["Sv"].isel(channel=0, ping_time=slice(0, 50))
-                .notnull().any("ping_time").values
-            )
-            n_valid = int(np.flatnonzero(has_data).max()) + 1 if has_data.any() else 0
+            n_valid = -(-n_recorded[str(ch)] // factor)  # bins holding any recorded sample
             ds_binned = ds_binned.isel(range_sample=slice(0, n_valid))
         ds_binned = ds_binned.assign_coords(range_sample=np.arange(ds_binned.sizes["range_sample"]))
         binned.append(ds_binned)
