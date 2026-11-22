@@ -73,12 +73,12 @@ def test_cli_geotrack_with_pmtiles(tmp_path: Path, monkeypatch):
     parquet_files = list(geoparquet_dir.rglob("*.parquet"))
     assert parquet_files, "No GeoParquet files were created"
     
-    # Check PMTiles file was created in tiles/ directory (sibling of campaign dir inside geoparquet)
-    tiles_dir = out_dir / "geoparquet" / "tiles"
-    assert tiles_dir.exists(), f"Tiles directory not created. Output:\n{result.output}"
-    
-    pmtiles_file = tiles_dir / "track.pmtiles"
-    assert pmtiles_file.exists(), f"PMTiles file not created at {pmtiles_file}"
+    # Check PMTiles file was created in the campaign's own tiles/ directory
+    pmtiles_files = list(geoparquet_dir.glob("*/tiles/track.pmtiles"))
+    assert len(pmtiles_files) == 1, f"PMTiles file not created. Output:\n{result.output}"
+    assert not (geoparquet_dir / "tiles").exists(), "PMTiles written beside the campaign folders"
+
+    pmtiles_file = pmtiles_files[0]
     assert pmtiles_file.stat().st_size > 0, "PMTiles file is empty"
     
     # Verify output mentions PMTiles
@@ -135,8 +135,7 @@ def test_cli_geotrack_without_pmtiles(tmp_path: Path, monkeypatch):
     assert parquet_files, "No GeoParquet files were created"
     
     # Check PMTiles was NOT created
-    tiles_dir = out_dir / "tiles"
-    assert not tiles_dir.exists(), "Tiles directory should not exist when --generate-pmtiles not used"
+    assert not list(out_dir.rglob("*.pmtiles")), "PMTiles should not exist when --generate-pmtiles not used"
 
 
 @pytest.mark.integration
@@ -200,10 +199,7 @@ def test_cli_geotrack_pmtiles_missing_tools(tmp_path: Path, monkeypatch):
     assert parquet_files, "GeoParquet files should still be created"
     
     # Check PMTiles was NOT created
-    tiles_dir = out_dir / "tiles"
-    if tiles_dir.exists():
-        pmtiles_file = tiles_dir / "track.pmtiles"
-        assert not pmtiles_file.exists(), "PMTiles should not be created when tools are missing"
+    assert not list(out_dir.rglob("*.pmtiles")), "PMTiles should not be created when tools are missing"
 
 
 @pytest.mark.integration
@@ -253,10 +249,9 @@ def test_cli_geotrack_pmtiles_custom_params(tmp_path: Path, monkeypatch):
     
     assert result.exit_code == 0, f"CLI failed: {result.exit_code}\n{result.output}"
     
-    # Check PMTiles file was created (sibling of campaign dir inside geoparquet)
-    tiles_dir = out_dir / "geoparquet" / "tiles"
-    pmtiles_file = tiles_dir / "track.pmtiles"
-    assert pmtiles_file.exists(), f"PMTiles file not created"
+    # Check PMTiles file was created in the campaign's own tiles/ directory
+    pmtiles_files = list((out_dir / "geoparquet").glob("*/tiles/track.pmtiles"))
+    assert len(pmtiles_files) == 1, f"PMTiles file not created. Output:\n{result.output}"
     
     # Verify custom parameters in output
     assert "1 - 8" in result.output or "Zoom levels" in result.output

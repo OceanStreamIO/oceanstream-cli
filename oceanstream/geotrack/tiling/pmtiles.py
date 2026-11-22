@@ -600,7 +600,7 @@ def generate_pmtiles_from_geoparquet(
     pmtiles_path: str | os.PathLike,
     *,
     minzoom: int = 0,
-    maxzoom: int = 10,
+    maxzoom: int | None = None,
     layer_name: str = "track",
     select_columns: Iterable[str] | None = None,
     sample_rate: int = 5,
@@ -626,7 +626,8 @@ def generate_pmtiles_from_geoparquet(
         geoparquet_root: Root directory of partitioned GeoParquet dataset
         pmtiles_path: Output path for PMTiles file
         minzoom: Minimum zoom level (0-15)
-        maxzoom: Maximum zoom level (0-15)
+        maxzoom: Maximum zoom level (0-15). None lets tippecanoe choose it
+            from the density of the track (``-zg``); ogr2ogr then uses 10.
         layer_name: Layer name in vector tiles
         select_columns: Columns to include (deprecated, for ogr2ogr compatibility)
         sample_rate: Take every Nth point (1=all, 5=every 5th point)
@@ -693,7 +694,7 @@ def generate_pmtiles_from_geoparquet(
             geoparquet_root=geoparquet_root,
             pmtiles_path=pmtiles_path,
             minzoom=minzoom,
-            maxzoom=maxzoom,
+            maxzoom=10 if maxzoom is None else maxzoom,
             layer_name=layer_name,
             select_columns=select_columns,
         )
@@ -704,7 +705,7 @@ def _generate_with_tippecanoe(
     pmtiles_path: Path,
     *,
     minzoom: int,
-    maxzoom: int,
+    maxzoom: int | None,
     layer_name: str,
     sample_rate: int,
     time_gap_minutes: int,
@@ -750,19 +751,19 @@ def _generate_with_tippecanoe(
         else:
             # Default options optimized for track data
             extra_opts = [
-                "-zg",  # Auto-calculate zoom levels
                 "--drop-densest-as-needed",  # Smart simplification
                 "--no-tile-size-limit",  # Allow large tiles for detailed tracks
                 "--read-parallel",  # Parallel reading
             ]
         
+        # tippecanoe takes the last zoom option given, so pass only one
+        zoom_opts = ["-zg"] if maxzoom is None else ["-z", str(maxzoom)]
         cmd = [
             "tippecanoe",
             "-o", str(mbtiles_path),
             "-l", layer_name,
             "-Z", str(minzoom),
-            "-z", str(maxzoom),
-        ] + extra_opts + [str(ndjson_path)]
+        ] + zoom_opts + extra_opts + [str(ndjson_path)]
         
         print(f"Running tippecanoe: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)

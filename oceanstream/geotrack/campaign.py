@@ -338,8 +338,10 @@ def inspect_campaign_data(
         if items_dir.exists():
             result['stac_items'] = sorted(items_dir.glob("*.json"))
     
-    # Check for PMTiles
-    pmtiles_files = list(campaign_dir.glob("*.pmtiles"))
+    # Check for PMTiles: conversions write them to tiles/, older output beside the data
+    pmtiles_files = list(campaign_dir.glob("*.pmtiles")) + list(
+        (campaign_dir / "tiles").glob("*.pmtiles")
+    )
     if pmtiles_files:
         result['pmtiles'] = sorted(pmtiles_files)
     

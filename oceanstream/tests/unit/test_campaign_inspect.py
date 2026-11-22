@@ -92,6 +92,18 @@ def test_inspect_campaign_data_with_stac(tmp_path):
     assert len(result['stac_items']) == 2
 
 
+def test_inspect_campaign_data_finds_tiles(tmp_path):
+    """PMTiles written by a conversion, in the campaign's tiles/ folder, are listed."""
+    output_dir = tmp_path / "output"
+    tiles_dir = output_dir / "TEST_CAMPAIGN" / "tiles"
+    tiles_dir.mkdir(parents=True)
+    (tiles_dir / "track.pmtiles").write_bytes(b"fake")
+
+    result = inspect_campaign_data("TEST_CAMPAIGN", output_dir)
+
+    assert result['pmtiles'] == [tiles_dir / "track.pmtiles"]
+
+
 def test_inspect_campaign_data_limit_parameter(tmp_path):
     """Test that limit parameter controls sample size."""
     output_dir = tmp_path / "output"

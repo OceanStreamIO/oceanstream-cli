@@ -1306,7 +1306,7 @@ class GeotrackProcessor:
         self,
         geoparquet_root: Path,
         minzoom: int = 0,
-        maxzoom: int = 10,
+        maxzoom: int | None = None,
         layer_name: str = "track",
         sample_rate: int = 5,
         time_gap_minutes: int = 60,
@@ -1317,13 +1317,14 @@ class GeotrackProcessor:
         include_arrows: bool = True,
         arrows_per_segment: int = 3,
         arrow_min_segment_points: int = 5,
+        pmtiles_path: Path | None = None,
     ) -> Path | None:
         """Generate PMTiles from GeoParquet dataset with segments, day markers, and direction arrows.
 
         Args:
             geoparquet_root: Root directory of partitioned GeoParquet dataset
             minzoom: Minimum zoom level (0-15)
-            maxzoom: Maximum zoom level (0-15)
+            maxzoom: Maximum zoom level (0-15); None lets tippecanoe choose it
             layer_name: Layer name for vector tiles
             sample_rate: Take every Nth point (1=all, 5=every 5th)
             time_gap_minutes: Minutes of gap to split track segments
@@ -1334,6 +1335,8 @@ class GeotrackProcessor:
             include_arrows: Generate direction arrow point features (default: True)
             arrows_per_segment: Number of arrows per track segment (default: 3)
             arrow_min_segment_points: Minimum points in segment to generate arrows (default: 5)
+            pmtiles_path: Output file (default: <geoparquet_root>/tiles/track.pmtiles,
+                where the STAC collection's ``../tiles/track.pmtiles`` link points)
 
         Returns:
             Path to generated PMTiles file, or None if generation failed
@@ -1343,10 +1346,12 @@ class GeotrackProcessor:
         t0 = self.step("generating PMTiles with segments, day markers, and arrows")
 
         try:
-            # PMTiles file goes in tiles/ subdirectory parallel to geoparquet output
-            tiles_dir = geoparquet_root.parent / "tiles"
-            tiles_dir.mkdir(parents=True, exist_ok=True)
-            pmtiles_path = tiles_dir / "track.pmtiles"
+            # Inside the campaign folder, so campaigns written to the same
+            # output folder each keep their own tiles
+            if pmtiles_path is None:
+                pmtiles_path = Path(geoparquet_root) / "tiles" / "track.pmtiles"
+            pmtiles_path = Path(pmtiles_path)
+            pmtiles_path.parent.mkdir(parents=True, exist_ok=True)
 
             generate_pmtiles_from_geoparquet(
                 geoparquet_root=geoparquet_root,
@@ -1390,7 +1395,7 @@ def generate_tiles(
     provider: ProviderBase | None = None,
     verbose: bool = False,
     minzoom: int = 0,
-    maxzoom: int = 10,
+    maxzoom: int | None = None,
     layer_name: str = "track",
     sample_rate: int = 5,
     time_gap_minutes: int = 60,
@@ -1405,11 +1410,11 @@ def generate_tiles(
 
     Args:
         geoparquet_dir: Path to GeoParquet dataset root
-        output_dir: Optional output directory for tiles (default: geoparquet_dir/../tiles)
+        output_dir: Optional output directory for tiles (default: geoparquet_dir/tiles)
         provider: Optional provider for column standardization
         verbose: Enable detailed progress information
         minzoom: Minimum zoom level (0-15)
-        maxzoom: Maximum zoom level (0-15)
+        maxzoom: Maximum zoom level (0-15); None lets tippecanoe choose it
         layer_name: Layer name for vector tiles
         sample_rate: Take every Nth point (1=all, 5=every 5th)
         time_gap_minutes: Minutes of gap to split track segments
@@ -1435,7 +1440,8 @@ def generate_tiles(
 
     # Determine output location
     if output_dir is None:
-        output_dir = geoparquet_dir.parent / "tiles"
+        output_dir = geoparquet_dir / "tiles"
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Extract platform_id from GeoParquet if possible
@@ -1470,7 +1476,7 @@ def generate_tiles(
         print(f"\n[tiles] Generating PMTiles from GeoParquet")
         print(f"[tiles] • Source: {geoparquet_dir}")
         print(f"[tiles] • Output: {pmtiles_path}")
-        print(f"[tiles] • Zoom levels: {minzoom}-{maxzoom}")
+        print(f"[tiles] • Zoom levels: {minzoom}-{'auto' if maxzoom is None else maxzoom}")
         print(f"[tiles] • Sample rate: every {sample_rate} point(s)")
         print(f"[tiles] • Time gap: {time_gap_minutes} minutes")
         if include_measurements:
@@ -1492,6 +1498,7 @@ def generate_tiles(
         include_arrows=include_arrows,
         arrows_per_segment=arrows_per_segment,
         arrow_min_segment_points=arrow_min_points,
+        pmtiles_path=pmtiles_path,
     )
 
     if result and result.exists():
@@ -1579,7 +1586,7 @@ def convert(
     yes: bool = False,
     generate_pmtiles: bool = False,
     pmtiles_minzoom: int = 0,
-    pmtiles_maxzoom: int = 10,
+    pmtiles_maxzoom: int | None = None,
     pmtiles_layer: str = "track",
     pmtiles_sample_rate: int = 5,
     pmtiles_time_gap: int = 60,
@@ -1624,7 +1631,7 @@ def convert(
         yes: Skip confirmation prompts
         generate_pmtiles: Generate PMTiles vector tiles with segments, day markers, and arrows
         pmtiles_minzoom: Minimum zoom level for PMTiles (0-15)
-        pmtiles_maxzoom: Maximum zoom level for PMTiles (0-15)
+        pmtiles_maxzoom: Maximum zoom level for PMTiles (0-15); None lets tippecanoe choose it
         pmtiles_layer: Layer name for PMTiles
         pmtiles_sample_rate: Sample rate - take every Nth point (1=all, 5=every 5th)
         pmtiles_time_gap: Minutes of gap to split track segments
@@ -2502,7 +2509,7 @@ def convert(
         print(f"  PMTiles directory     : {pmtiles_path.parent}")
         print(f"  PMTiles file          : ✓ {pmtiles_path.name}")
         print(f"  File size             : {_format_file_size(pmtiles_size)}")
-        print(f"  Zoom levels           : {pmtiles_minzoom} - {pmtiles_maxzoom}")
+        print(f"  Zoom levels           : {pmtiles_minzoom} - {'auto' if pmtiles_maxzoom is None else pmtiles_maxzoom}")
         print(f"  Layer name            : {pmtiles_layer}")
 
     if heatmaps_generated and heatmaps_manifest:

@@ -197,7 +197,35 @@ def test_generate_pmtiles_with_segments(mock_which, mock_run, sample_geoparquet,
     tippecanoe_cmd = tippecanoe_call[0][0]
     assert tippecanoe_cmd[0] == "tippecanoe"
     assert "-Z" in tippecanoe_cmd
-    assert "-z" in tippecanoe_cmd
+    # No maxzoom given: tippecanoe picks it from the data
+    assert "-zg" in tippecanoe_cmd
+    assert "-z" not in tippecanoe_cmd
+
+
+@patch("oceanstream.geotrack.tiling.pmtiles.subprocess.run")
+@patch("oceanstream.geotrack.tiling.pmtiles.shutil.which")
+def test_generate_pmtiles_explicit_maxzoom(mock_which, mock_run, sample_geoparquet, tmp_path):
+    """An explicit maxzoom is passed alone; -zg after it would override it."""
+    mock_which.return_value = "/usr/bin/tool"
+
+    def mock_subprocess_side_effect(cmd, **kwargs):
+        if cmd[0] == "pmtiles" and cmd[1] == "convert":
+            Path(cmd[3]).write_bytes(b"fake pmtiles data")
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = mock_subprocess_side_effect
+
+    generate_pmtiles_from_geoparquet(
+        geoparquet_root=sample_geoparquet,
+        pmtiles_path=tmp_path / "output.pmtiles",
+        use_tippecanoe=True,
+        maxzoom=6,
+    )
+
+    tippecanoe_cmd = mock_run.call_args_list[0][0][0]
+    z = tippecanoe_cmd.index("-z")
+    assert tippecanoe_cmd[z + 1] == "6"
+    assert "-zg" not in tippecanoe_cmd
 
 
 @patch("oceanstream.geotrack.tiling.pmtiles.subprocess.run")

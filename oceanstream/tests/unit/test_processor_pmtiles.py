@@ -17,7 +17,7 @@ def test_processor_generate_pmtiles_success(tmp_path):
     geoparquet_root.mkdir()
     
     # Mock generate_pmtiles_from_geoparquet at the processor level
-    pmtiles_output = tmp_path / "tiles" / "track.pmtiles"
+    pmtiles_output = geoparquet_root / "tiles" / "track.pmtiles"
     
     def mock_generate(*args, **kwargs):
         pmtiles_output.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ def test_processor_generate_pmtiles_success(tmp_path):
         
         # Check result
         assert result is not None
-        assert result == tmp_path / "tiles" / "track.pmtiles"
+        assert result == geoparquet_root / "tiles" / "track.pmtiles"
         assert result.exists()
 
 
@@ -105,7 +105,7 @@ def test_processor_generate_pmtiles_creates_tiles_dir(tmp_path):
     geoparquet_root.mkdir()
     
     # Ensure tiles directory doesn't exist initially
-    tiles_dir = tmp_path / "tiles"
+    tiles_dir = geoparquet_root / "tiles"
     assert not tiles_dir.exists()
     
     # Mock generate_pmtiles_from_geoparquet
@@ -140,7 +140,7 @@ def test_processor_generate_pmtiles_verbose_output(tmp_path, capsys):
     geoparquet_root.mkdir()
     
     # Mock generate_pmtiles_from_geoparquet
-    pmtiles_output = tmp_path / "tiles" / "track.pmtiles"
+    pmtiles_output = geoparquet_root / "tiles" / "track.pmtiles"
     
     def mock_generate(*args, **kwargs):
         pmtiles_output.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +198,7 @@ def test_processor_generate_pmtiles_with_custom_segmentation_params(tmp_path):
     geoparquet_root.mkdir()
     
     # Mock generate_pmtiles_from_geoparquet
-    pmtiles_output = tmp_path / "tiles" / "track.pmtiles"
+    pmtiles_output = geoparquet_root / "tiles" / "track.pmtiles"
     
     def mock_generate(*args, **kwargs):
         # Verify parameters are passed correctly
@@ -222,6 +222,48 @@ def test_processor_generate_pmtiles_with_custom_segmentation_params(tmp_path):
         
         # Check result
         assert result is not None
-        assert result == tmp_path / "tiles" / "track.pmtiles"
+        assert result == geoparquet_root / "tiles" / "track.pmtiles"
         assert result.exists()
 
+
+
+def test_campaigns_in_one_output_folder_keep_their_own_tiles(tmp_path):
+    """Each campaign's tiles go inside its folder, where its STAC links them."""
+    from oceanstream.geotrack.processor import GeotrackProcessor
+    from oceanstream.providers import get_provider
+
+    processor = GeotrackProcessor(get_provider("saildrone"), verbose=False)
+
+    def mock_generate(*args, **kwargs):
+        kwargs["pmtiles_path"].touch()
+        return kwargs["pmtiles_path"]
+
+    with patch('oceanstream.geotrack.tiling.generate_pmtiles_from_geoparquet', side_effect=mock_generate):
+        results = []
+        for campaign in ("camp_a", "camp_b"):
+            (tmp_path / campaign).mkdir()
+            results.append(processor.generate_pmtiles_dataset(geoparquet_root=tmp_path / campaign))
+
+    assert results == [
+        tmp_path / "camp_a" / "tiles" / "track.pmtiles",
+        tmp_path / "camp_b" / "tiles" / "track.pmtiles",
+    ]
+
+
+def test_generate_tiles_uses_output_dir(tmp_path):
+    """`tiles --output-dir` decides where the file is written."""
+    from oceanstream.geotrack.processor import generate_tiles
+
+    geoparquet_dir = tmp_path / "camp_a"
+    geoparquet_dir.mkdir()
+    output_dir = tmp_path / "custom"
+
+    def mock_generate(*args, **kwargs):
+        kwargs["pmtiles_path"].touch()
+        return kwargs["pmtiles_path"]
+
+    with patch('oceanstream.geotrack.tiling.generate_pmtiles_from_geoparquet', side_effect=mock_generate):
+        result = generate_tiles(geoparquet_dir=geoparquet_dir, output_dir=output_dir)
+
+    assert result == output_dir / "track.pmtiles"
+    assert result.exists()

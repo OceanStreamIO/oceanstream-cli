@@ -1251,7 +1251,9 @@ if typer:
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts."),
         generate_pmtiles: bool = typer.Option(False, "--generate-pmtiles", help="Generate PMTiles vector tiles with track segments and day markers (requires tippecanoe and pmtiles CLI)."),
         pmtiles_minzoom: int = typer.Option(0, help="Minimum zoom level for PMTiles (0-15)."),
-        pmtiles_maxzoom: int = typer.Option(10, help="Maximum zoom level for PMTiles (0-15)."),
+        pmtiles_maxzoom: Optional[int] = typer.Option(
+            None, help="Maximum zoom level for PMTiles (0-15). Default: chosen by tippecanoe from the track density."
+        ),
         pmtiles_layer: str = typer.Option("track", help="Layer name for PMTiles vector tiles."),
         pmtiles_sample_rate: int = typer.Option(5, help="Sample rate for PMTiles: take every Nth point (1=all points, 5=every 5th)."),
         pmtiles_time_gap: int = typer.Option(60, help="Time gap in minutes to split track segments for PMTiles."),
@@ -1376,11 +1378,13 @@ if typer:
         ),
         output_dir: Path = typer.Option(
             None,
-            help="Output directory for PMTiles (default: <geoparquet_dir>/../tiles).",
+            help="Output directory for PMTiles (default: <geoparquet_dir>/tiles).",
         ),
         verbose: bool = typer.Option(False, "-v", help="Emit detailed progress information."),
         minzoom: int = typer.Option(0, help="Minimum zoom level for PMTiles (0-15)."),
-        maxzoom: int = typer.Option(10, help="Maximum zoom level for PMTiles (0-15)."),
+        maxzoom: Optional[int] = typer.Option(
+            None, help="Maximum zoom level for PMTiles (0-15). Default: chosen by tippecanoe from the track density."
+        ),
         layer_name: str = typer.Option("track", help="Layer name for PMTiles vector tiles."),
         sample_rate: int = typer.Option(5, help="Sample rate: take every Nth point (1=all points, 5=every 5th)."),
         time_gap_minutes: int = typer.Option(60, help="Time gap in minutes to split track segments."),
