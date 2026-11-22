@@ -836,7 +836,8 @@ def drop_noisy_pings(
         frac_bad = (n_bad / n_measured).where(n_measured > 0)
         if "channel" in frac_bad.dims:
             frac_bad = frac_bad.min(dim="channel", skipna=True)
-        keep_mask = (frac_bad < artefact_threshold).fillna(False)
+        # A ping with nothing removed as artefact stays, also at a threshold of 0
+        keep_mask = ((frac_bad < artefact_threshold) | (frac_bad == 0)).fillna(False)
         keep_mask = keep_mask.compute().values if hasattr(keep_mask, "compute") else keep_mask.values
         n_dropped = int((~keep_mask).sum())
         logger.info(
@@ -895,17 +896,20 @@ def drop_noisy_pings(
                 f"multichannel_reduce must be 'min' or 'max', got {multichannel_reduce!r}"
             )
     
-    # Compute which pings to keep
-    if hasattr(frac_nan, 'compute'):
-        keep_mask = (frac_nan < drop_threshold).compute().values
+    # Compute which pings to keep. A ping with no NaN always stays: at a
+    # threshold of 0, "frac_nan < 0" alone would drop every ping.
+    keep = (frac_nan < drop_threshold) | (frac_nan == 0)
+    if hasattr(keep, 'compute'):
+        keep_mask = keep.compute().values
     else:
-        keep_mask = (frac_nan < drop_threshold).values
+        keep_mask = keep.values
     
     n_dropped = (~keep_mask).sum()
     n_total = len(keep_mask)
     pct_dropped = n_dropped / n_total * 100 if n_total > 0 else 0
     
-    logger.info(f"Dropping {n_dropped}/{n_total} pings ({pct_dropped:.1f}%) with ≥{drop_threshold*100:.0f}% NaN")
+    rule = "any NaN" if drop_threshold <= 0 else f"≥{drop_threshold*100:.0f}% NaN"
+    logger.info(f"Dropping {n_dropped}/{n_total} pings ({pct_dropped:.1f}%) with {rule}")
     
     return ds.isel(ping_time=keep_mask)
 

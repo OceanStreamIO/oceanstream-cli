@@ -1237,3 +1237,46 @@ class TestCascade:
         path = tmp_path / "preset.toml"
         path.write_text("[echodata.denoise]\ncascade = true\nmethods = [\"impulse\"]\n")
         assert EchodataConfig.from_toml(path).denoise.cascade is True
+
+
+class TestZeroDropThreshold:
+    """drop_threshold=0.0 removes pings with any NaN, not every ping."""
+
+    def test_clean_pings_survive(self):
+        import pandas as pd
+        import xarray as xr
+        from oceanstream.echodata.denoise import drop_noisy_pings
+
+        sv = np.full((2, 6, 10), -70.0)
+        sv[:, 1, 3] = np.nan        # one empty cell in both channels
+        sv[0, 4, :] = np.nan        # one channel lost the whole ping
+        ds = xr.Dataset(
+            {"Sv": (("channel", "ping_time", "range_sample"), sv)},
+            coords={"ping_time": pd.date_range("2023-06-01", periods=6, freq="1s")},
+        )
+
+        pruned = drop_noisy_pings(ds, drop_threshold=0.0, multichannel_reduce="max")
+        assert list(pruned["ping_time"].values) == list(ds["ping_time"].values[[0, 2, 3, 5]])
+
+        # "min": ping 4 still has a complete channel, so only ping 1 goes
+        pruned = drop_noisy_pings(ds, drop_threshold=0.0)
+        assert list(pruned["ping_time"].values) == list(ds["ping_time"].values[[0, 2, 3, 4, 5]])
+
+    def test_artefact_threshold_zero_keeps_untouched_pings(self):
+        import pandas as pd
+        import xarray as xr
+        from oceanstream.echodata.denoise import drop_noisy_pings
+        from oceanstream.echodata.products import FLAG_BITS
+
+        sv = np.full((1, 4, 10), -70.0)
+        flags = np.zeros((1, 4, 10), dtype=np.uint8)
+        flags[0, 2, :3] = FLAG_BITS["impulse"]
+        sv[flags != 0] = np.nan
+        ds = xr.Dataset(
+            {"Sv": (("channel", "ping_time", "range_sample"), sv),
+             "denoise_flags": (("channel", "ping_time", "range_sample"), flags)},
+            coords={"ping_time": pd.date_range("2023-06-01", periods=4, freq="1s")},
+        )
+
+        pruned = drop_noisy_pings(ds, artefact_threshold=0.0)
+        assert list(pruned["ping_time"].values) == list(ds["ping_time"].values[[0, 1, 3]])
