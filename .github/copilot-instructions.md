@@ -9,7 +9,7 @@ OceanStream converts oceanographic records (Saildrone and R2R CSV/GeoCSV, NMEA l
 
 ```bash
 source venv/bin/activate                  # Python 3.11–3.13 (lint/type targets: 3.12)
-pip install -e ".[geotrack,echodata]"     # or ".[all]"; `make install` installs no extras
+pip install -e ".[echodata]"              # or ".[all]"; `make install` installs the core, which covers geotrack
 make test-unit                            # pytest -q oceanstream/tests/unit
 make test-integration                     # pytest -q oceanstream/tests/integration (not e2e/)
 make test-slow                            # pytest -m slow: the tests every other target leaves out
@@ -20,7 +20,9 @@ make coverage-html                        # whole suite, HTML report → ./cover
 
 Build system: **Poetry** (`poetry-core`). Entry point: `oceanstream = oceanstream.cli:app`. The project's `pyproject.toml` is the one at the repository root; `oceanstream/pyproject.toml` is an old copy.
 
-Lint and type settings are in `ruff.toml` and `mypy.ini`, but the codebase as a whole doesn't pass them, and CI doesn't run them on the geotrack, echodata or campaign code. Check only the files you change (`ruff check <files>`, `mypy <files>`), and don't run `ruff format` or `ruff check --fix` on the whole package: it would rewrite most of the repository.
+The `echodata` extra installs `oceanstream-echopype` from PyPI: OceanStreamIO's echopype fork (branch `oceanstream-integration` of OceanStreamIO/echopype), pinned to one version. It provides the `echopype` module, so uninstall an `echopype` installed from git before installing it; uninstalling `echopype` afterwards deletes the files both share. To try an unreleased fork commit: `pip install "oceanstream-echopype @ git+https://github.com/OceanStreamIO/echopype.git@<commit>"`.
+
+Lint and type settings are in `ruff.toml` and `mypy.ini`, but the codebase as a whole doesn't pass them, and no CI workflow runs tests or lint (`.github/workflows/` only builds Docker images). Check only the files you change (`ruff check <files>`, `mypy <files>`), and don't run `ruff format` or `ruff check --fix` on the whole package: it would rewrite most of the repository.
 
 The `Makefile` targets `run-cli-sample`, `dry-run`, `schema` and `list-columns` use an old command syntax and no longer work.
 

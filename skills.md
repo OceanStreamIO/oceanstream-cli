@@ -1,8 +1,8 @@
 # OceanStream Skills Reference
 
-> **Package**: `oceanstream` 0.1.1 in `pyproject.toml` (`oceanstream.__version__` still says 0.1.0) | **Python**: 3.11–3.13 | **License**: MIT
+> **Package**: `oceanstream` 1.0.0rc1 | **Python**: 3.11–3.13 | **License**: MIT
 >
-> **Install**: `pip install "oceanstream[geotrack] @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"`
+> **Install**: `pip install "oceanstream==1.0.0rc1"`
 >
 > Reference for AI agents using the OceanStream CLI and Python library in other projects. Checked against `main` at bb394fb.
 
@@ -29,31 +29,35 @@ OceanStream converts raw oceanographic sensor data into Hive-partitioned Parquet
 
 ## Installation
 
-The PyPI release (0.1.1, January 2026) lacks most of what this file describes. Install from GitHub:
+Release candidates install only when named; without `==1.0.0rc1` pip installs 0.1.1 (January 2026), which lacks most of what this file describes.
 
 ```bash
-pip install "oceanstream[geotrack] @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"
+pip install "oceanstream==1.0.0rc1"
 
-# Several extras at once
-pip install "oceanstream[geotrack,echodata,echodata-viz] @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"
+# With extras
+pip install "oceanstream[echodata,echodata-viz]==1.0.0rc1"
+
+# Unreleased code from GitHub
+pip install "oceanstream @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"
 
 # Verify
 oceanstream --help
-python -c "from importlib.metadata import version; print(version('oceanstream'))"   # 0.1.1
+python -c "import oceanstream; print(oceanstream.__version__)"   # 1.0.0rc1
 ```
+
+A plain install covers `process geotrack`, the Python `convert`, and NMEA and CTD inputs: geopandas, shapely, pynmea2 and seabirdscientific (2.7.0 to 2.7.8) are core dependencies.
 
 | Extra | Adds | Needed for |
 |-------|------|------------|
-| `geotrack` | geopandas, shapely, pynmea2, seabirdscientific | `geotrack convert`, `geotrack tiles` and the Python `convert` (without it they fail with `No module named 'geopandas'`), NMEA and CTD inputs |
-| `echodata` | OceanStreamIO's echopype fork (`oceanstream-integration` branch), xarray, dask, zarr, netCDF4, fsspec, s3fs, adlfs, gsw, copernicusmarine and more | `process echodata`, `EchodataProcessor` |
+| `echodata` | OceanStreamIO's echopype fork (`oceanstream-echopype` 0.11.1a3 on PyPI; it installs the `echopype` module and replaces upstream echopype), xarray, dask, zarr, netCDF4, fsspec, s3fs, adlfs, gsw, copernicusmarine and more | `process echodata`, `EchodataProcessor` |
 | `echodata-viz` | matplotlib, hvplot, datashader, holoviews, panel, bokeh | Echogram plots |
 | `adcp` | dolfyn, scipy, setuptools<81, xarray | `process adcp` |
 | `multibeam` | themachinethatgoesping 0.37.1 (Python 3.12+), numpy, scipy, rasterio, pyproj, matplotlib, pmtiles | `process multibeam` |
 | `norsoop` | erddapy | NorSOOP FerryBox access |
 | `all` | Every extra above except `multibeam` | |
-| `geo` | Same as `geotrack` (older name) | |
+| `geotrack`, `geo` | Nothing; kept so older install commands work | |
 
-External tools: PMTiles need `tippecanoe` and `pmtiles` on `PATH`. Heatmaps need `scipy` and `rasterio` (`pip install scipy rasterio`; the `geotrack` extra has neither) and use `gdal_translate` for COG output when it is installed.
+External tools: PMTiles need `tippecanoe` and `pmtiles` on `PATH`. Heatmaps need `scipy`, which comes with seabirdscientific, and `rasterio` (`pip install rasterio`, or the `all` extra) and use `gdal_translate` for COG output when it is installed.
 
 ---
 
@@ -814,9 +818,9 @@ print(f"Sensors: {[s['name'] for s in collection['summaries'].get('instruments',
 
 **`ArrowNotImplementedError: Function 'greater_equal' has no kernel matching input types (string, ...)`**: partition values are strings; filter with `==` or `in` on values like `lat_20_22`.
 
-**`ModuleNotFoundError: No module named 'geopandas'`**: install the `geotrack` extra.
+**`ModuleNotFoundError: No module named 'geopandas'`**: the installed oceanstream predates 1.0.0rc1, where geopandas became a core dependency. Run `pip install "oceanstream==1.0.0rc1"`.
 
-**Echodata dependency error**: `pip install "oceanstream[echodata] @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"` installs echopype from the OceanStreamIO fork; check with `python -c "from oceanstream.echodata import EchodataProcessor"`.
+**Echodata dependency error**: `pip install "oceanstream[echodata]==1.0.0rc1"` installs `oceanstream-echopype`, the OceanStreamIO fork of echopype. Run `pip uninstall echopype` first if upstream echopype is installed: both provide the `echopype` module. Check with `python -c "from oceanstream.echodata import EchodataProcessor"`.
 
 ### Debug Mode
 
@@ -832,7 +836,7 @@ cat ~/.oceanstream/campaigns/TPOS_2023/campaign.json
 
 | Task | Command/Code |
 |------|--------------|
-| Install | `pip install "oceanstream[geotrack] @ git+https://github.com/OceanStreamIO/oceanstream-cli.git"` |
+| Install | `pip install "oceanstream==1.0.0rc1"` |
 | Convert CSV → Parquet | `oceanstream process geotrack convert --input-source ./data --output-dir ./out --campaign-id ID --provider noaa_pmel --yes` |
 | Dry run analysis | `oceanstream process geotrack convert --dry-run --input-source ./data --provider noaa_pmel -v` |
 | Tiles from output | `oceanstream process geotrack tiles --geoparquet-dir ./out/ID` |
@@ -845,4 +849,4 @@ cat ~/.oceanstream/campaigns/TPOS_2023/campaign.json
 
 ---
 
-*OceanStream 0.1.1 (`main`, bb394fb) | [Source](https://github.com/OceanStreamIO/oceanstream-cli) | [Website](https://oceanstream.io)*
+*OceanStream 1.0.0rc1 (`main`, bb394fb) | [Source](https://github.com/OceanStreamIO/oceanstream-cli) | [Website](https://oceanstream.io)*

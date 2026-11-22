@@ -1,12 +1,14 @@
 [tool.poetry]
 name = "oceanstream"
-version = "0.1.1"
-description = "Process oceanographic measurements from USVs and write partitioned GeoParquet datasets with geospatial metadata."
+version = "1.0.0rc1"
+description = "Process ship, USV and mooring data into GeoParquet, Zarr and STAC: tracks and sensors, echosounders, multibeam and ADCP."
 authors = ["Andrei Neacsu <andrei@oceanstream.io>"]
 license = "MIT"
 readme = "oceanstream/README.md"
 homepage = "https://oceanstream.io"
-keywords = ["oceanography", "geoparquet", "stac", "saildrone", "geospatial", "usv", "marine-data"]
+repository = "https://github.com/OceanStreamIO/oceanstream-cli"
+documentation = "https://github.com/OceanStreamIO/oceanstream-cli/tree/main/docs"
+keywords = ["oceanography", "geoparquet", "stac", "saildrone", "geospatial", "usv", "marine-data", "echosounder", "multibeam", "adcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -28,6 +30,7 @@ exclude = [
     "oceanstream/tests/",
     "oceanstream/docs/",
     "oceanstream/MANIFEST.in",
+    "oceanstream/**/*.prompt.md",
     "oceanstream/pyproject.toml",
     "oceanstream/**/*.bak*",
     "oceanstream/**/__pycache__/",
@@ -52,6 +55,9 @@ exclude = [
     "analyze_*.py",
 ]
 
+[tool.poetry.urls]
+"Issues" = "https://github.com/OceanStreamIO/oceanstream-cli/issues"
+
 [tool.poetry.scripts]
 oceanstream = "oceanstream.cli:app"
 
@@ -66,15 +72,21 @@ typer = ">=0.12"
 rich = ">=13.7"
 tqdm = ">=4.66"
 python-dotenv = ">=1.0"  # config/settings.py loads .env on import
+# Track and sensor processing (`process geotrack`): GeoParquet, NMEA logs, SeaBird CTD files
+geopandas = ">=0.14"
+shapely = ">=2.0"
+pynmea2 = ">=1.18"
+# 2.7.9 and later pin numpy~=2.0.2 and scipy~=1.13.1, which have no Python 3.13 wheels and
+# clash with the echodata numpy pins; 3.x returns xarray Datasets from read_hex_file, which
+# sbe911.py reads as DataFrames.
+seabirdscientific = ">=2.7,<2.7.9"
 
 # Optional dependencies for specific processing modules
-geopandas = { version = ">=0.14", optional = true }
-shapely = { version = ">=2.0", optional = true }
-pynmea2 = { version = ">=1.18", optional = true }
-seabirdscientific = { version = ">=2.7", optional = true }
 
 # Echodata dependencies (pinned for echopype compatibility)
-echopype = { git = "https://github.com/OceanStreamIO/echopype.git", branch = "oceanstream-integration", optional = true }
+# OceanStreamIO's echopype fork (branch oceanstream-integration), published on PyPI under its
+# own name. It installs the `echopype` import package, so it replaces upstream echopype.
+oceanstream-echopype = { version = "==0.11.1a3", optional = true }
 # NumPy 2.1 is the first release with CPython 3.13 wheels.
 numpy = [
     { version = ">=1.26.4,<2.1", python = "<3.13", optional = true },
@@ -136,14 +148,16 @@ requests = { version = ">=2.31", optional = true }
 
 [tool.poetry.extras]
 # Processing module extras
-geotrack = ["geopandas", "shapely", "pynmea2", "seabirdscientific"]
+# The geotrack dependencies are core dependencies; the extra stays so that
+# `pip install "oceanstream[geotrack]"` keeps working.
+geotrack = []
 
 # NorSOOP/FerryBox data access (THREDDS/ERDDAP)
 norsoop = ["erddapy"]
 
 # Echodata processing (EK60/EK80 echosounders)
 echodata = [
-    "echopype", "numpy", "xarray", "dask", "distributed", "zarr", "netcdf4",
+    "oceanstream-echopype", "numpy", "xarray", "dask", "distributed", "zarr", "netcdf4",
     "fsspec", "s3fs", "numcodecs", "bottleneck", "openpyxl",
     "copernicusmarine", "gsw", "adlfs", "haversine"
 ]
@@ -154,15 +168,14 @@ adcp = ["dolfyn", "scipy", "setuptools", "xarray"]
 
 # Convenience extras
 all = [
-    "geopandas", "shapely", "pynmea2", "seabirdscientific",
-    "echopype", "numpy", "xarray", "dask", "distributed", "zarr", "netcdf4",
+    "oceanstream-echopype", "numpy", "xarray", "dask", "distributed", "zarr", "netcdf4",
     "fsspec", "s3fs", "numcodecs", "bottleneck", "openpyxl", "adlfs",
     "copernicusmarine", "gsw", "matplotlib", "hvplot", "datashader",
     "holoviews", "panel", "bokeh", "haversine", "erddapy",
     "dolfyn", "scipy", "setuptools",
     "rasterio", "pyproj", "requests",
 ]
-geo = ["geopandas", "shapely", "pynmea2", "seabirdscientific"]  # Legacy alias for geotrack
+geo = []  # Legacy alias for geotrack
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

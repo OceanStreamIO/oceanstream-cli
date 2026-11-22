@@ -19,9 +19,9 @@ ARG PYTHON_VERSION=3.12
 # libgdal36), so the runtime stage below could not satisfy it.
 FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
 
-# git is not optional: pyproject.toml pulls echopype from the OceanStreamIO
-# fork's `oceanstream-integration` branch, and it builds with setuptools_scm,
-# which reads the cloned .git to derive a version.
+# The echopype fork comes from PyPI (oceanstream-echopype). git stays for
+# testing an unreleased fork commit:
+#   pip install "oceanstream-echopype @ git+https://github.com/OceanStreamIO/echopype.git@<commit>"
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         git \
@@ -38,7 +38,7 @@ WORKDIR /src
 
 # Resolve the dependency tree against a package skeleton first. Editing the
 # source then only re-runs the --no-deps install below, instead of re-resolving
-# echopype-from-git, dask[complete], copernicusmarine and friends.
+# the echopype fork, dask[complete], copernicusmarine and friends.
 COPY pyproject.toml ./
 COPY oceanstream/README.md ./oceanstream/README.md
 
