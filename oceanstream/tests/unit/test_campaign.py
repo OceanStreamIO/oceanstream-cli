@@ -13,6 +13,12 @@ from oceanstream.geotrack.campaign import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _campaigns_under_fake_home(monkeypatch):
+    """The tests patch Path.home; OCEANSTREAM_CAMPAIGNS_DIR would override it."""
+    monkeypatch.delenv("OCEANSTREAM_CAMPAIGNS_DIR", raising=False)
+
+
 def test_create_campaign_basic(tmp_path, monkeypatch):
     """Test basic campaign creation with minimal metadata."""
     # Mock home directory to use tmp_path

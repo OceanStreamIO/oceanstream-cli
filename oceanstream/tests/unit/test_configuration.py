@@ -277,8 +277,11 @@ metadata_dir = "/test"
 class TestConfigurationIntegration:
     """Integration tests for configuration system."""
 
-    def test_config_with_settings(self, tmp_path):
+    def test_config_with_settings(self, tmp_path, monkeypatch):
         """Test that Settings picks up config values."""
+        # The environment variable would override the config file
+        monkeypatch.delenv("OCEANSTREAM_METADATA_DIR", raising=False)
+
         # Create test config
         config_file = tmp_path / "test.toml"
         config_file.write_text(
