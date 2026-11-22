@@ -1,4 +1,10 @@
-"""Integration tests for R2R CTD processing."""
+"""Integration tests for R2R CTD processing.
+
+Decoding a .hex file takes about 1.5 s per 1000 scans: seabirdscientific's
+``read_hex_file`` fills its DataFrame one cell at a time. The tests that decode
+a cast are marked ``slow``, which the default run leaves out; run them with
+``pytest -m slow`` or ``make test-slow``.
+"""
 
 import tarfile
 from pathlib import Path
@@ -12,6 +18,8 @@ pytest.importorskip("seabirdscientific")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CTD_ARCHIVE = PROJECT_ROOT / "raw_data" / "r2r" / "RR2402_160202_ctd.tar.gz"
+# The shortest cast of RR2402 (8,105 scans); the archive holds 109 casts, 349 MB
+CTD_CAST = "RR2402_cast86"
 
 VALIDATION_DIR = PROJECT_ROOT / "raw_data" / "r2r" / "RR2205_ctd_validation"
 VALIDATION_RAW = VALIDATION_DIR / "raw"
@@ -21,24 +29,35 @@ VALIDATION_CNV = VALIDATION_DIR / "processed" / "11901_1db.cnv"
 class TestR2RCTDProcessing:
     """Tests for SeaBird CTD processing from R2R archives."""
 
-    @pytest.fixture
-    def ctd_data_dir(self, tmp_path: Path) -> Path:
-        """Extract CTD test data from the R2R archive in raw_data/r2r/.
-
-        Extracts once per test into tmp_path and returns the data directory.
-        """
+    @pytest.fixture(scope="class")
+    def ctd_data_dir(self, tmp_path_factory: pytest.TempPathFactory) -> Path:
+        """Extract one cast's files (hex, hdr, bl, XMLCON) from the R2R archive in raw_data/r2r/."""
         if not CTD_ARCHIVE.exists():
             pytest.skip(
                 f"R2R CTD archive not found: {CTD_ARCHIVE.relative_to(PROJECT_ROOT)}  "
                 "(run: python scripts/fetch_test_data.py --category r2r)"
             )
 
+        out_dir = tmp_path_factory.mktemp("r2r_ctd")
         with tarfile.open(CTD_ARCHIVE, "r:gz") as tf:
-            tf.extractall(path=tmp_path, filter="data")
+            members = [m for m in tf.getmembers() if Path(m.name).stem.lower() == CTD_CAST.lower()]
+            tf.extractall(path=out_dir, members=members, filter="data")
 
-        data_dir = tmp_path / "RR2402" / "160202" / "data"
+        data_dir = out_dir / "RR2402" / "160202" / "data"
         assert data_dir.exists(), f"Expected data dir not found after extraction: {data_dir}"
         return data_dir
+
+    @pytest.fixture(scope="class")
+    def processed_cast(
+        self, ctd_data_dir: Path, tmp_path_factory: pytest.TempPathFactory
+    ) -> tuple[pd.DataFrame, Path]:
+        """The cast decoded once, with its CSV written: (DataFrame, CSV directory)."""
+        from oceanstream.sensors.processors.sbe911 import find_cast_files, process_ctd_cast
+
+        output_dir = tmp_path_factory.mktemp("ctd_output")
+        df = process_ctd_cast(find_cast_files(ctd_data_dir)[0], output_dir=output_dir)
+        assert df is not None
+        return df, output_dir
 
     def test_find_cast_files(self, ctd_data_dir: Path):
         """Test finding CTD cast files in directory."""
@@ -46,15 +65,15 @@ class TestR2RCTDProcessing:
 
         casts = find_cast_files(ctd_data_dir)
 
-        # Should find multiple casts
-        assert len(casts) > 0
-
-        # Each cast should have at least a hex file
-        for cast in casts:
-            assert cast.hex_file.exists()
-            assert cast.hex_file.suffix == '.hex'
-            assert cast.cast_id
-            assert cast.cruise_id
+        assert len(casts) == 1
+        cast = casts[0]
+        assert cast.cast_id == "cast86"
+        assert cast.cruise_id == "RR2402"
+        assert cast.hex_file.exists()
+        assert cast.hex_file.suffix == '.hex'
+        # The XMLCON is named RR2402_CAST86.XMLCON: matched regardless of case
+        assert cast.hdr_file is not None
+        assert cast.xmlcon_file is not None
 
     def test_parse_hdr_file(self, ctd_data_dir: Path):
         """Test parsing CTD header file."""
@@ -99,17 +118,11 @@ class TestR2RCTDProcessing:
         # First sensor should be temperature
         assert config['sensors'][0]['index'] == 0
 
-    def test_process_ctd_cast(self, ctd_data_dir: Path):
+    @pytest.mark.slow
+    def test_process_ctd_cast(self, processed_cast: tuple[pd.DataFrame, Path]):
         """Test processing a CTD cast to DataFrame."""
-        from oceanstream.sensors.processors.sbe911 import find_cast_files, process_ctd_cast
+        df = processed_cast[0]
 
-        casts = find_cast_files(ctd_data_dir)
-
-        # Process first cast
-        cast = casts[0]
-        df = process_ctd_cast(cast)
-
-        assert df is not None
         assert len(df) > 0
 
         # Should have essential columns
@@ -122,26 +135,16 @@ class TestR2RCTDProcessing:
         assert 'conductivity_freq' in df.columns
         assert 'pressure_freq' in df.columns
 
-    def test_process_ctd_cast_output_csv(self, ctd_data_dir: Path, tmp_path: Path):
+    @pytest.mark.slow
+    def test_process_ctd_cast_output_csv(self, processed_cast: tuple[pd.DataFrame, Path]):
         """Test writing processed CTD data to CSV."""
-        from oceanstream.sensors.processors.sbe911 import find_cast_files, process_ctd_cast
-
-        casts = find_cast_files(ctd_data_dir)
-        cast = casts[0]
-
-        # Process with output
-        output_dir = tmp_path / "ctd_output"
-        df = process_ctd_cast(cast, output_dir=output_dir)
-
-        assert df is not None
+        df, output_dir = processed_cast
 
         # Check CSV was written
         csv_files = list(output_dir.glob("*.csv"))
         assert len(csv_files) == 1
 
         # Read CSV and verify
-        import pandas as pd
-
         df_read = pd.read_csv(csv_files[0])
         assert len(df_read) == len(df)
 
@@ -180,7 +183,7 @@ class TestCTDCalibratedConversion:
     the Sea-Bird-processed 1-dbar binned CNV ground truth.
     """
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def validation_data(self) -> tuple[Path, pd.DataFrame]:
         """Return (raw_dir, ground_truth_df) for cast 11901."""
         if not VALIDATION_RAW.exists() or not VALIDATION_CNV.exists():
@@ -193,9 +196,9 @@ class TestCTDCalibratedConversion:
         cnv_df = parse_cnv_file(VALIDATION_CNV)
         return VALIDATION_RAW, cnv_df
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def calibrated_df(self, validation_data: tuple[Path, pd.DataFrame]) -> pd.DataFrame:
-        """Process cast 11901 with calibrated conversion."""
+        """Process cast 11901 with calibrated conversion, once for the class."""
         raw_dir = validation_data[0]
         from oceanstream.sensors.processors.sbe911 import CTDCast, process_ctd_cast
 
@@ -237,18 +240,21 @@ class TestCTDCalibratedConversion:
     # ------------------------------------------------------------------
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_calibrated_columns_present(self, calibrated_df: pd.DataFrame):
         """Calibrated output should contain T, C, P, S, depth columns."""
         for col in ("t090C", "c0S/m", "sal00", "prDM", "depSM"):
             assert col in calibrated_df.columns, f"Missing calibrated column: {col}"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_secondary_channels_present(self, calibrated_df: pd.DataFrame):
         """Secondary T & C should also be calibrated."""
         for col in ("t190C", "c1S/m", "sal11"):
             assert col in calibrated_df.columns, f"Missing secondary column: {col}"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_raw_columns_still_present(self, calibrated_df: pd.DataFrame):
         """Raw frequency columns must remain alongside calibrated data."""
         for col in ("temperature_freq", "conductivity_freq", "pressure_freq"):
@@ -259,6 +265,7 @@ class TestCTDCalibratedConversion:
     # ------------------------------------------------------------------
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_temperature_accuracy(
         self,
         calibrated_df: pd.DataFrame,
@@ -281,6 +288,7 @@ class TestCTDCalibratedConversion:
         assert diff.max() < 0.05, f"Max temperature error {diff.max():.6f} °C exceeds 0.05"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_conductivity_accuracy(
         self,
         calibrated_df: pd.DataFrame,
@@ -297,6 +305,7 @@ class TestCTDCalibratedConversion:
         assert diff.max() < 0.005, f"Max conductivity error {diff.max():.6f} S/m exceeds 0.005"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_pressure_accuracy(
         self,
         calibrated_df: pd.DataFrame,
@@ -313,6 +322,7 @@ class TestCTDCalibratedConversion:
         assert diff.max() < 0.5, f"Max pressure error {diff.max():.3f} dbar exceeds 0.5"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_salinity_accuracy(
         self,
         calibrated_df: pd.DataFrame,
@@ -329,6 +339,7 @@ class TestCTDCalibratedConversion:
         assert diff.max() < 0.05, f"Max salinity error {diff.max():.6f} PSU exceeds 0.05"
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_depth_accuracy(
         self,
         calibrated_df: pd.DataFrame,

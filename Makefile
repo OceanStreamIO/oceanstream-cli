@@ -18,7 +18,7 @@ TEST_RAW_DIR := oceanstream/tests/data/raw_data
 DEFAULT_RAW_DIR := raw_data
 OUT_DIR := out/geoparquet
 
-.PHONY: help venv install run-cli-sample run-cli-sample-py dry-run schema list-columns test test-unit test-integration coverage coverage-html coverage-xml coverage-check coverage-clean clean docs-serve docs-build docs-clean docs-install docs-version-deploy docs-version-list docs-version-delete docs-version-serve build publish publish-test
+.PHONY: help venv install run-cli-sample run-cli-sample-py dry-run schema list-columns test test-unit test-integration test-slow coverage coverage-html coverage-xml coverage-check coverage-clean clean docs-serve docs-build docs-clean docs-install docs-version-deploy docs-version-list docs-version-delete docs-version-serve build publish publish-test
 
 help:
 	@echo "Available targets:"
@@ -29,9 +29,10 @@ help:
 	@echo "  dry-run             - Analyze default ./raw_data (no writes)"
 	@echo "  schema              - Print GeoParquet schema from test fixture data"
 	@echo "  list-columns        - List columns from test fixture data"
-	@echo "  test                - Run all tests"
+	@echo "  test                - Run all tests except those marked slow"
 	@echo "  test-unit           - Run unit tests only"
 	@echo "  test-integration    - Run the updated integration test only"
+	@echo "  test-slow           - Run only the tests marked slow (SBE911 hex decoding)"
 	@echo "  coverage            - Run tests with coverage (terminal report)"
 	@echo "  coverage-html       - Run tests with coverage and generate HTML report at ./coverage_html"
 	@echo "  coverage-xml        - Run tests with coverage and generate coverage.xml (Cobertura)"
@@ -123,6 +124,10 @@ test-unit:
 test-integration:
 	@if [ -f "$(VENV_DIR)/bin/activate" ]; then source "$(VENV_DIR)/bin/activate"; fi; \
 		$(PYTHON) -m pytest -q oceanstream/tests/integration
+
+test-slow:
+	@if [ -f "$(VENV_DIR)/bin/activate" ]; then source "$(VENV_DIR)/bin/activate"; fi; \
+		$(PYTHON) -m pytest -q -m slow oceanstream/tests
 
 coverage:
 	@if [ -f "$(VENV_DIR)/bin/activate" ]; then source "$(VENV_DIR)/bin/activate"; fi; \
