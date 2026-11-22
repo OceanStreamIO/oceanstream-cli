@@ -29,8 +29,6 @@ Release candidates install only when named, for example `pip install "oceanstrea
 | `norsoop` | erddapy | NorSOOP FerryBox data |
 | `all` | Every extra except `multibeam` | |
 
-The `geotrack` and `geo` extras install nothing extra; they remain so that older install commands keep working.
-
 The `echodata` extra installs [oceanstream-echopype](https://pypi.org/project/oceanstream-echopype/), OceanStream's fork of [echopype](https://github.com/OSOceanAcoustics/echopype). It provides the same `echopype` module as upstream echopype and replaces it, so run `pip uninstall echopype` before installing the extra into an environment that has echopype.
 
 PMTiles of tracks need the [tippecanoe](https://github.com/felt/tippecanoe) and [pmtiles](https://github.com/protomaps/go-pmtiles) executables on `PATH`. Heatmaps also need rasterio: `pip install rasterio`, or the `all` extra.

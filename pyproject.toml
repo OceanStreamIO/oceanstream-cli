@@ -147,10 +147,8 @@ pyproj = { version = ">=3.6", optional = true }
 requests = { version = ">=2.31", optional = true }
 
 [tool.poetry.extras]
-# Processing module extras
-# The geotrack dependencies are core dependencies; the extra stays so that
-# `pip install "oceanstream[geotrack]"` keeps working.
-geotrack = []
+# Processing module extras. Track and sensor processing (`process geotrack`) needs none:
+# its dependencies are core.
 
 # NorSOOP/FerryBox data access (THREDDS/ERDDAP)
 norsoop = ["erddapy"]
@@ -175,7 +173,6 @@ all = [
     "dolfyn", "scipy", "setuptools",
     "rasterio", "pyproj", "requests",
 ]
-geo = []  # Legacy alias for geotrack
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

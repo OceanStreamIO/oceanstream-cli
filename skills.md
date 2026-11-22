@@ -55,7 +55,6 @@ A plain install covers `process geotrack`, the Python `convert`, and NMEA and CT
 | `multibeam` | themachinethatgoesping 0.37.1 (Python 3.12+), numpy, scipy, rasterio, pyproj, matplotlib, pmtiles | `process multibeam` |
 | `norsoop` | erddapy | NorSOOP FerryBox access |
 | `all` | Every extra above except `multibeam` | |
-| `geotrack`, `geo` | Nothing; kept so older install commands work | |
 
 External tools: PMTiles need `tippecanoe` and `pmtiles` on `PATH`. Heatmaps need `scipy`, which comes with seabirdscientific, and `rasterio` (`pip install rasterio`, or the `all` extra) and use `gdal_translate` for COG output when it is installed.
 
