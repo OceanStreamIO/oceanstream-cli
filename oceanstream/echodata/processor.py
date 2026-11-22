@@ -288,7 +288,7 @@ class EchodataProcessor:
             ProcessingResult with calibration status
         """
         from oceanstream.echodata.calibrate import apply_calibration
-        from oceanstream.echodata.convert import open_converted
+        from oceanstream.echodata.convert import open_converted, save_converted
         
         start = perf_counter()
         
@@ -324,7 +324,7 @@ class EchodataProcessor:
             for zarr_path in self._converted_paths:
                 ed = open_converted(zarr_path)
                 ed = apply_calibration(ed, cal_file)
-                ed.to_zarr(zarr_path, overwrite=True)
+                save_converted(ed, zarr_path)
                 calibrated_count += 1
             
             return ProcessingResult(

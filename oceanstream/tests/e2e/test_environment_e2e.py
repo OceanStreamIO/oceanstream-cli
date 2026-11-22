@@ -283,3 +283,51 @@ class TestEnvironmentIntegrationE2E:
         # At warm temperatures the ratio can be higher
         ratio = alpha_200 / alpha_38
         assert 3 < ratio < 20, f"200/38 kHz absorption ratio {ratio} unusual"
+
+
+@pytest.mark.e2e
+class TestEnrichEnvironmentE2E:
+    """enrich_environment on a converted store, written back in place."""
+
+    def test_enrich_in_place_keeps_store(self, converted_zarr: Path, tmp_path: Path):
+        import shutil
+        import pandas as pd
+        import geopandas as gpd
+        from oceanstream.echodata.convert import open_converted
+        from oceanstream.echodata.environment import enrich_environment
+
+        store = tmp_path / converted_zarr.name
+        shutil.copytree(converted_zarr, store)
+        ed = open_converted(store)
+        ping_time = ed["Sonar/Beam_group1"].ping_time.values
+        backscatter = ed["Sonar/Beam_group1"].backscatter_r.isel(ping_time=slice(0, 20)).values
+        groups = ed.group_paths
+        del ed
+
+        # CTD track covering the file
+        t = pd.date_range(pd.Timestamp(ping_time.min()) - pd.Timedelta("5min"),
+                          pd.Timestamp(ping_time.max()) + pd.Timedelta("5min"), freq="1min")
+        lat, lon = np.linspace(2.0, 2.1, len(t)), np.linspace(-140.0, -139.9, len(t))
+        campaign = tmp_path / "campaign"
+        campaign.mkdir()
+        gpd.GeoDataFrame(
+            {"time": t, "latitude": lat, "longitude": lon,
+             "TEMP_SBE37_MEAN": np.linspace(27.0, 28.0, len(t)),
+             "SAL_SBE37_MEAN": np.full(len(t), 34.6)},
+            geometry=gpd.points_from_xy(lon, lat), crs="EPSG:4326",
+        ).to_parquet(campaign / "part.parquet")
+
+        enrich_environment(store, campaign, use_copernicus_fallback=False)
+
+        ed = open_converted(store)
+        assert ed.group_paths == groups
+        np.testing.assert_array_equal(
+            ed["Sonar/Beam_group1"].backscatter_r.isel(ping_time=slice(0, 20)).values,
+            backscatter,
+        )
+        env = ed["Environment"]
+        assert env.sizes["time1"] == len(np.unique(ping_time))
+        assert 27.0 <= float(env["temperature"].min()) <= float(env["temperature"].max()) <= 28.0
+        assert 1530 < float(env["sound_speed"].mean()) < 1550
+        assert float(ed["Platform"]["latitude"].min()) >= 2.0
+        assert {p.name for p in tmp_path.iterdir()} == {"campaign", store.name}

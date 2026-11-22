@@ -250,7 +250,7 @@ def add_depth_from_echodata(
             raise FileNotFoundError(f"EchoData not found: {echodata_path}")
         
         logger.info(f"Loading EchoData from {echodata_path}")
-        echodata = EchoData.from_zarr(echodata_path)
+        echodata = EchoData.from_file(echodata_path)
         
         return add_depth_to_sv(ds_Sv, echodata, depth_offset=depth_offset)
         

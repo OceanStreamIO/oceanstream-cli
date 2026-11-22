@@ -729,3 +729,90 @@ class TestResolveCampaignDir:
                 result = _resolve_campaign_dir("test_campaign")
                 
                 assert result == campaign_dir
+
+
+class TestUpdateEchodataGroups:
+    """Environment/Platform updates reach the EchoData tree and fit its time1 axis."""
+
+    @pytest.fixture
+    def echodata(self):
+        pytest.importorskip("echopype")
+        import pandas as pd
+        import xarray as xr
+        from echopype.echodata import EchoData
+
+        # One environment datagram and one GPS fix per file, as in Saildrone EK80 data
+        file_start = np.array(["2023-09-07T16:00:00"], dtype="datetime64[ns]")
+        ping_time = pd.date_range("2023-09-07T16:00:01", periods=5, freq="1s").values
+        tree = xr.DataTree.from_dict({
+            "/": xr.Dataset(attrs={"keywords": "EK80"}),
+            "Environment": xr.Dataset(
+                {
+                    "temperature": ("time1", [20.0]),
+                    "salinity": ("time1", [35.0]),
+                    "depth": ("time1", [0.6]),
+                    "acidity": ("time1", [8.0]),
+                    "sound_speed_indicative": ("time1", [1500.0]),
+                },
+                coords={"time1": file_start},
+            ),
+            "Platform": xr.Dataset(
+                {"latitude": ("time1", [np.nan]), "longitude": ("time1", [np.nan])},
+                coords={"time1": file_start},
+            ),
+            # EchoData.__del__ walks Sonar.beam_group
+            "Sonar": xr.Dataset(coords={"beam_group": ["Beam_group1"]}),
+            "Sonar/Beam_group1": xr.Dataset(coords={"ping_time": ping_time}),
+        })
+        ed = EchoData()
+        ed._set_tree(tree)
+        return ed
+
+    def test_per_ping_environment_moves_time1_to_pings(self, echodata):
+        from oceanstream.echodata.environment.enrich import update_echodata_environment
+
+        ping_time = echodata["Sonar/Beam_group1"].ping_time.values
+        temperature = np.linspace(27.0, 28.0, len(ping_time))
+        update_echodata_environment(
+            echodata,
+            {"source": "in_situ_ctd", "method": "chen_millero",
+             "temperature": temperature,
+             "salinity": np.full(len(ping_time), 34.6),
+             "sound_speed": np.full(len(ping_time), 1541.0)},
+            ping_time=ping_time,
+        )
+
+        env = echodata["Environment"]
+        np.testing.assert_array_equal(env["time1"].values, ping_time)
+        np.testing.assert_allclose(env["temperature"].values, temperature)
+        np.testing.assert_allclose(env["sound_speed"].values, 1541.0)
+        # Variables enrichment does not measure keep the file's value
+        np.testing.assert_allclose(env["depth"].values, 0.6)
+        np.testing.assert_allclose(env["acidity"].values, 8.0)
+
+    def test_platform_positions_are_kept(self, echodata):
+        from oceanstream.echodata.environment.enrich import update_echodata_platform
+
+        ping_time = echodata["Sonar/Beam_group1"].ping_time.values
+        lat = np.linspace(2.0, 2.1, len(ping_time))
+        update_echodata_platform(echodata, lat, lat - 142.0, ping_time=ping_time)
+
+        np.testing.assert_allclose(echodata["Platform"]["latitude"].values, lat)
+
+    def test_constant_values_fill_existing_time1(self, echodata):
+        from oceanstream.echodata.environment.enrich import enrich_echodata
+
+        enrich_echodata(echodata, temperature=15.0, salinity=35.0)
+
+        env = echodata["Environment"]
+        assert env.sizes["time1"] == 1
+        assert float(env["temperature"].values[0]) == 15.0
+        assert "sound_speed" in env
+
+    def test_per_ping_values_without_ping_time_are_rejected(self, echodata):
+        from oceanstream.echodata.environment.enrich import update_echodata_environment
+
+        with pytest.raises(ValueError, match="ping_time"):
+            update_echodata_environment(
+                echodata, {"source": "in_situ_ctd", "temperature": np.zeros(5)}
+            )

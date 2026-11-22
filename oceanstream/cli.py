@@ -1806,12 +1806,12 @@ if typer:
                 if verbose:
                     typer.echo(f"[echodata] Applying calibration from {calibration_file}")
                 
-                from oceanstream.echodata.convert import open_converted
+                from oceanstream.echodata.convert import open_converted, save_converted
                 
                 for zarr_path in zarr_paths:
                     ed = open_converted(zarr_path)
                     ed = apply_calibration(ed, calibration_file)
-                    ed.to_zarr(zarr_path, overwrite=True)
+                    save_converted(ed, zarr_path)
             
             # Enrich environment
             if enrich_environment and geoparquet_dir:

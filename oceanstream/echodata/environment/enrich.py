@@ -245,20 +245,16 @@ def enrich_environment(
     Returns:
         Path to enriched EchoData Zarr
     """
-    try:
-        from echopype.echodata import EchoData
-    except ImportError as e:
-        raise ImportError("echopype required for environment enrichment") from e
-    
+    from oceanstream.echodata.convert import open_converted, save_converted
+
     echodata_path = Path(echodata_path)
     output_path = Path(output_path) if output_path else echodata_path
-    
-    # Load EchoData
-    echodata = EchoData.from_zarr(echodata_path)
-    
+
+    echodata = open_converted(echodata_path)
+
     # Get ping times
     ping_time = echodata["Sonar/Beam_group1"].ping_time.values
-    
+
     # Try to get environment from geoparquet
     env_result = get_environment_with_fallback(
         campaign_dir=campaign_dir,
@@ -266,21 +262,25 @@ def enrich_environment(
         use_copernicus_fallback=use_copernicus_fallback,
         copernicus_days_back=copernicus_days_back,
     )
-    
+
+    if env_result.get("source") == "none" and output_path == echodata_path:
+        logger.warning(f"No environmental data for {echodata_path.name}, left unchanged")
+        return output_path
+
     # Update EchoData with environment
-    echodata = update_echodata_environment(echodata, env_result)
-    
+    echodata = update_echodata_environment(echodata, env_result, ping_time=ping_time)
+
     # Update platform with interpolated GPS
-    if "latitude" in env_result and "longitude" in env_result:
+    if env_result.get("latitude") is not None and env_result.get("longitude") is not None:
         echodata = update_echodata_platform(
             echodata,
             env_result["latitude"],
             env_result["longitude"],
+            ping_time=ping_time,
         )
-    
-    # Save
-    echodata.to_zarr(output_path, overwrite=True)
-    
+
+    save_converted(echodata, output_path)
+
     logger.info(f"Enriched environment saved to {output_path}")
     return output_path
 
@@ -434,38 +434,37 @@ def load_geoparquet_environment(campaign_dir: Path) -> Optional["pd.DataFrame"]:
     Returns:
         DataFrame with time, lat, lon, and CTD columns, or None if not found
     """
-    try:
-        import geopandas as gpd
-    except ImportError:
-        logger.warning("geopandas required for loading geoparquet")
-        return None
+    import pandas as pd
+    import pyarrow.parquet as pq
     
     campaign_dir = Path(campaign_dir)
     
-    # Look for geoparquet files
-    parquet_files = list(campaign_dir.glob("**/*.parquet"))
+    # Data partitions only: the campaign folder also holds STAC JSON and tiles
+    parquet_files = [
+        f for f in sorted(campaign_dir.rglob("*.parquet"))
+        if not {"stac", "tiles"} & set(f.relative_to(campaign_dir).parts[:-1])
+    ]
     
     if not parquet_files:
         logger.warning(f"No parquet files found in {campaign_dir}")
         return None
     
+    wanted = LOCATION_COLUMNS + list(CTD_COLUMNS)
+    frames = []
     try:
-        gdf = gpd.read_parquet(campaign_dir)
+        for f in parquet_files:
+            names = pq.read_schema(f).names
+            if "time" in names:
+                frames.append(pd.read_parquet(f, columns=[c for c in wanted if c in names]))
     except Exception as e:
         logger.warning(f"Failed to read geoparquet: {e}")
         return None
     
-    # Determine available columns
-    available_cols = LOCATION_COLUMNS.copy()
+    if not frames:
+        logger.warning(f"No parquet files with a time column in {campaign_dir}")
+        return None
     
-    for col in CTD_COLUMNS:
-        if col in gdf.columns:
-            available_cols.append(col)
-    
-    # Filter to available columns
-    gdf = gdf[[c for c in available_cols if c in gdf.columns]]
-    
-    return gdf.sort_values("time")
+    return pd.concat(frames, ignore_index=True).sort_values("time")
 
 
 def interpolate_environment_to_ping_time(
@@ -519,19 +518,71 @@ def interpolate_environment_to_ping_time(
     return result
 
 
+def _time1_onto(ds: "xr.Dataset", time1: np.ndarray) -> "xr.Dataset":
+    """Move a group's ``time1`` axis onto new times, carrying each variable's nearest value."""
+    if "time1" not in ds.indexes:
+        return ds.assign_coords(time1=time1)
+    index = ds.indexes["time1"]
+    if len(index) == len(time1) and np.array_equal(index.values, time1):
+        return ds
+    keep = ~(index.duplicated() | index.isna())
+    ds = ds.isel(time1=np.flatnonzero(keep)).sortby("time1")
+    if ds.sizes["time1"] == 0:
+        return ds.reindex(time1=time1)
+    return ds.reindex(time1=time1, method="nearest")
+
+
+def _fit_time1(
+    ds: "xr.Dataset",
+    values: dict[str, np.ndarray],
+    ping_time: Optional[np.ndarray],
+) -> tuple["xr.Dataset", dict[str, np.ndarray]]:
+    """
+    Fit arrays to a group's ``time1`` axis.
+
+    Single values are repeated along the existing ``time1``. Per-ping arrays
+    need ``ping_time``: ``time1`` then becomes the ping times, which echopype
+    interpolates onto ``ping_time`` again when it computes Sv. Arrays that
+    already match ``time1`` are used as they are.
+    """
+    lengths = {len(v) for v in values.values()}
+    n_time1 = ds.sizes.get("time1")
+
+    if lengths == {1} and n_time1:
+        return ds, {k: np.repeat(v, n_time1) for k, v in values.items()}
+
+    if ping_time is not None and lengths == {len(ping_time)}:
+        ping_time = np.asarray(ping_time).astype("datetime64[ns]")
+        time1, first = np.unique(ping_time, return_index=True)
+        return _time1_onto(ds, time1), {k: v[first] for k, v in values.items()}
+
+    if lengths == {n_time1}:
+        return ds, values
+
+    raise ValueError(
+        f"Cannot place arrays of length {sorted(lengths)} on time1 of length {n_time1}"
+        + ("" if ping_time is not None else "; pass ping_time for per-ping values")
+    )
+
+
 def update_echodata_environment(
     echodata: "EchoData",
     env_result: dict[str, Any],
+    ping_time: Optional[np.ndarray] = None,
 ) -> "EchoData":
     """
     Update EchoData.Environment with measured/computed parameters.
     
-    NOTE: This requires modifications to the echopype fork to use these
-    values instead of built-in approximations during compute_Sv().
+    The echopype fork reads ``temperature``, ``salinity`` and ``sound_speed``
+    from the Environment group during compute_Sv(), interpolating ``time1``
+    onto ``ping_time``.
     
     Args:
         echodata: EchoData object to update
         env_result: Dict from get_environment_with_fallback
+        ping_time: Ping times the arrays in ``env_result`` were interpolated
+            to. Needed unless the arrays hold a single value or already
+            match the group's ``time1``.
         
     Returns:
         Updated EchoData object
@@ -541,42 +592,38 @@ def update_echodata_environment(
     if env_result.get("source") == "none":
         return echodata
     
-    env = echodata["Environment"]
     source = env_result["source"]
     method = env_result.get("method", "unknown")
+    attrs = {
+        "temperature": {
+            "units": "degrees_C",
+            "long_name": "Sea water temperature",
+            "source": f"{source} via oceanstream",
+        },
+        "salinity": {
+            "units": "PSU",
+            "long_name": "Sea water practical salinity",
+            "source": f"{source} via oceanstream",
+        },
+        "sound_speed": {
+            "units": "m/s",
+            "long_name": "Sound speed in sea water",
+            "source": f"Computed from {source} via {method} equation",
+        },
+    }
+    values = {
+        name: np.atleast_1d(np.asarray(env_result[name], dtype=float))
+        for name in attrs
+        if env_result.get(name) is not None
+    }
+    if not values:
+        return echodata
     
-    if "temperature" in env_result and env_result["temperature"] is not None:
-        env["temperature"] = xr.DataArray(
-            env_result["temperature"],
-            dims=["time1"],
-            attrs={
-                "units": "degrees_C",
-                "long_name": "Sea water temperature",
-                "source": f"{source} via oceanstream",
-            },
-        )
-    
-    if "salinity" in env_result and env_result["salinity"] is not None:
-        env["salinity"] = xr.DataArray(
-            env_result["salinity"],
-            dims=["time1"],
-            attrs={
-                "units": "PSU",
-                "long_name": "Sea water practical salinity",
-                "source": f"{source} via oceanstream",
-            },
-        )
-    
-    if "sound_speed" in env_result and env_result["sound_speed"] is not None:
-        env["sound_speed"] = xr.DataArray(
-            env_result["sound_speed"],
-            dims=["time1"],
-            attrs={
-                "units": "m/s",
-                "long_name": "Sound speed in sea water",
-                "source": f"Computed from {source} via {method} equation",
-            },
-        )
+    env, values = _fit_time1(echodata["Environment"], values, ping_time)
+    for name, data in values.items():
+        env[name] = xr.DataArray(data, dims=["time1"], attrs=attrs[name])
+    # echodata[...] returns a copy, so the group has to be set back
+    echodata["Environment"] = env
     
     logger.info(f"Updated EchoData Environment from {source}")
     return echodata
@@ -586,6 +633,7 @@ def update_echodata_platform(
     echodata: "EchoData",
     latitude: np.ndarray,
     longitude: np.ndarray,
+    ping_time: Optional[np.ndarray] = None,
 ) -> "EchoData":
     """
     Update EchoData.Platform with interpolated GPS coordinates.
@@ -594,25 +642,32 @@ def update_echodata_platform(
         echodata: EchoData object to update
         latitude: Interpolated latitude array
         longitude: Interpolated longitude array
+        ping_time: Ping times the coordinates were interpolated to (see
+            update_echodata_environment)
         
     Returns:
         Updated EchoData object
     """
     import xarray as xr
     
-    platform = echodata["Platform"]
+    values = {
+        "latitude": np.atleast_1d(np.asarray(latitude, dtype=float)),
+        "longitude": np.atleast_1d(np.asarray(longitude, dtype=float)),
+    }
+    platform, values = _fit_time1(echodata["Platform"], values, ping_time)
     
     platform["latitude"] = xr.DataArray(
-        latitude,
+        values["latitude"],
         dims=["time1"],
         attrs={"units": "degrees_north", "source": "Interpolated from geoparquet"},
     )
     
     platform["longitude"] = xr.DataArray(
-        longitude,
+        values["longitude"],
         dims=["time1"],
         attrs={"units": "degrees_east", "source": "Interpolated from geoparquet"},
     )
+    echodata["Platform"] = platform
     
     logger.info("Updated EchoData Platform with interpolated GPS")
     return echodata

@@ -210,6 +210,57 @@ def open_converted(zarr_path: Path) -> "EchoData":
     return EchoData.from_file(zarr_path)
 
 
+# Codec settings xarray reads back from a store. echopype adds its own
+# ``compressor`` on save, and zarr 3 refuses both at once.
+_STORED_CODEC_KEYS = ("compressor", "compressors", "filters", "serializer")
+
+
+def save_converted(echodata: "EchoData", zarr_path: Path) -> Path:
+    """
+    Save EchoData to a Zarr store, replacing any store already at ``zarr_path``.
+
+    Safe for an EchoData opened from ``zarr_path`` itself. Its arrays are read
+    lazily from that store, and ``to_zarr(overwrite=True)`` deletes the store
+    before reading them, so the tree is written next to it and moved into
+    place only once the write has succeeded.
+
+    After the swap the object's lazy arrays point at the deleted store:
+    reopen ``zarr_path`` rather than reusing ``echodata``.
+
+    Args:
+        echodata: EchoData to save
+        zarr_path: Destination Zarr store
+
+    Returns:
+        ``zarr_path``
+    """
+    import os
+    import shutil
+    import tempfile
+
+    zarr_path = Path(zarr_path)
+    zarr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for node in echodata.tree.subtree:
+        for var in node.variables.values():
+            for key in _STORED_CODEC_KEYS:
+                var.encoding.pop(key, None)
+
+    # Same parent, so the final rename never crosses a filesystem
+    staging = Path(tempfile.mkdtemp(prefix=f".{zarr_path.stem}.", dir=zarr_path.parent))
+    try:
+        # echopype reads a path without a .zarr suffix as a directory
+        new_store = staging / "new.zarr"
+        echodata.to_zarr(new_store, overwrite=True)
+        if zarr_path.exists():
+            os.replace(zarr_path, staging / "previous.zarr")
+        os.replace(new_store, zarr_path)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    return zarr_path
+
+
 def detect_sonar_model(raw_file: Path) -> str:
     """
     Attempt to auto-detect sonar model from raw file.

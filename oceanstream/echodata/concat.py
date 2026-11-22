@@ -173,8 +173,11 @@ def concatenate_daily(
     if use_dask and chunks:
         combined = combined.chunk(chunks)
     
-    # Save concatenated result
-    combined.to_zarr(output_path, overwrite=True)
+    # Save concatenated result. save_converted drops the codec settings the
+    # inputs were read with, which zarr 3 refuses next to echopype's own.
+    from oceanstream.echodata.convert import save_converted
+
+    save_converted(combined, output_path)
     
     logger.info(f"Concatenated to {output_path}")
     return output_path
