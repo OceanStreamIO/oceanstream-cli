@@ -1,223 +1,128 @@
-# Oceanstream
+# OceanStream
 
-This project processes oceanographic measurements collected from Unmanned Surface Vehicles (USVs). The pipeline reads CSV files from a specified directory, consolidates the data, and stores it in a GeoParquet format partitioned by latitude and longitude bins. Optionally, it can upload the resulting GeoParquet files to Azure Blob Storage.
+OceanStream converts raw oceanographic data from ships, uncrewed surface vehicles and moorings into analysis-ready datasets:
 
-## Project Structure
+- **Tracks and sensors**: Saildrone CSVs, R2R cruise archives, NMEA logs, SeaBird CTD `.hex` files, and CSV or GeoCSV from CMEMS, EMODnet, EMSO, NorSOOP, OceanLab, OOI and PLOCAN become GeoParquet partitioned by latitude and longitude, with STAC metadata, PMTiles of the track and COG heatmaps.
+- **Echosounders**: Simrad EK60 and EK80 `.raw` files become EchoData Zarr stores, then Sv, denoised Sv, MVBS, NASC and echograms.
+- **Multibeam**: Kongsberg `.all` files become per-day soundings in Parquet, bathymetry and backscatter grids as Cloud Optimized GeoTIFFs, and PMTiles.
+- **ADCP**: Teledyne RDI `.raw` files become ensemble-averaged velocity profiles in NetCDF.
 
-```
-oceanstream
-├── src
-│   ├── app.py                # Main entry point for the application
-│   ├── cli.py                # Command-line interface for running the pipeline
-│   ├── config                # Configuration settings
-│   │   ├── __init__.py
-│   │   └── settings.py
-│   ├── pipeline              # Data processing pipeline
-│   │   ├── __init__.py
-│   │   ├── csv_reader.py     # Functions for reading CSV files
-│   │   ├── binning.py        # Functions for data partitioning
-│   │   └── geoparquet_writer.py # Functions for writing geoparquet files
-│   ├── storage               # Storage handling
-│   │   ├── __init__.py
-│   │   ├── local.py          # Local storage functions
-│   │   └── azure_blob.py     # Azure Blob Storage functions
-│   └── types                 # Data models and types
-│       ├── __init__.py
-│       └── models.py
-├── data
-│   └── raw_data              # Directory for raw CSV data
-│       └── .gitkeep
-├── tests                     # Unit tests for the application
-│   ├── __init__.py
-│   └── test_pipeline.py
-├── .env.example              # Template for environment variables
-├── .gitignore                # Git ignore file
-├── .python-version           # Python version specification
-├── pyproject.toml            # Project dependencies and configuration
-└── README.md                 # Project documentation
-```
+It also keeps a registry of campaigns, collects Argo float profiles along a cruise track, and runs the echosounder pipeline on a Slurm cluster over SSH.
 
-## Setup Instructions
+## Installation
 
-1. **Clone the Repository**: 
-   ```bash
-   git clone <repository-url>
-   cd oceanstream
-   ```
-
-2. **Create a Virtual Environment**:
-   ```bash
-   python3.12 -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
-
-3. **Install Dependencies**:
-   
-   Oceanstream is organized into optional processing modules. Install only what you need:
-   
-   ```bash
-   # Install core + geotrack processing (GPS/navigation data → GeoParquet)
-   pip install -e ".[geotrack]"
-   
-   # Install core + echodata processing (echosounder data → Zarr)
-   pip install -e ".[echodata]"
-   
-   # Install all processing modules
-   pip install -e ".[all]"
-   
-   # Install for development (includes all modules + dev tools)
-   pip install -e ".[all]" -r requirements-dev.txt
-   ```
-   
-   **Available extras:**
-   - `geotrack` - GPS/navigation track processing (pandas, geopandas, shapely)
-   - `echodata` - Echosounder data processing (echopype, xarray, zarr, netcdf4)
-   - `multibeam` - Multibeam sonar processing (planned)
-   - `adcp` - ADCP current profiler processing (planned)
-   - `all` - All processing modules
-   - `geo` - Legacy alias for `geotrack`
-
-4. **Configure Environment Variables**:
-   Copy `.env.example` to `.env` and fill in the necessary configuration values.
-
-5. **Run Processing Commands**:
-   
-   Oceanstream provides separate commands for each data type:
-   
-   ```bash
-   # Process geotrack data (CSV → GeoParquet)
-   oceanstream process geotrack --input-dir raw_data --output-dir out/geoparquet -v
-   
-   # Process echosounder data (planned - requires echodata extra)
-   oceanstream process echodata --input-dir raw_echodata --output-dir out/echodata -v
-   
-   # Process multibeam data (planned - requires multibeam extra)
-   oceanstream process multibeam --input-dir raw_multibeam --output-dir out/multibeam -v
-   
-   # Process ADCP data (planned - requires adcp extra)
-   oceanstream process adcp --input-dir raw_adcp --output-dir out/adcp -v
-   
-   # List available data providers
-   oceanstream providers
-   ```
-   
-   All processing commands support `--provider` flag to specify the data source:
-   ```bash
-   oceanstream process --provider saildrone geotrack --input-dir data -v
-   ```
-
-## Usage
-
-### Geotrack Processing (GPS/Navigation Data)
-
-CLI usage examples:
+Python 3.11 to 3.13. A plain install processes tracks and sensor data, including NMEA logs and SeaBird CTD files. Add extras for the other instruments:
 
 ```bash
-# Process sample fixture data bundled with tests
-oceanstream process geotrack --input-dir oceanstream/tests/data/raw_data --output-dir out/geoparquet -v
-
-# Process your raw_data directory at repo root (default input-dir is ./raw_data)
-oceanstream process geotrack --output-dir out/geoparquet -v
-
-# Dry run to see what would be processed
-oceanstream process geotrack --input-dir raw_data --dry-run -v
-
-# List available columns in the data
-oceanstream process geotrack --input-dir raw_data --list-columns
+pip install oceanstream
+pip install "oceanstream[echodata,echodata-viz]"
 ```
 
-The CLI reads CSVs, auto-derives coarse 5° bins, and writes a partitioned GeoParquet dataset with metadata. Use `-v` for progress logs.
+Release candidates install only when named, for example `pip install "oceanstream==1.0.0rc1"`.
 
-### Argo profiles for a campaign
+| Extra | Installs | Needed for |
+|-------|----------|------------|
+| `echodata` | oceanstream-echopype, xarray, dask, zarr, netCDF4, fsspec, s3fs, gsw, copernicusmarine and others | `process echodata` |
+| `echodata-viz` | matplotlib, hvplot, datashader, holoviews, panel, bokeh | Echogram plots |
+| `multibeam` | themachinethatgoesping (Python 3.12+), scipy, rasterio, pyproj, matplotlib, pmtiles | `process multibeam` |
+| `adcp` | dolfyn, scipy, xarray | `process adcp` |
+| `norsoop` | erddapy | NorSOOP FerryBox data |
+| `all` | Every extra except `multibeam` | |
+
+The `geotrack` and `geo` extras install nothing extra; they remain so that older install commands keep working.
+
+The `echodata` extra installs [oceanstream-echopype](https://pypi.org/project/oceanstream-echopype/), OceanStream's fork of [echopype](https://github.com/OSOceanAcoustics/echopype). It provides the same `echopype` module as upstream echopype and replaces it, so run `pip uninstall echopype` before installing the extra into an environment that has echopype.
+
+PMTiles of tracks need the [tippecanoe](https://github.com/felt/tippecanoe) and [pmtiles](https://github.com/protomaps/go-pmtiles) executables on `PATH`. Heatmaps also need rasterio: `pip install rasterio`, or the `all` extra.
+
+## Command line
 
 ```bash
-# Argo float profiles inside the campaign's bbox and dates, matched to the vessel track
-oceanstream campaign argo FK161229 --track out/geoparquet/FK161229
+# Saildrone CSVs -> ./out/TPOS_2023/ (GeoParquet partitions)
+oceanstream process geotrack convert \
+    --input-source ./raw/saildrone --output-dir ./out \
+    --campaign-id TPOS_2023 --provider noaa_pmel --yes
+
+# The same, with PMTiles of the track and heatmaps
+oceanstream process geotrack convert \
+    --input-source ./raw/saildrone --output-dir ./out \
+    --campaign-id TPOS_2023 --provider noaa_pmel --yes \
+    --generate-pmtiles --generate-heatmaps
+
+# EK80 .raw files -> ./out/SE2204/echodata/raw/*.zarr, then Sv
+oceanstream process echodata convert \
+    --input-source ./raw/ek80 --output-dir ./out --campaign-id SE2204 --sonar-model EK80
+oceanstream process echodata compute-sv \
+    --input-source ./out/SE2204/echodata/raw -o ./out/SE2204/echodata/sv
+
+# Kongsberg .all files -> soundings, grids and quick-looks
+oceanstream process multibeam --input-dir ./raw/em304 --output-dir ./out/multibeam
+
+# RDI ADCP .raw files -> NetCDF
+oceanstream process adcp --input-dir ./raw/adcp --output-dir ./out/adcp
+
+# Campaigns and providers
+oceanstream campaign list
+oceanstream providers
 ```
 
-Writes one GeoParquet file of profiles with their QC flags, data modes, distance to the track and the Argo citation. See [docs/argo.md](../docs/argo.md) for the schema, layouts and loading into PostGIS.
+`oceanstream --help` and `--help` on each command list every option. The echosounder steps after Sv are `denoise`, `enrich-location`, `compute-mvbs`, `compute-nasc` and `plot`. `process echodata presets` lists the denoise presets.
 
-### Processing Modules
+## Python
 
-Oceanstream is organized into separate processing modules:
+```python
+from pathlib import Path
+from oceanstream.geotrack import convert
+from oceanstream.providers import get_provider
 
-- **`oceanstream.geotrack`** - Process GPS/navigation track data into GeoParquet format
-- **`oceanstream.echodata`** - Process echosounder data (EK60/EK80) into Zarr (coming soon)
-- **`oceanstream.multibeam`** - Process multibeam sonar data (coming soon)
-- **`oceanstream.adcp`** - Process ADCP current profiler data (coming soon)
-
-Each module can be installed independently using pip extras (see Installation section).
-
-## Using OceanStream Data in GIS Tools
-
-OceanStream generates cloud-optimized GeoParquet files designed to work seamlessly with modern GIS tools and data analysis frameworks. Our output includes:
-
-- **GeoParquet**: Columnar format with embedded geometry and spatial partitioning
-- **STAC Metadata**: Standard catalog format for discovery and integration
-- **PMTiles** (optional): Vector tiles for web-based visualization
-
-### Comprehensive GIS Integration Guides
-
-We provide detailed integration guides for popular GIS tools and frameworks:
-
-**Desktop GIS:**
-- [QGIS](../docs/gis-integration/qgis.md) - Open-source desktop GIS
-- [ArcGIS Pro](../docs/gis-integration/arcgis-pro.md) - Professional ESRI platform
-
-**Data Analysis:**
-- [DuckDB](../docs/gis-integration/duckdb.md) - Fast in-process SQL analytics
-- [GeoPandas](../docs/gis-integration/geopandas.md) - Python spatial data analysis
-
-**Web GIS** (coming soon):
-- Leaflet + PMTiles
-- Mapbox GL JS
-- STAC Browser
-
-**See [GIS Integration Documentation](../docs/gis-integration/) for complete guides with:**
-- Installation instructions
-- Step-by-step usage examples
-- Code samples and workflows
-- Performance optimization tips
-- Troubleshooting guides
-
-### Quick Start Examples
-
-**Load in QGIS:**
-```bash
-# Generate data
-oceanstream process geotrack --input-source ./data/sample.csv --output-dir ./output
-
-# Open QGIS and drag-and-drop .parquet files from:
-# output/campaign_id/lat_bin=X/lon_bin=Y/*.parquet
+convert(
+    provider=get_provider("noaa_pmel"),
+    input_source=Path("./raw/saildrone"),
+    output_dir=Path("./out"),
+    campaign_id="TPOS_2023",
+    yes=True,  # skip the confirmation prompt
+)
 ```
 
-**Query with DuckDB:**
-```sql
-INSTALL spatial;
-LOAD spatial;
+`oceanstream.echodata.EchodataProcessor` runs the whole echosounder chain, from conversion to echograms, in one call.
 
-SELECT time, latitude, longitude, temperature_sea_water
-FROM read_parquet('output/campaign_id/**/*.parquet')
-WHERE lat_bin = 30 AND lon_bin = -120
-LIMIT 10;
+## Output
+
+A geotrack campaign is written as:
+
+```
+out/TPOS_2023/
+├── lat_bin=lat_20_22/lon_bin=lon_-158_-156/<uuid>-0.parquet
+├── stac/          # collection.json and items, when semantic mapping is enabled
+├── tiles/         # track.pmtiles, with --generate-pmtiles
+└── heatmaps/      # COG rasters, with --generate-heatmaps
 ```
 
-**Analyze with GeoPandas:**
+Partitions cover 2° × 2°. Each file has a WKB point `geometry` column and GeoParquet 1.1 metadata, so GIS tools read the positions directly:
+
 ```python
 import geopandas as gpd
 
-# Read all spatial partitions (skipping the STAC, tiles and heatmap folders)
-gdf = gpd.read_parquet('output/campaign_id/', ignore_prefixes=['.', '_', 'stac', 'tiles', 'heatmaps'])
-
-# Filter and analyze
-warm_water = gdf[gdf['temperature_sea_water'] > 25]
-print(f"Found {len(warm_water)} warm water measurements")
+gdf = gpd.read_parquet("out/TPOS_2023", ignore_prefixes=[".", "_", "stac", "tiles", "heatmaps"])
 ```
 
-## Contributing
+```sql
+-- DuckDB
+SELECT * FROM read_parquet('out/TPOS_2023/**/*.parquet', hive_partitioning = true);
+```
 
-Contributions are welcome! Please open an issue or submit a pull request for any enhancements or bug fixes.
+## Documentation
+
+Guides in the repository's [docs folder](https://github.com/OceanStreamIO/oceanstream-cli/tree/main/docs):
+
+- [Denoise presets](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/denoise-presets.md)
+- [Echo integration](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/echo-integration.md)
+- [Multibeam](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/multibeam.md)
+- [Argo profiles](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/argo.md)
+- [Running on a Slurm cluster](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/hpc.md) and [processing campaigns there](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/docs/hpc-campaigns.md)
+
+Report problems at [github.com/OceanStreamIO/oceanstream-cli/issues](https://github.com/OceanStreamIO/oceanstream-cli/issues).
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+MIT. See [LICENSE](https://github.com/OceanStreamIO/oceanstream-cli/blob/main/LICENSE). The oceanstream-echopype dependency is licensed under Apache 2.0.

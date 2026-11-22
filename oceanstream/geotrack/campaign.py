@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
+from .. import __version__
+
 
 def get_campaigns_dir() -> Path:
     """Get the campaigns directory.
@@ -93,7 +95,7 @@ def create_campaign(
         "campaign_id": campaign_id,
         "created_at": now,
         "updated_at": now,
-        "oceanstream_version": "0.1.0",  # TODO: Get from package version
+        "oceanstream_version": __version__,
         **metadata,
     }
     

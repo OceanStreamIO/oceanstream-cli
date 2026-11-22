@@ -115,6 +115,10 @@ def bootstrap_env(cluster: Cluster, recreate: bool = False, online: bool = False
         # Direct references (name @ git+https://...) cannot be fetched offline; the
         # wheelhouse holds a wheel built from exactly that reference.
         reqs = (f"{code}/requirements-hpc.txt" if online else f"{tmp}/requirements-offline.txt")
+        # Outside the f-string below: Python 3.11 allows no backslash in an f-string expression.
+        strip_refs = "" if online else (
+            f"sed -E 's/^([A-Za-z0-9_.-]+) @ .*/\\1/' {code}/requirements-hpc.txt > {reqs}"
+        )
         script = f"""set -e
 {prelude}
 python3 -V 2>&1 | grep -q ' {s.python_minor}\\.' \\
@@ -123,7 +127,7 @@ python3 -V 2>&1 | grep -q ' {s.python_minor}\\.' \\
 [ -x {venv}/bin/python ] || python3 -m venv {venv}
 . {venv}/bin/activate; unset PYTHONHOME PYTHONPATH
 mkdir -p {tmp}
-{'' if online else f"sed -E 's/^([A-Za-z0-9_.-]+) @ .*/\\1/' {code}/requirements-hpc.txt > {reqs}"}
+{strip_refs}
 python -m pip install -q {pip_src} -r {reqs} 2>&1 | tail -20
 echo "installed=$(python -m pip list --format=freeze 2>/dev/null | wc -l)"
 """

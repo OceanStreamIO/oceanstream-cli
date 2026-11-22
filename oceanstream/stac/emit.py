@@ -6,6 +6,8 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 
+from .. import __version__
+
 if TYPE_CHECKING:
     from oceanstream.sensors.catalogue import Sensor
 
@@ -118,7 +120,7 @@ def emit_stac_collection_and_item(
     platforms: Optional[list[dict[str, Any]]] = None,
     pmtiles_path: Optional[Path] = None,
     measurement_stats: Optional[dict[str, dict[str, float]]] = None,
-    software_version: str = "0.1.0",
+    software_version: str = __version__,
 ) -> tuple[Path, list[Path]]:
     """Emit a STAC Collection and one Item per Parquet partition under geoparquet_root/stac/.
 

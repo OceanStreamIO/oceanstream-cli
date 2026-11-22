@@ -40,7 +40,7 @@ try:
 except ImportError:
     raise ImportError(
         "numpy and pandas are required for CTD processing. "
-        "Install with: pip install oceanstream[geotrack]"
+        "Install with: pip install numpy pandas"
     )
 
 try:

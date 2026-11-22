@@ -40,7 +40,7 @@ try:
     import pynmea2
 except ImportError:
     raise ImportError(
-        "pynmea2 is required for NMEA processing. Install with: pip install oceanstream[geotrack]"
+        "pynmea2 is required for NMEA processing. Install with: pip install pynmea2"
     )
 
 if TYPE_CHECKING:

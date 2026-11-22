@@ -18,10 +18,10 @@ This module is designed to handle large-scale oceanographic survey data (e.g., f
 
 ## Installation
 
-Install with geotrack dependencies:
+The core install includes the geotrack dependencies (geopandas, shapely, pynmea2, seabirdscientific):
 
 ```bash
-pip install -e ".[geotrack]"
+pip install -e .
 ```
 
 Or install all optional dependencies:

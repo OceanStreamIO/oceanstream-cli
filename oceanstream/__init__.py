@@ -17,7 +17,13 @@ SDK Usage:
     df = processor.process_files(csv_files)
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
+try:
+    __version__ = _version("oceanstream")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0+unknown"
 
 # Lazy imports for SDK convenience
 # These are loaded on first access to avoid import overhead

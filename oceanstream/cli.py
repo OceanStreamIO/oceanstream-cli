@@ -2320,12 +2320,13 @@ if typer:
     @process_app.command(
         "adcp",
         help=(
-            "Process raw ADCP data (format-specific pipeline TBD)."
+            "Process Teledyne RDI ADCP .raw files: beam-to-earth transform, 120 s ensemble "
+            "averages, one <name>_processed.nc NetCDF file per input (adcp extra)."
         ),
     )
     def adcp_command(
-        input_dir: Path = typer.Option(Path("raw_adcp"), exists=True, file_okay=False, help="Directory with raw ADCP data."),
-        output_dir: Path = typer.Option(Path("out/adcp"), help="Output directory for processed ADCP products."),
+        input_dir: Path = typer.Option(Path("raw_adcp"), exists=True, file_okay=False, help="Directory holding the RDI .raw files (subfolders are not searched)."),
+        output_dir: Path = typer.Option(Path("out/adcp"), help="Output directory for the NetCDF files."),
         verbose: bool = typer.Option(False, "-v", help="Emit progress information."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show planned actions without executing."),
     ) -> None:

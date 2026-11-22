@@ -502,7 +502,8 @@ def _convert_ctd_to_csv(
     try:
         df = process_ctd_cast(cast, output_dir=work_dir)
         if df is not None and len(df) > 0:
-            csv_path = work_dir / f"{hex_path.stem}.csv"
+            # The name process_ctd_cast writes, as in _convert_ctd_archive_to_csv
+            csv_path = work_dir / f"{cast.cruise_id}_{cast.cast_id}.csv"
             if verbose:
                 print(f"[geotrack]   ✓ Converted {len(df)} CTD scans → {csv_path.name}")
             return csv_path
@@ -1277,13 +1278,7 @@ class GeotrackProcessor:
             if measurement_columns:
                 measurement_stats = calculate_measurement_statistics(df, measurement_columns)
 
-            # Get software version from package
-            try:
-                from importlib.metadata import version
-
-                software_version = version("oceanstream")
-            except Exception:
-                software_version = "0.1.0"
+            from oceanstream import __version__ as software_version
 
             emit_stac_collection_and_item(
                 output_dir,
