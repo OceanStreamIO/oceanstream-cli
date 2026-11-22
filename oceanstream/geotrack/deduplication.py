@@ -87,9 +87,10 @@ def read_existing_campaign_data(
         if not dfs:
             return None
         
-        # Concatenate all partitions
+        # Concatenate all partitions. The geometry is rebuilt from
+        # latitude/longitude on write, so it is not carried into the merge.
         existing_data = pd.concat(dfs, ignore_index=True)
-        return existing_data
+        return existing_data.drop(columns="geometry", errors="ignore")
     
     except Exception as e:
         print(f"[geotrack] Warning: Could not read existing campaign data: {e}")

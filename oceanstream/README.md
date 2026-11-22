@@ -206,8 +206,8 @@ LIMIT 10;
 ```python
 import geopandas as gpd
 
-# Read all spatial partitions
-gdf = gpd.read_parquet('output/campaign_id/')
+# Read all spatial partitions (skipping the STAC, tiles and heatmap folders)
+gdf = gpd.read_parquet('output/campaign_id/', ignore_prefixes=['.', '_', 'stac', 'tiles', 'heatmaps'])
 
 # Filter and analyze
 warm_water = gdf[gdf['temperature_sea_water'] > 25]

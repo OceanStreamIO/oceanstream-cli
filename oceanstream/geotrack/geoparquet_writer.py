@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.fs as pafs
@@ -38,6 +39,41 @@ def _coerce_object_columns(df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     out[col] = s2.astype("string[python]")
     return out
+
+
+# GeoParquet 1.1 metadata for the point geometry built from latitude/longitude.
+# No "crs" key: GeoParquet then means OGC:CRS84, i.e. WGS84 longitude/latitude.
+POINT_GEO_METADATA: dict[str, Any] = {
+    "version": "1.1.0",
+    "primary_column": "geometry",
+    "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}},
+}
+
+# A little-endian WKB point: byte order, geometry type 1, x, y
+_WKB_POINT = [("order", "u1"), ("type", "<u4"), ("x", "<f8"), ("y", "<f8")]
+
+
+def point_geometry(latitude, longitude) -> pa.Array:
+    """WKB points from coordinate arrays; null where either coordinate is missing."""
+    lat = pd.to_numeric(pd.Series(latitude), errors="coerce").to_numpy(dtype="float64")
+    lon = pd.to_numeric(pd.Series(longitude), errors="coerce").to_numpy(dtype="float64")
+    points = np.empty(len(lat), dtype=_WKB_POINT)
+    points["order"] = 1
+    points["type"] = 1
+    points["x"] = lon
+    points["y"] = lat
+    missing = ~(np.isfinite(lat) & np.isfinite(lon))
+    # Built from buffers: numpy bytes values would be cut at the first NUL
+    size = points.dtype.itemsize
+    offsets = np.arange(0, (len(points) + 1) * size, size, dtype=np.int64)
+    validity = pa.py_buffer(np.packbits(~missing, bitorder="little")) if missing.any() else None
+    return pa.Array.from_buffers(
+        pa.large_binary(),
+        len(points),
+        [validity, pa.py_buffer(offsets), pa.py_buffer(points.tobytes())],
+        null_count=int(missing.sum()),
+    ).cast(pa.binary())
+
 
 def write_geoparquet(
     dataframe: pd.DataFrame,
@@ -102,7 +138,13 @@ def write_geoparquet(
 
     # Final dtype cleanup to avoid ArrowInvalid on mixed object columns
     dataframe = _coerce_object_columns(dataframe)
+    # The geometry is derived from latitude/longitude, so rebuild it rather
+    # than trusting a column carried over from earlier data
+    dataframe = dataframe.drop(columns="geometry", errors="ignore")
     table = pa.Table.from_pandas(dataframe)
+    table = table.append_column(
+        "geometry", point_geometry(dataframe["latitude"], dataframe["longitude"])
+    )
     meta = dict(table.schema.metadata or {})
 
     # Merge semantic metadata (if provided) with provider-supplied units/aliases.
@@ -155,20 +197,8 @@ def write_geoparquet(
                 # Fallback: store stringified value
                 meta[str(k).encode("utf-8")] = str(v).encode("utf-8")
 
-    geo_block: dict[str, Any] | None = None
-    if geo_metadata is not None:
-        geo_block = geo_metadata
-    elif 'geometry' in table.schema.names:
-        geo_block = {
-            "version": "1.1.0",
-            "primary_column": "geometry",
-            "columns": {
-                "geometry": {"encoding": "WKB", "geometry_type": "Point", "crs": "EPSG:4326"}
-            },
-        }
-
-    if geo_block is not None:
-        meta[b"geo"] = json.dumps(geo_block).encode("utf-8")
+    geo_block = geo_metadata if geo_metadata is not None else POINT_GEO_METADATA
+    meta[b"geo"] = json.dumps(geo_block).encode("utf-8")
 
     if meta:
         table = table.replace_schema_metadata(meta)

@@ -428,7 +428,11 @@ def generate_markdown_report(
     lines.append("```python")
     lines.append("import geopandas as gpd")
     lines.append("")
-    lines.append(f"gdf = gpd.read_parquet('{dataset_path}/')")
+    lines.append("# stac/, tiles/ and heatmaps/ hold no Parquet")
+    lines.append(
+        f"gdf = gpd.read_parquet('{dataset_path}/', "
+        "ignore_prefixes=['.', '_', 'stac', 'tiles', 'heatmaps'])"
+    )
     lines.append("print(gdf.head())")
     lines.append("```")
     lines.append("")

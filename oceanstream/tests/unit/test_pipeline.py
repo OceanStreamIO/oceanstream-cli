@@ -63,7 +63,7 @@ def test_write_geoparquet_geo_metadata_auto_and_override(tmp_path: Path):
     meta_auto = pq.read_table(pf_auto).schema.metadata or {}
     assert b'geo' in meta_auto
     geo_auto = json.loads(meta_auto[b'geo'].decode('utf-8'))
-    assert geo_auto.get('columns', {}).get('geometry', {}).get('crs') == 'EPSG:4326'
+    assert geo_auto['columns']['geometry']['geometry_types'] == ['Point']
 
     # Override geo block explicitly
     geo_override = {
