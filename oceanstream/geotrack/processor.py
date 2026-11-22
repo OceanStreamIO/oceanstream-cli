@@ -1917,8 +1917,8 @@ def convert(
     # Validate and possibly clear invalid campaign metadata (BEFORE checking file tracking)
     if not dry_run and not force_reprocess:
         from rich.console import Console
-        from .campaign import load_campaign_metadata, get_campaigns_dir
-        from .validation import validate_campaign_output, clear_invalid_campaign_metadata
+        from .campaign import load_campaign_metadata
+        from .validation import validate_campaign_output
 
         console = Console()
 
@@ -1928,9 +1928,12 @@ def convert(
         ):
             existing_metadata = load_campaign_metadata(detected_campaign_id)
 
-        if existing_metadata:
+        # A record without output yet (e.g. from `campaign create`) has nothing to check.
+        # When the output is gone, only the file tracking is reset: the record also
+        # holds what `campaign create` was given, and the conversion refreshes the rest.
+        if existing_metadata and existing_metadata.get('output_directory'):
             # Check if output directory has changed
-            existing_output_dir = Path(existing_metadata.get('output_directory', ''))
+            existing_output_dir = Path(existing_metadata['output_directory'])
             output_dir_changed = existing_output_dir != campaign_output_dir.resolve()
 
             if output_dir_changed:
@@ -1960,13 +1963,8 @@ def convert(
                         )
                         print(f"  Previous: {existing_output_dir}")
                         print(f"  Current:  {campaign_output_dir.resolve()}")
-                        print(f"[geotrack] Clearing invalid metadata to use new output location")
+                        print(f"[geotrack] Resetting file tracking to use new output location")
 
-                    # Clear both registries
-                    campaigns_dir = get_campaigns_dir()
-                    clear_invalid_campaign_metadata(
-                        detected_campaign_id, campaigns_dir, verbose=verbose
-                    )
                     campaign_metadata.clear()
             else:
                 # Output directory unchanged, validate that it still exists and has data
@@ -1980,39 +1978,18 @@ def convert(
                         )
                         for issue in validation['issues']:
                             print(f"  - {issue}")
-                        print(
-                            f"[geotrack] Clearing invalid campaign metadata to allow reprocessing"
-                        )
+                        print(f"[geotrack] Resetting file tracking to allow reprocessing")
 
-                    # Clear invalid metadata (both campaign registry and processing metadata)
-                    campaigns_dir = get_campaigns_dir()
-                    clear_invalid_campaign_metadata(
-                        detected_campaign_id, campaigns_dir, verbose=verbose
-                    )
                     campaign_metadata.clear()
 
-    # Force reprocess: clear all previous metadata (both registries)
+    # Force reprocess: forget which files were processed. The campaign record
+    # stays (it holds what `campaign create` was given) and is refreshed after
+    # the write; the old partitions are removed just before it.
     if force_reprocess:
         if verbose:
-            print("[geotrack] Force reprocess enabled - clearing all previous metadata")
+            print("[geotrack] Force reprocess enabled - resetting file tracking")
 
-        # Clear processing metadata
         campaign_metadata.clear()
-
-        # Clear campaign registry if it exists
-        if not dry_run:
-            from .campaign import load_campaign_metadata, get_campaigns_dir
-
-            existing_metadata = load_campaign_metadata(detected_campaign_id)
-            if existing_metadata:
-                campaigns_dir = get_campaigns_dir()
-                campaign_dir = campaigns_dir / detected_campaign_id
-                if campaign_dir.exists():
-                    import shutil
-
-                    shutil.rmtree(campaign_dir)
-                    if verbose:
-                        print(f"[geotrack] Cleared campaign registry: {campaign_dir}")
 
     # Check for previously processed files (unless force_reprocess or dry_run)
     if not (force_reprocess or dry_run):
@@ -2073,17 +2050,6 @@ def convert(
             # Flag that we need to rewrite the entire dataset
             needs_full_rewrite = True
 
-    # If deduplication occurred, we need to delete old data and write fresh
-    if needs_full_rewrite and campaign_output_dir.exists():
-        import shutil
-
-        # Remove old parquet files but keep stac and metadata
-        for partition_dir in campaign_output_dir.iterdir():
-            if partition_dir.is_dir() and partition_dir.name.startswith(('lat_', 'lon_')):
-                shutil.rmtree(partition_dir)
-        if verbose:
-            print("[geotrack] Removed old parquet partitions for clean rewrite")
-
     # Handle introspection flags    # Handle introspection flags
     if list_columns:  # pragma: no cover
         print(f"[geotrack] Columns ({len(df.columns)}):")
@@ -2135,6 +2101,18 @@ def convert(
     lat_bins, lon_bins = suggest_lat_lon_bins_from_data(df)
     lat_min, lat_max = float(df['latitude'].min()), float(df['latitude'].max())
     lon_min, lon_max = float(df['longitude'].min()), float(df['longitude'].max())
+
+    # Replace the old partitions: the merged data (or, with --force-reprocess, the
+    # new data alone) is written in full, and pyarrow would add files beside them
+    if (needs_full_rewrite or force_reprocess) and campaign_output_dir.exists():
+        import shutil
+
+        # Remove old parquet files but keep stac, tiles and heatmaps
+        for partition_dir in campaign_output_dir.iterdir():
+            if partition_dir.is_dir() and partition_dir.name.startswith(('lat_', 'lon_')):
+                shutil.rmtree(partition_dir)
+        if verbose:
+            print("[geotrack] Removed old parquet partitions for clean rewrite")
 
     # Write GeoParquet - use cloud path if available, otherwise local
     geoparquet_output_path = cloud_campaign_path if is_cloud else campaign_output_dir
@@ -2328,9 +2306,38 @@ def convert(
                     if verbose:
                         print(f"[geotrack]   ! Failed to upload STAC to cloud: {e}")
 
+    # Count partition files
+    partition_count = 0
+    output_size = 0
+
+    # Calculate output stats - for cloud, query the filesystem directly
+    if is_cloud and filesystem is not None:
+        try:
+            from pyarrow import fs as pafs
+
+            selector = pafs.FileSelector(cloud_campaign_path, recursive=True)
+            file_info = filesystem.get_file_info(selector)
+            for f in file_info:
+                if f.type.name == 'File' and f.path.endswith('.parquet'):
+                    partition_count += 1
+                    output_size += f.size
+        except Exception:
+            # Fall back to local if cloud query fails
+            pass
+    elif campaign_output_dir.exists():
+        for root, dirs, files in os.walk(campaign_output_dir):
+            for file in files:
+                if file.endswith('.parquet'):
+                    partition_count += 1
+                    file_path = Path(root) / file
+                    try:
+                        output_size += os.path.getsize(file_path)
+                    except OSError:
+                        pass
+
     # Register campaign metadata
     if not dry_run:
-        from .campaign import create_campaign
+        from .campaign import register_campaign
 
         # Prepare campaign metadata
         campaign_meta = {
@@ -2393,8 +2400,9 @@ def convert(
 
         # Add data statistics
         campaign_meta['total_rows'] = len(df)
-        campaign_meta['total_files'] = len(csv_files)
-        campaign_meta['partition_count'] = partition_count if 'partition_count' in locals() else 0
+        # Files of every run so far, as tracked for deduplication
+        campaign_meta['total_files'] = campaign_metadata.get_processed_file_count() or len(csv_files)
+        campaign_meta['partition_count'] = partition_count
 
         # Add sensor information
         if detected_sensors:
@@ -2417,43 +2425,15 @@ def convert(
         if source_repository:
             campaign_meta['source_repository'] = source_repository
 
-        # Register the campaign
+        # Register the campaign, or refresh the record a previous run or
+        # `campaign create` left
         try:
-            create_campaign(detected_campaign_id, campaign_meta, verbose=verbose)
+            register_campaign(detected_campaign_id, campaign_meta, verbose=verbose)
             if verbose:
                 print(f"[geotrack] Campaign registered: {detected_campaign_id}")
         except Exception as e:
             if verbose:
                 print(f"[geotrack] Warning: Could not register campaign: {e}")
-
-    # Count partition files
-    partition_count = 0
-    output_size = 0
-
-    # Calculate output stats - for cloud, query the filesystem directly
-    if is_cloud and filesystem is not None:
-        try:
-            from pyarrow import fs as pafs
-
-            selector = pafs.FileSelector(cloud_campaign_path, recursive=True)
-            file_info = filesystem.get_file_info(selector)
-            for f in file_info:
-                if f.type.name == 'File' and f.path.endswith('.parquet'):
-                    partition_count += 1
-                    output_size += f.size
-        except Exception:
-            # Fall back to local if cloud query fails
-            pass
-    elif campaign_output_dir.exists():
-        for root, dirs, files in os.walk(campaign_output_dir):
-            for file in files:
-                if file.endswith('.parquet'):
-                    partition_count += 1
-                    file_path = Path(root) / file
-                    try:
-                        output_size += os.path.getsize(file_path)
-                    except OSError:
-                        pass
 
     # Print elaborate processing report  # pragma: no cover
     print("\n" + "=" * 60)

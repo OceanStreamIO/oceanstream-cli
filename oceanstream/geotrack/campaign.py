@@ -141,6 +141,74 @@ def create_campaign(
     return campaign_dir
 
 
+def _merge_by_key(old: list[dict], new: list[dict], key: str) -> list[dict]:
+    """Entries of ``new`` replace those of ``old`` with the same ``key``; the rest stay.
+
+    Fields an entry of ``new`` leaves empty are taken from the ``old`` entry it
+    replaces, e.g. a platform name given at ``campaign create`` that the data
+    does not carry.
+    """
+    new_by_key = {e.get(key): e for e in new}
+    merged = []
+    for entry in old:
+        update = new_by_key.pop(entry.get(key), None) if isinstance(entry, dict) else None
+        if update is None:
+            merged.append(entry)
+        else:
+            merged.append({**entry, **{k: v for k, v in update.items() if v is not None}})
+    return merged + list(new_by_key.values())
+
+
+def register_campaign(
+    campaign_id: str,
+    metadata: dict[str, Any],
+    verbose: bool = False,
+    campaigns_dir: Path | None = None,
+) -> Path:
+    """Create the campaign record, or refresh it after a conversion.
+
+    The fields in ``metadata`` (what a conversion learns from the data: output
+    location, extent, row counts, platforms, sensors) replace the record's.
+    Everything else in the record stays, such as the description, licence and
+    people given to ``campaign create``. Platforms and sensors are merged, so
+    converting one platform at a time keeps the others.
+
+    Args:
+        campaign_id: Campaign identifier
+        metadata: Fields from the conversion
+        verbose: Print what was done
+        campaigns_dir: Where campaigns live (default: get_campaigns_dir())
+
+    Returns:
+        Path to the campaign directory
+    """
+    import os
+
+    campaigns_dir = campaigns_dir or get_campaigns_dir()
+    campaign_dir = campaigns_dir / campaign_id
+    metadata_file = campaign_dir / "campaign.json"
+    if not metadata_file.exists():
+        return create_campaign(campaign_id, metadata, verbose=verbose, campaigns_dir=campaigns_dir)
+
+    record = json.loads(metadata_file.read_text())
+    merged = {**record, **metadata}
+    for field, key in (("platforms", "id"), ("sensors", "name")):
+        if isinstance(record.get(field), list) and isinstance(metadata.get(field), list):
+            merged[field] = _merge_by_key(record[field], metadata[field], key)
+    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    merged["campaign_id"] = campaign_id
+    merged["created_at"] = record.get("created_at", now)
+    merged["updated_at"] = now
+
+    tmp = metadata_file.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(merged, indent=2))
+    os.replace(tmp, metadata_file)
+
+    if verbose:
+        print(f"[campaign] Updated {metadata_file}")
+    return campaign_dir
+
+
 def load_campaign_metadata(campaign_id: str) -> dict[str, Any] | None:
     """Load campaign metadata for a given campaign ID.
     
