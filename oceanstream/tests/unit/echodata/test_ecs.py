@@ -18,6 +18,13 @@ import pytest
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _ecs_wrapper() -> str:
+    """The ECS file header _normalize_ecs_text puts before a fragment that lacks one."""
+    from oceanstream.echodata.calibrate.ecs import _normalize_ecs_text
+
+    return _normalize_ecs_text("")
+
+
 class TestNormalizeEcsText:
     """Tests for the Echoview header rewriting function."""
 
@@ -46,7 +53,7 @@ class TestNormalizeEcsText:
 
         text = "LocalCal T2 (some annotation)\n"
         result = _normalize_ecs_text(text)
-        assert result == "LocalCal T2\n"
+        assert result == _ecs_wrapper() + "LocalCal T2\n"
 
     def test_indented_lines_unchanged(self):
         from oceanstream.echodata.calibrate.ecs import _normalize_ecs_text
@@ -54,21 +61,21 @@ class TestNormalizeEcsText:
         text = "  SourceCal T1 (channel 1)\n"
         result = _normalize_ecs_text(text)
         # Leading whitespace → not a header, so unchanged
-        assert result == text
+        assert result == _ecs_wrapper() + text
 
     def test_empty_lines_unchanged(self):
         from oceanstream.echodata.calibrate.ecs import _normalize_ecs_text
 
         text = "\n\n"
         result = _normalize_ecs_text(text)
-        assert result == text
+        assert result == _ecs_wrapper() + text
 
     def test_non_header_lines_unchanged(self):
         from oceanstream.echodata.calibrate.ecs import _normalize_ecs_text
 
         text = "Frequency = 38000\nGain = 25.5\n"
         result = _normalize_ecs_text(text)
-        assert result == text
+        assert result == _ecs_wrapper() + text
 
     def test_fileset_header_rewritten(self):
         from oceanstream.echodata.calibrate.ecs import _normalize_ecs_text

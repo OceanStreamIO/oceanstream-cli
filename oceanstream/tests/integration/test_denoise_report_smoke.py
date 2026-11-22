@@ -434,7 +434,7 @@ class TestReportSmoke:
         md = (synthetic_experiment["out_dir"] / "results.md").read_text()
         assert "OR-combined, not applied as a sequential cascade" in md
         assert "Fielding-style" in md
-        assert "transient_noise_mask_ryan" in md
+        assert 'detector = "ryan2015"' in md
         assert "percentile" in md
 
     def test_no_ranking_language(self, synthetic_experiment):
